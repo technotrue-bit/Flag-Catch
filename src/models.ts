@@ -1,5 +1,6 @@
 /**
  * Papercraft style animals built from chunky boxes, riding toy vehicles.
+ * The border posts that mark each homeland live here too.
  * Every part is a toon material on the shared 3 band ramp.
  */
 import * as THREE from "three";
@@ -101,6 +102,31 @@ export function buildAnimal(id: string, teamColor: string): AnimalRig {
     wings.push(lw, rw);
     body.add(box(teamColor, 0.98, 0.16, 0.84, 0, 1.6, 0));
     flagMount.position.set(0, 1.6, -0.5);
+  } else if (id === "wolf") {
+    // Four wheeled buggy with a launcher on the hood.
+    body.add(box("#2fb59a", 1.5, 0.45, 2.3, 0, 0.62, 0));
+    body.add(box("#23917b", 1.3, 0.28, 0.9, 0, 0.95, 0.6));
+    body.add(box(teamColor, 0.32, 0.06, 2.32, 0, 0.87, 0));
+    for (const [x, z] of [[-0.85, 0.8], [0.85, 0.8], [-0.85, -0.8], [0.85, -0.8]] as const) {
+      const w = wheel(x, 0.42, z, 0.42, 0.36);
+      wheels.push(w);
+      body.add(w);
+    }
+    const tube = new THREE.Mesh(cylGeo, toon("#3b3550"));
+    tube.scale.set(0.3, 0.95, 0.3);
+    tube.rotation.x = Math.PI / 2;
+    tube.position.set(0, 1.2, 0.8);
+    body.add(tube);
+    body.add(box("#8d8fa3", 0.85, 0.75, 0.75, 0, 1.2, -0.35));
+    body.add(box(teamColor, 0.9, 0.14, 0.8, 0, 1.5, -0.3));
+    body.add(box("#8d8fa3", 0.75, 0.6, 0.65, 0, 1.82, -0.2));
+    body.add(box("#f4f1e8", 0.4, 0.28, 0.35, 0, 1.7, 0.25));
+    body.add(box("#2b2340", 0.14, 0.1, 0.06, 0, 1.8, 0.43));
+    body.add(box("#2b2340", 0.11, 0.11, 0.05, -0.17, 1.93, 0.13));
+    body.add(box("#2b2340", 0.11, 0.11, 0.05, 0.17, 1.93, 0.13));
+    body.add(box("#6e7086", 0.18, 0.32, 0.14, -0.22, 2.25, -0.3));
+    body.add(box("#6e7086", 0.18, 0.32, 0.14, 0.22, 2.25, -0.3));
+    flagMount.position.set(0, 1.6, -0.9);
   } else {
     // Eagle.
     body.add(box("#8a5a3b", 0.9, 0.85, 1.4, 0, 1.0, 0));
@@ -193,5 +219,14 @@ export function buildBase(teamColor: string, teamLight: string, shape: string): 
   if (shape === "sun") emblem.rotation.x = Math.PI / 2;
   emblem.position.set(0, 4.0, -2.4);
   g.add(emblem);
+  return g;
+}
+
+/** A short post with a team pennant, set where a bridge lands in a homeland. */
+export function buildBorderPost(teamColor: string, teamLight: string): THREE.Group {
+  const g = new THREE.Group();
+  g.add(box("#f4f1e8", 0.3, 3, 0.3, 0, 1.5, 0));
+  g.add(box(teamColor, 0.08, 0.7, 1.1, 0, 2.55, 0.55));
+  g.add(box(teamLight, 0.5, 0.3, 0.5, 0, 3.1, 0));
   return g;
 }

@@ -99,6 +99,16 @@ export const sfx = {
   splash(pan: number, near: number) {
     hiss(0.4, 700, pan, 0.3 * near);
   },
+  count() {
+    tone("square", 660, 660, 0.14, 0, 0.12);
+  },
+  go() {
+    tone("square", 990, 990, 0.12, 0, 0.12);
+    tone("square", 1320, 1320, 0.3, 0, 0.12, 0.1);
+  },
+  pick() {
+    tone("triangle", 880, 1320, 0.08, 0, 0.15);
+  },
   whistle() {
     tone("sine", 1800, 1800, 0.12, 0, 0.18);
     tone("sine", 1800, 2200, 0.3, 0, 0.18, 0.16);

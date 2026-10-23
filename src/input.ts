@@ -60,15 +60,15 @@ export function createControls(surface: HTMLElement): Controls {
   surface.addEventListener("pointercancel", end);
 
   function updateStick(): void {
+    // The base stays where the thumb landed; the knob is held inside its ring.
     let dx = c.stick.x - c.stick.ox;
     let dy = c.stick.y - c.stick.oy;
     const len = Math.hypot(dx, dy);
     if (len > STICK_RANGE) {
-      // Drag the origin along so the stick never needs a long reach back.
-      c.stick.ox = c.stick.x - (dx / len) * STICK_RANGE;
-      c.stick.oy = c.stick.y - (dy / len) * STICK_RANGE;
-      dx = c.stick.x - c.stick.ox;
-      dy = c.stick.y - c.stick.oy;
+      dx = (dx / len) * STICK_RANGE;
+      dy = (dy / len) * STICK_RANGE;
+      c.stick.x = c.stick.ox + dx;
+      c.stick.y = c.stick.oy + dy;
     }
     const m = Math.min(1, Math.hypot(dx, dy) / STICK_RANGE);
     const dead = m < 0.12 ? 0 : (m - 0.12) / 0.88;

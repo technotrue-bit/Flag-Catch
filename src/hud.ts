@@ -1,13 +1,18 @@
 /**
- * Everything drawn over the 3D view: score bar, timer, minimap, thumb
- * buttons, the stick ring, call outs, the start card and the results card.
+ * Everything drawn over the 3D view: score bar, timer, which land you are
+ * in, minimap, thumb buttons, the stick ring, call outs, the pick your
+ * animal screen, the 3, 2, 1, GO! countdown and the results card.
  * Big, soft and tucked into the corners so the middle stays clear.
  */
-import { ANIMALS, ANIMAL_IDS } from "./animals";
+import { ANIMALS, ANIMAL_IDS, type AnimalDef } from "./animals";
 import type { Controls } from "./input";
 import { FLAG_ENEMY, FLAG_FREE, PALETTE, TEAMS } from "./palette";
+import { sfx } from "./audio";
 import { type Match, tune } from "./sim";
-import { WORLD_RADIUS, groundHeight } from "./terrain";
+import { WORLD_HALF_X, WORLD_HALF_Z, groundHeight, landOf, onBridge } from "./terrain";
+
+const MAP_W = 156;
+const MAP_H = Math.round((MAP_W * WORLD_HALF_X) / WORLD_HALF_Z);
 
 const CSS = `
 .fc-hud{position:fixed;inset:0;pointer-events:none;font-family:ui-rounded,"SF Pro Rounded","Nunito","Trebuchet MS",system-ui,sans-serif;color:${PALETTE.ink};-webkit-font-smoothing:antialiased}
@@ -18,7 +23,8 @@ const CSS = `
 .fc-team.moon .ic{background:transparent;box-shadow:inset -6px -2px 0 0 #fff}
 .fc-timer{min-width:74px;text-align:center;padding:6px 12px;border-radius:14px;background:rgba(255,255,255,.88);font-weight:800;font-size:20px;box-shadow:0 3px 0 rgba(43,35,64,.18)}
 .fc-timer.low{color:#e8455b}
-.fc-map{position:absolute;top:max(10px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right));width:112px;height:112px;border-radius:50%;background:rgba(255,255,255,.55);box-shadow:0 3px 0 rgba(43,35,64,.18)}
+.fc-map{position:absolute;top:max(10px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right));width:${MAP_W}px;height:${MAP_H}px;border-radius:14px;background:rgba(255,255,255,.55);box-shadow:0 3px 0 rgba(43,35,64,.18)}
+.fc-zone{position:absolute;top:calc(max(10px,env(safe-area-inset-top)) + 44px);left:50%;transform:translateX(-50%);padding:3px 12px;border-radius:999px;font-weight:800;font-size:12px;letter-spacing:1px;color:#fff;background:rgba(43,35,64,.45);white-space:nowrap}
 .fc-btn{position:absolute;pointer-events:auto;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;letter-spacing:.5px;user-select:none;-webkit-user-select:none;touch-action:none;box-shadow:0 5px 0 rgba(43,35,64,.28);border:3px solid rgba(255,255,255,.75);opacity:.88}
 .fc-btn.down{transform:translateY(3px);box-shadow:0 2px 0 rgba(43,35,64,.28);opacity:1}
 .fc-jump{width:96px;height:96px;right:max(22px,calc(env(safe-area-inset-right) + 12px));bottom:max(22px,env(safe-area-inset-bottom));background:#46b4e8;font-size:17px}
@@ -27,7 +33,7 @@ const CSS = `
 .fc-stick{position:absolute;width:128px;height:128px;margin:-64px 0 0 -64px;border-radius:50%;border:3px solid rgba(255,255,255,.7);background:rgba(255,255,255,.14);display:none}
 .fc-knob{position:absolute;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:rgba(255,255,255,.85);box-shadow:0 3px 0 rgba(43,35,64,.2);display:none}
 .fc-hint{position:absolute;left:max(18px,env(safe-area-inset-left));bottom:max(18px,env(safe-area-inset-bottom));font-weight:700;font-size:13px;color:rgba(43,35,64,.55)}
-.fc-arrow{position:absolute;top:calc(max(10px,env(safe-area-inset-top)) + 50px);left:50%;width:34px;height:34px;margin-left:-17px;display:flex;align-items:center;justify-content:center}
+.fc-arrow{position:absolute;top:calc(max(10px,env(safe-area-inset-top)) + 72px);left:50%;width:34px;height:34px;margin-left:-17px;display:flex;align-items:center;justify-content:center}
 .fc-arrow i{width:0;height:0;border-left:11px solid transparent;border-right:11px solid transparent;border-bottom:22px solid ${FLAG_FREE};filter:drop-shadow(0 2px 0 rgba(43,35,64,.3))}
 .fc-call{position:absolute;left:50%;top:30%;transform:translate(-50%,-50%) scale(.6);font-weight:900;font-size:44px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill;opacity:0;transition:transform .18s cubic-bezier(.3,1.6,.5,1),opacity .18s;white-space:nowrap}
 .fc-call.show{transform:translate(-50%,-50%) scale(1);opacity:1}
@@ -43,6 +49,27 @@ const CSS = `
 .fc-rotate .phone{width:46px;height:78px;border:5px solid #fff;border-radius:10px;animation:fcrot 1.6s ease-in-out infinite}
 @keyframes fcrot{0%,20%{transform:rotate(0)}50%,80%{transform:rotate(-90deg)}100%{transform:rotate(0)}}
 @media (orientation:portrait){.fc-rotate{display:flex}}
+.fc-menu .fc-stick,.fc-menu .fc-knob{display:none!important}
+.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-top-left{display:none}
+.fc-sel{position:absolute;inset:0;pointer-events:none}
+.fc-sel h2{position:absolute;top:max(14px,env(safe-area-inset-top));left:0;right:0;margin:0;text-align:center;font-size:34px;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
+.fc-sel h2 small{display:block;font-size:14px;letter-spacing:0;-webkit-text-stroke:0;color:rgba(43,35,64,.7)}
+.fc-row{position:absolute;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));display:flex;justify-content:center;align-items:flex-end;gap:8px;padding:0 max(10px,env(safe-area-inset-right)) 0 max(10px,env(safe-area-inset-left))}
+.fc-tile{pointer-events:auto;width:min(122px,18vw);padding:8px 9px 9px;border-radius:16px;background:rgba(255,250,240,.94);border:3px solid transparent;box-shadow:0 4px 0 rgba(43,35,64,.22);text-align:left;transition:transform .15s}
+.fc-tile.on{border-color:${PALETTE.ink};transform:translateY(-6px)}
+.fc-tile b{display:block;font-size:14px;font-weight:900;line-height:1.1}
+.fc-tile .cls{display:inline-block;margin:3px 0 4px;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:900;color:#fff;letter-spacing:.5px}
+.fc-tile .bar{display:flex;align-items:center;gap:5px;font-size:9px;font-weight:800;color:rgba(43,35,64,.6);margin-top:2px}
+.fc-tile .bar span{width:30px}
+.fc-tile .bar i{flex:1;height:6px;border-radius:3px;background:rgba(43,35,64,.12);overflow:hidden}
+.fc-tile .bar i u{display:block;height:100%;border-radius:3px}
+.fc-tile .perk{margin-top:5px;font-size:10px;font-weight:700;line-height:1.2;color:rgba(43,35,64,.75)}
+.fc-play{pointer-events:auto;align-self:center;margin-left:6px;padding:16px 24px;border-radius:999px;background:#46b4e8;color:#fff;font-weight:900;font-size:22px;box-shadow:0 5px 0 rgba(43,35,64,.28);border:3px solid rgba(255,255,255,.8)}
+.fc-count{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%) scale(.4);font-weight:900;font-size:120px;color:#fff;-webkit-text-stroke:4px ${PALETTE.ink};paint-order:stroke fill;opacity:0;pointer-events:none}
+.fc-count.show{animation:fcpop .8s cubic-bezier(.3,1.6,.5,1) forwards}
+@keyframes fcpop{0%{transform:translate(-50%,-50%) scale(.4);opacity:0}25%{transform:translate(-50%,-50%) scale(1.08);opacity:1}70%{transform:translate(-50%,-50%) scale(1);opacity:1}100%{transform:translate(-50%,-50%) scale(1.25);opacity:0}}
+.fc-card .row2{display:flex;gap:10px;justify-content:center}
+.fc-card .go.alt{background:#ff8a4c}
 .fc-tune{position:absolute;top:56px;left:max(10px,env(safe-area-inset-left));background:rgba(255,255,255,.92);border-radius:14px;padding:8px 10px;font-size:11px;font-weight:700;pointer-events:auto;display:none;max-height:70vh;overflow:auto}
 .fc-tune label{display:flex;justify-content:space-between;gap:8px;align-items:center}
 .fc-tune input{width:110px}
@@ -51,11 +78,14 @@ const CSS = `
 export interface Hud {
   update(m: Match, controls: Controls, camYaw: number): void;
   call(text: string, color?: string): void;
-  showStart(onGo: () => void): void;
-  showResults(m: Match, onAgain: () => void): void;
-  onAnimal(cb: (id: string) => void): void;
-  setAnimal(id: string): void;
+  /** Pick your animal. onPick fires on every tap so the 3D preview can swap. */
+  showSelect(current: string, onPick: (id: string) => void, onPlay: () => void): void;
+  /** 3, 2, 1, GO! then onDone. */
+  countdown(onDone: () => void): void;
+  showResults(m: Match, onAgain: () => void, onChange: () => void): void;
 }
+
+const CLASS_COLORS = { land: "#5cb85c", water: "#46b4e8", air: "#9b7be8" } as const;
 
 export function createHud(controls: Controls): Hud {
   const style = document.createElement("style");
@@ -78,9 +108,13 @@ export function createHud(controls: Controls): Hud {
 
   const map = el("canvas", "fc-map", root) as HTMLCanvasElement;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  map.width = map.height = 112 * dpr;
+  map.width = MAP_W * dpr;
+  map.height = MAP_H * dpr;
   const mctx = map.getContext("2d")!;
-  const mapBg = drawMapBackground(112 * dpr);
+  const mapBg = drawMapBackground(MAP_W * dpr, MAP_H * dpr);
+
+  const zone = el("div", "fc-zone", root);
+  let lastLand = -2;
 
   const arrow = el("div", "fc-arrow", root);
   el("i", "", arrow);
@@ -118,17 +152,6 @@ export function createHud(controls: Controls): Hud {
   let callTimer = 0;
 
   const tl = el("div", "fc-top-left", root);
-  const animalChips = new Map<string, HTMLElement>();
-  let animalCb: (id: string) => void = () => {};
-  for (const id of ANIMAL_IDS) {
-    const chip = el("div", "fc-chip", tl);
-    chip.textContent = ANIMALS[id].name;
-    chip.addEventListener("pointerdown", (e) => {
-      e.stopPropagation();
-      animalCb(id);
-    });
-    animalChips.set(id, chip);
-  }
   const tuneChip = el("div", "fc-chip", tl);
   tuneChip.textContent = "Tune";
   const tunePanel = buildTunePanel(root);
@@ -141,6 +164,7 @@ export function createHud(controls: Controls): Hud {
   el("div", "phone", rotate);
   el("div", "", rotate).textContent = "Turn your phone sideways to play";
 
+  const count = el("div", "fc-count", root);
   let hintTimer = 8;
 
   return {
@@ -163,6 +187,12 @@ export function createHud(controls: Controls): Hud {
       hint.style.display = hintTimer > 0 ? "block" : "none";
 
       const me = m.players[0];
+      const land = landOf(me.z);
+      if (land !== lastLand) {
+        zone.textContent = land === -1 ? "MIDDLE LAND" : land === me.team ? "YOUR LAND" : "ENEMY LAND";
+        zone.style.background = land === -1 ? "rgba(43,35,64,.45)" : TEAMS[land].color;
+        lastLand = land;
+      }
       // Point at your base while carrying, else at the nearest free flag.
       let tx = NaN;
       let tz = NaN;
@@ -192,7 +222,7 @@ export function createHud(controls: Controls): Hud {
         arrow.style.display = "none";
       }
 
-      drawMap(mctx, mapBg, m, map.width);
+      drawMap(mctx, mapBg, m, map.width, map.height);
 
       if (callTimer > 0) {
         callTimer -= 1 / 60;
@@ -207,41 +237,83 @@ export function createHud(controls: Controls): Hud {
       call.classList.add("show");
       callTimer = 0.9;
     },
-    showStart(onGo) {
-      const card = el("div", "fc-card", root);
-      const box = el("div", "box", card);
-      el("h1", "", box).textContent = "FLAG CATCH";
-      el("p", "", box).textContent = "Feel test. Grab green flags and bring them to your orange base.";
-      el("p", "", box).textContent = "Left thumb steers. Jump (hold to float) and Throw firecrackers on the right.";
-      el("p", "", box).textContent = "Try all three animals with the buttons top left.";
-      const go = el("div", "go", box);
-      go.textContent = "PLAY";
-      card.addEventListener("pointerdown", (e) => {
+    showSelect(current, onPick, onPlay) {
+      root.classList.add("fc-menu");
+      const sel = el("div", "fc-sel", root);
+      const title = el("h2", "", sel);
+      title.textContent = "PICK YOUR ANIMAL";
+      el("small", "", title).textContent = "Grab green flags and bring them home. Defend your land!";
+      const row = el("div", "fc-row", sel);
+      const tiles = new Map<string, HTMLElement>();
+      const pick = (id: string) => {
+        current = id;
+        tiles.forEach((t, key) => t.classList.toggle("on", key === id));
+        onPick(id);
+      };
+      for (const id of ANIMAL_IDS) {
+        const tile = animalTile(ANIMALS[id], row);
+        tile.addEventListener("pointerdown", (e) => {
+          e.stopPropagation();
+          pick(id);
+        });
+        tiles.set(id, tile);
+      }
+      const play = el("div", "fc-play", row);
+      play.textContent = "PLAY";
+      play.addEventListener("pointerdown", (e) => {
         e.stopPropagation();
-        card.remove();
-        onGo();
+        sel.remove();
+        root.classList.remove("fc-menu");
+        onPlay();
       });
+      pick(current);
     },
-    showResults(m, onAgain) {
+    countdown(onDone) {
+      hintTimer = 8;
+      const beats = ["3", "2", "1", "GO!"];
+      let i = 0;
+      const next = () => {
+        const last = i === beats.length - 1;
+        count.textContent = beats[i];
+        count.style.color = last ? "#7ee36b" : "#ffffff";
+        count.classList.remove("show");
+        void count.offsetWidth;
+        count.classList.add("show");
+        i++;
+        if (last) {
+          // GO! hands over control at once; its pop finishes on its own.
+          sfx.go();
+          onDone();
+        } else {
+          sfx.count();
+          setTimeout(next, 800);
+        }
+      };
+      next();
+    },
+    showResults(m, onAgain, onChange) {
       const card = el("div", "fc-card", root);
       const box = el("div", "box", card);
       const [a, b] = m.scores;
       el("h1", "", box).textContent = a === b ? "DRAW!" : a > b ? "YOU WIN!" : "SO CLOSE!";
       el("p", "", box).textContent = `${TEAMS[0].name} ${a}  :  ${b} ${TEAMS[1].name}`;
       el("p", "", box).textContent = `Your points: ${m.players[0].score}`;
-      const go = el("div", "go", box);
-      go.textContent = "AGAIN";
-      card.addEventListener("pointerdown", (e) => {
+      const row = el("div", "row2", box);
+      const again = el("div", "go", row);
+      again.textContent = "AGAIN";
+      const change = el("div", "go alt", row);
+      change.textContent = "NEW ANIMAL";
+      card.addEventListener("pointerdown", (e) => e.stopPropagation());
+      again.addEventListener("pointerdown", (e) => {
         e.stopPropagation();
         card.remove();
         onAgain();
       });
-    },
-    onAnimal(cb) {
-      animalCb = cb;
-    },
-    setAnimal(id) {
-      animalChips.forEach((chip, key) => chip.classList.toggle("on", key === id));
+      change.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        card.remove();
+        onChange();
+      });
     },
   };
 }
@@ -253,43 +325,88 @@ function el(tag: string, cls: string, parent?: HTMLElement): HTMLElement {
   return n;
 }
 
-function drawMapBackground(size: number): HTMLCanvasElement {
+function animalTile(a: AnimalDef, parent: HTMLElement): HTMLElement {
+  const tile = el("div", "fc-tile", parent);
+  el("b", "", tile).textContent = a.name;
+  const cls = el("span", "cls", tile);
+  cls.textContent = a.cls.toUpperCase();
+  cls.style.background = CLASS_COLORS[a.cls];
+  const bars: Array<[string, number, string]> = [
+    ["Land", a.landSpeed / 17, CLASS_COLORS.land],
+    ["Swim", a.waterSpeed / 16, CLASS_COLORS.water],
+    ["Fly", a.floatTime / 3.2, CLASS_COLORS.air],
+  ];
+  for (const [label, v, color] of bars) {
+    const bar = el("div", "bar", tile);
+    el("span", "", bar).textContent = label;
+    const fill = el("u", "", el("i", "", bar));
+    fill.style.width = `${Math.round(Math.max(0.08, Math.min(1, v)) * 100)}%`;
+    fill.style.background = color;
+  }
+  el("div", "perk", tile).textContent = a.perk;
+  return tile;
+}
+
+/**
+ * The minimap lies on its side: your homeland on the left, the enemy's on
+ * the right, so "forward" on the map matches heading out to raid.
+ */
+function mapX(z: number, w: number): number {
+  return (0.5 - z / (2 * WORLD_HALF_Z)) * w;
+}
+
+function mapY(x: number, h: number): number {
+  return (0.5 + x / (2 * WORLD_HALF_X)) * h;
+}
+
+function drawMapBackground(w: number, h: number): HTMLCanvasElement {
   const c = document.createElement("canvas");
-  c.width = c.height = size;
+  c.width = w;
+  c.height = h;
   const ctx = c.getContext("2d")!;
-  const img = ctx.createImageData(size, size);
-  for (let py = 0; py < size; py++) {
-    for (let px = 0; px < size; px++) {
-      const x = (px / size - 0.5) * 2 * WORLD_RADIUS;
-      const z = (py / size - 0.5) * 2 * WORLD_RADIUS;
-      const i = (py * size + px) * 4;
-      const inside = Math.hypot(px - size / 2, py - size / 2) < size / 2;
-      const h = groundHeight(x, z);
-      const [r, g, b] = h > 0.9 ? [126, 200, 100] : h > 0 ? [240, 218, 160] : [95, 200, 214];
+  const img = ctx.createImageData(w, h);
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      const z = (0.5 - px / w) * 2 * WORLD_HALF_Z;
+      const x = (py / h - 0.5) * 2 * WORLD_HALF_X;
+      const i = (py * w + px) * 4;
+      const g = groundHeight(x, z);
+      let [r, gr, b] = onBridge(x, z) ? [201, 154, 104] : g > 0.9 ? [126, 200, 100] : g > 0 ? [240, 218, 160] : [95, 200, 214];
+      const land = landOf(z);
+      if (land >= 0 && g > 0) {
+        // Tint each homeland toward its team, like the ground does.
+        const tint = TEAMS[land as 0 | 1].light;
+        r = Math.round(r * 0.75 + parseInt(tint.slice(1, 3), 16) * 0.25);
+        gr = Math.round(gr * 0.75 + parseInt(tint.slice(3, 5), 16) * 0.25);
+        b = Math.round(b * 0.75 + parseInt(tint.slice(5, 7), 16) * 0.25);
+      }
       img.data[i] = r;
-      img.data[i + 1] = g;
+      img.data[i + 1] = gr;
       img.data[i + 2] = b;
-      img.data[i + 3] = inside ? 200 : 0;
+      img.data[i + 3] = 200;
     }
   }
   ctx.putImageData(img, 0, 0);
   return c;
 }
 
-function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match, size: number): void {
-  ctx.clearRect(0, 0, size, size);
+function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match, w: number, h: number): void {
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(0, 0, w, h, 14 * (w / MAP_W));
+  ctx.clip();
   ctx.drawImage(bg, 0, 0);
-  const toPx = (v: number) => (v / (2 * WORLD_RADIUS) + 0.5) * size;
-  const s = size / 112;
+  const s = w / MAP_W;
   for (const b of m.bases) {
     ctx.fillStyle = TEAMS[b.team].color;
-    ctx.fillRect(toPx(b.x) - 5 * s, toPx(b.z) - 5 * s, 10 * s, 10 * s);
+    ctx.fillRect(mapX(b.z, w) - 5 * s, mapY(b.x, h) - 5 * s, 10 * s, 10 * s);
   }
   for (const f of m.flags) {
     if (f.state !== "free") continue;
     ctx.fillStyle = FLAG_FREE;
     ctx.beginPath();
-    ctx.arc(toPx(f.x), toPx(f.z), 3.5 * s, 0, Math.PI * 2);
+    ctx.arc(mapX(f.z, w), mapY(f.x, h), 3.5 * s, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = PALETTE.ink;
     ctx.lineWidth = s;
@@ -299,7 +416,7 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
     const me = p.id === 0;
     ctx.fillStyle = p.carrying >= 0 && p.team === 1 ? FLAG_ENEMY : TEAMS[p.team].color;
     ctx.beginPath();
-    ctx.arc(toPx(p.x), toPx(p.z), (me ? 4.5 : 3) * s, 0, Math.PI * 2);
+    ctx.arc(mapX(p.z, w), mapY(p.x, h), (me ? 4.5 : 3) * s, 0, Math.PI * 2);
     ctx.fill();
     if (me) {
       ctx.strokeStyle = "#ffffff";
@@ -307,6 +424,7 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
       ctx.stroke();
     }
   }
+  ctx.restore();
 }
 
 function buildTunePanel(root: HTMLElement): HTMLElement {

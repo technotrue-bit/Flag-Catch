@@ -1,7 +1,10 @@
 /**
- * FLAG CATCH feel prototype. One island, two teams of four, flags, bases,
- * firecrackers, and three animals to compare. Throwaway: it exists to settle
- * movement, camera, thumb controls and throw feel before the real build.
+ * FLAG CATCH feel prototype. Three lands in a row (yours, the middle, the
+ * enemy's), two teams of four, flags, bases, firecrackers and four animals.
+ * Throwaway: it exists to settle movement, camera, thumb controls and throw
+ * feel before the real build.
+ *
+ * Flow: pick your animal, then 3, 2, 1, GO!, then the match, then results.
  */
 import * as THREE from "three";
 import { ANIMALS } from "./animals";
@@ -12,7 +15,7 @@ import { createControls } from "./input";
 import { type AnimalRig, type FlagRig, buildAnimal, buildFlag, toon } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, TEAMS } from "./palette";
 import { type Input, type Match, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
-import { surfaceHeight } from "./terrain";
+import { landOf, surfaceHeight } from "./terrain";
 import { buildWorld } from "./world";
 
 const params = new URLSearchParams(location.search);
@@ -52,7 +55,7 @@ const ringGeo = new THREE.CircleGeometry(1.2, 24);
 ringGeo.rotateX(-Math.PI / 2);
 
 function newMatch(seed: number): Match {
-  return createMatch({ seed, humanAnimal, perTeam, duration, flagCount: 6 });
+  return createMatch({ seed, humanAnimal, perTeam, duration, flagCount: 8 });
 }
 
 function rebuildViews(): void {
@@ -83,15 +86,14 @@ function makeView(animal: string, team: number, me: boolean): PlayerView {
   return { rig, ring, animal, bank: 0, spin: 0 };
 }
 
-hud.onAnimal((id) => {
+function swapAnimal(id: string): void {
+  if (id === views[0]?.animal) return;
   humanAnimal = id;
   setAnimal(match.players[0], id);
   scene.remove(views[0].rig.root);
   scene.remove(views[0].ring);
   views[0] = makeView(id, 0, true);
-  hud.setAnimal(id);
-});
-hud.setAnimal(humanAnimal);
+}
 rebuildViews();
 
 // Camera follows behind the heading with a little lag, lifts when airborne.
@@ -100,8 +102,10 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 let shake = 0;
 let hitStop = 0;
-let started = false;
-let resultsShown = false;
+type Phase = "select" | "countdown" | "play" | "results";
+let phase: Phase = "select";
+let lastLand = landOf(match.players[0].z);
+let raidAlertCd = 0;
 placeCamera(1);
 
 function placeCamera(blend: number): void {
@@ -126,7 +130,7 @@ function placeCamera(blend: number): void {
 }
 
 function humanInput(): Input {
-  if (!started || match.over) return NO_INPUT;
+  if (phase !== "play" || match.over) return NO_INPUT;
   const fx = Math.sin(camYaw);
   const fz = Math.cos(camYaw);
   // Screen right is forward x up: (-fz, fx).
@@ -274,6 +278,32 @@ function syncViews(t: number, dt: number): void {
   }
 }
 
+/** Pick screen camera: a slow turn around your animal, waiting at its base. */
+function placeSelectCamera(t: number): void {
+  const p = match.players[0];
+  const a = p.heading + Math.PI * 0.75 + t * 0.35;
+  camPos.set(p.x + Math.sin(a) * 6.2, p.y + 2.6, p.z + Math.cos(a) * 6.2);
+  camLook.set(p.x, p.y + 0.5, p.z);
+  camera.position.copy(camPos);
+  camera.lookAt(camLook);
+}
+
+/** Call outs for crossing into enemy land, and for raiders in yours. */
+function watchLands(dt: number): void {
+  const me = match.players[0];
+  const land = landOf(me.z);
+  if (land !== lastLand) {
+    if (land === 1) hud.call("ENEMY LAND!", TEAMS[1].light);
+    else if (land === 0 && me.carrying >= 0) hud.call("HOME STRETCH!", TEAMS[0].color);
+    lastLand = land;
+  }
+  raidAlertCd -= dt;
+  if (raidAlertCd <= 0 && land !== 0 && match.players.some((p) => p.team === 1 && landOf(p.z) === 0 && p.carrying >= 0)) {
+    hud.call("THEY'RE RAIDING!", TEAMS[1].light);
+    raidAlertCd = 10;
+  }
+}
+
 function resize(): void {
   const w = window.innerWidth;
   const h = window.innerHeight;
@@ -293,7 +323,7 @@ function frame(now: number): void {
   last = now;
   if (hitStop > 0) {
     hitStop -= dt;
-  } else {
+  } else if (phase === "play") {
     acc += dt;
     while (acc >= STEP) {
       step(match, humanInput());
@@ -308,31 +338,69 @@ function frame(now: number): void {
   world.update(t);
   syncViews(t, Math.max(dt, 1 / 240));
   fx.update(dt);
-  placeCamera(Math.min(1, dt * 7));
+  if (phase === "select") placeSelectCamera(t);
+  else placeCamera(Math.min(1, dt * 7));
+  if (phase === "play") watchLands(dt);
   hud.update(match, controls, camYaw);
   renderer.render(scene, camera);
 
-  if (match.over && !resultsShown) {
-    resultsShown = true;
-    hud.showResults(match, () => {
-      match = newMatch(match.rng() * 1e9);
-      setAnimal(match.players[0], humanAnimal);
-      rebuildViews();
-      resultsShown = false;
-      camYaw = match.players[0].heading;
-      sfx.whistle();
-    });
+  if (phase === "play" && match.over) {
+    phase = "results";
+    hud.showResults(
+      match,
+      () => {
+        freshMatch();
+        startCountdown(true);
+      },
+      () => {
+        freshMatch();
+        showSelect();
+      },
+    );
   }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
-hud.showStart(() => {
-  unlockAudio();
-  started = true;
-  sfx.whistle();
-  tryLandscape();
-});
+function freshMatch(): void {
+  match = newMatch(match.rng() * 1e9);
+  rebuildViews();
+  camYaw = match.players[0].heading;
+  lastLand = landOf(match.players[0].z);
+  raidAlertCd = 0;
+}
+
+function showSelect(): void {
+  phase = "select";
+  hud.showSelect(
+    humanAnimal,
+    (id) => {
+      unlockAudio();
+      if (id !== humanAnimal) sfx.pick();
+      swapAnimal(id);
+    },
+    () => {
+      unlockAudio();
+      tryLandscape();
+      // Swoop from the turntable view to behind your animal.
+      startCountdown(false);
+    },
+  );
+}
+
+function startCountdown(snap: boolean): void {
+  phase = "countdown";
+  camYaw = match.players[0].heading;
+  if (snap) placeCamera(1);
+  hud.countdown(() => {
+    phase = "play";
+    acc = 0;
+    controls.throwQueued = false;
+    sfx.whistle();
+  });
+}
+
+showSelect();
 
 function tryLandscape(): void {
   const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };

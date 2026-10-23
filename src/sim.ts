@@ -4,7 +4,7 @@
  */
 import { ANIMALS, type AnimalDef } from "./animals";
 import { mulberry32, type RNG } from "./rng";
-import { WORLD_RADIUS, groundHeight, isWater, surfaceHeight } from "./terrain";
+import { BRIDGE_X, WORLD_HALF_X, WORLD_HALF_Z, ZONE_EDGE, groundHeight, inWorld, isWater, landOf, surfaceHeight } from "./terrain";
 
 export const STEP = 1 / 60;
 
@@ -62,7 +62,8 @@ export interface Player {
   grabCd: number;
   carrying: number;
   score: number;
-  /** CPU state. */
+  /** CPU state. Defenders hold their homeland, attackers raid. */
+  role: "attack" | "defend";
   thinkCd: number;
   goalX: number;
   goalZ: number;
@@ -125,17 +126,24 @@ export interface Match {
   nextFireId: number;
 }
 
+/** Flag spots in mirrored pairs, so both homelands get the same chances. */
 export const FLAG_SPOTS: ReadonlyArray<[number, number]> = [
-  [0, 0],
-  [-18, -14],
-  [14, -26],
-  [-26, 12],
-  [8, 22],
-  [-6, -34],
-  [34, 18],
-  [-36, -6],
-  [24, -40],
-  [-14, 30],
+  // Middle land, two of them out in the lagoons for swimmers.
+  [-14, -14],
+  [14, 14],
+  [-24, 4],
+  [24, -4],
+  [0, 18],
+  [0, -18],
+  [13, -6],
+  [-13, 6],
+  // Homelands.
+  [-16, 54],
+  [16, -54],
+  [16, 58],
+  [-16, -58],
+  [0, 66],
+  [0, -66],
 ];
 
 export interface MatchOptions {
@@ -149,8 +157,8 @@ export interface MatchOptions {
 export function createMatch(opts: MatchOptions): Match {
   const rng = mulberry32(opts.seed);
   const bases: [Base, Base] = [
-    { team: 0, x: -30, z: 28 },
-    { team: 1, x: 30, z: -30 },
+    { team: 0, x: 0, z: 84 },
+    { team: 1, x: 0, z: -84 },
   ];
   const players: Player[] = [];
   const ids = Object.keys(ANIMALS);
@@ -162,14 +170,20 @@ export function createMatch(opts: MatchOptions): Match {
       const a = (i / opts.perTeam) * Math.PI * 2 + team;
       const x = b.x + Math.cos(a) * 3;
       const z = b.z + Math.sin(a) * 3;
-      players.push(makePlayer(players.length, team, def, !human, x, z, Math.atan2(-b.x, -b.z)));
+      const p = makePlayer(players.length, team, def, !human, x, z, Math.atan2(-b.x, -b.z));
+      p.role = i % 3 === 1 ? "defend" : "attack";
+      players.push(p);
     }
     if (team === 1) break;
   }
-  const spots = shuffled(FLAG_SPOTS.slice(), rng);
+  // Start with half the flags in the middle and a fair share in each homeland.
+  const byLand = [-1, 0, -1, 1].map((land) => shuffled(FLAG_SPOTS.filter(([, z]) => landOf(z) === land), rng));
+  const used = [0, 0, 0, 0];
   const flags: Flag[] = [];
   for (let i = 0; i < opts.flagCount; i++) {
-    const [x, z] = spots[i % spots.length];
+    const k = i % 4;
+    const list = byLand[k];
+    const [x, z] = list[used[k]++ % list.length];
     flags.push({ id: i, state: "free", x, y: surfaceHeight(x, z), z, carrier: -1, respawn: 0 });
   }
   return {
@@ -210,6 +224,7 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     grabCd: 0,
     carrying: -1,
     score: 0,
+    role: "attack",
     thinkCd: 0,
     goalX: x,
     goalZ: z,
@@ -280,10 +295,9 @@ function movePlayer(m: Match, p: Player, input: Input): void {
 
   let nx = p.x + (Math.sin(p.heading) * p.speed + p.kx) * STEP;
   let nz = p.z + (Math.cos(p.heading) * p.speed + p.kz) * STEP;
-  const r = Math.hypot(nx, nz);
-  if (r > WORLD_RADIUS) {
-    nx *= WORLD_RADIUS / r;
-    nz *= WORLD_RADIUS / r;
+  if (!inWorld(nx, nz)) {
+    nx = clamp(nx, -WORLD_HALF_X, WORLD_HALF_X);
+    nz = clamp(nz, -WORLD_HALF_Z, WORLD_HALF_Z);
     p.speed *= 0.5;
   }
   p.x = nx;
@@ -330,9 +344,11 @@ function movePlayer(m: Match, p: Player, input: Input): void {
 }
 
 function throwFire(m: Match, p: Player): void {
-  p.throwCd = tune.throwCooldown;
+  const d = p.def;
+  p.throwCd = tune.throwCooldown * d.shotCooldown;
   const fx = Math.sin(p.heading);
   const fz = Math.cos(p.heading);
+  const speed = tune.throwSpeed * d.shotSpeed + Math.max(0, p.speed) * 0.6;
   const fire: Firecracker = {
     id: m.nextFireId++,
     owner: p.id,
@@ -340,9 +356,9 @@ function throwFire(m: Match, p: Player): void {
     x: p.x + fx * 1.4,
     y: p.y + 1.2,
     z: p.z + fz * 1.4,
-    vx: fx * (tune.throwSpeed + Math.max(0, p.speed) * 0.6),
-    vy: tune.throwLift,
-    vz: fz * (tune.throwSpeed + Math.max(0, p.speed) * 0.6),
+    vx: fx * speed,
+    vy: tune.throwLift * d.shotLift,
+    vz: fz * speed,
     skidding: false,
     life: tune.fireLife,
   };
@@ -385,7 +401,7 @@ function stepFires(m: Match): void {
       }
     }
     if (hit) continue;
-    if (f.life <= 0 || Math.hypot(f.x, f.z) > WORLD_RADIUS) {
+    if (f.life <= 0 || !inWorld(f.x, f.z)) {
       m.events.push({ kind: "fizzle", x: f.x, y: f.y, z: f.z });
       continue;
     }
@@ -484,34 +500,17 @@ function respawnFlag(m: Match, flag: Flag): void {
 }
 
 /**
- * Prototype CPU: carry home if holding, chase a nearby enemy carrier, else
- * go for the nearest loose flag. Throws when an enemy is ahead and close.
+ * Prototype CPU. Everyone carries a held flag home. Defenders chase raiders
+ * in their homeland, grab flags there and otherwise stand guard. Attackers
+ * chase nearby enemy carriers, else go for loose flags outside their own
+ * homeland. Land animals use the bridges. Throws when an enemy is ahead.
  */
 function cpuInput(m: Match, p: Player): Input {
   p.thinkCd -= STEP;
   if (p.thinkCd <= 0) {
     p.thinkCd = 0.25 + m.rng() * 0.2;
-    if (p.carrying >= 0) {
-      const b = m.bases[p.team];
-      p.goalX = b.x;
-      p.goalZ = b.z;
-    } else {
-      const carrier = nearest(p, m.players.filter((o) => o.team !== p.team && o.carrying >= 0 && o.stun <= 0), 22);
-      if (carrier) {
-        p.goalX = carrier.x + Math.sin(carrier.heading) * 3;
-        p.goalZ = carrier.z + Math.cos(carrier.heading) * 3;
-      } else {
-        const free = nearest(p, m.flags.filter((f) => f.state === "free"), Infinity);
-        if (free) {
-          p.goalX = free.x;
-          p.goalZ = free.z;
-        } else {
-          const b = m.bases[p.team === 0 ? 1 : 0];
-          p.goalX = b.x * 0.5;
-          p.goalZ = b.z * 0.5;
-        }
-      }
-    }
+    const [gx, gz] = cpuGoal(m, p);
+    [p.goalX, p.goalZ] = p.def.cls === "land" ? viaBridge(p, gx, gz) : [gx, gz];
   }
   const dx = p.goalX - p.x;
   const dz = p.goalZ - p.z;
@@ -534,6 +533,47 @@ function cpuInput(m: Match, p: Player): Input {
   // Hop small rises and channels now and then.
   const jump = p.onSurface ? groundHeight(p.x + fwdX * 3, p.z + fwdZ * 3) - p.y > 1.2 || m.rng() < 0.004 : p.vy > 0;
   return { dirX: (dx / d) * throttle, dirZ: (dz / d) * throttle, jump, throwPressed };
+}
+
+function cpuGoal(m: Match, p: Player): [number, number] {
+  const home = m.bases[p.team];
+  if (p.carrying >= 0) return [home.x, home.z];
+  const enemies = m.players.filter((o) => o.team !== p.team && o.stun <= 0);
+  const free = m.flags.filter((f) => f.state === "free");
+  if (p.role === "defend") {
+    const raider = nearest(p, enemies.filter((o) => landOf(o.z) === p.team), 45);
+    if (raider) return lead(raider);
+    const flag = nearest(p, free.filter((f) => landOf(f.z) === p.team), Infinity);
+    if (flag) return [flag.x, flag.z];
+    // Stand guard between the base and the bridges.
+    const side = p.id % 2 === 0 ? 1 : -1;
+    return [side * BRIDGE_X, home.z * 0.62];
+  }
+  const carrier = nearest(p, enemies.filter((o) => o.carrying >= 0), 22);
+  if (carrier) return lead(carrier);
+  const flag = nearest(p, free.filter((f) => landOf(f.z) !== p.team), Infinity) ?? nearest(p, free, Infinity);
+  if (flag) return [flag.x, flag.z];
+  const enemyHome = m.bases[p.team === 0 ? 1 : 0];
+  return [0, enemyHome.z * 0.6];
+}
+
+function lead(o: Player): [number, number] {
+  return [o.x + Math.sin(o.heading) * 3, o.z + Math.cos(o.heading) * 3];
+}
+
+/** Route a land animal over the nearest bridge when its goal is across a channel. */
+function viaBridge(p: Player, gx: number, gz: number): [number, number] {
+  let best: [number, number] | null = null;
+  let bestGap = Infinity;
+  for (const g of [ZONE_EDGE, -ZONE_EDGE]) {
+    const away = Math.abs(p.z - g);
+    if ((p.z - g) * (gz - g) >= 0 || away < 5 || away >= bestGap) continue;
+    const bx = (p.x + gx) / 2 >= 0 ? BRIDGE_X : -BRIDGE_X;
+    // Line up with the bridge first, then drive across it.
+    best = away > 11 ? [bx, g + Math.sign(p.z - g) * 9] : [bx, g];
+    bestGap = away;
+  }
+  return best ?? [gx, gz];
 }
 
 function nearest<T extends { x: number; z: number }>(p: Player, list: T[], maxD: number): T | undefined {
