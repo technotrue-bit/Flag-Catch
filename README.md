@@ -17,12 +17,18 @@ animals each rule different ground.
 
 ## Status
 
-Phase 1, the feel prototype. Three lands joined by bridges over water channels,
-two teams of four, flags, bases, firecrackers, and four animals to pick from:
-Rally Lion, Surf Penguin, Sky Eagle and Turbo Wolf (a fast four wheeled car with
-a launcher). A match opens on the pick screen, counts down 3, 2, 1, GO!, and ends
-on a results card. It is throwaway: it settles movement, camera, thumb controls
-and throw feel before the real build.
+Phase 3, animals and terrain. Three lands joined by bridges over water channels,
+two teams of four, flags, bases, firecrackers, and seven animals to pick from:
+
+- Land: Rally Lion, Moto Bird (sharp turns, big hops), Skate Mammoth (heavy,
+  shrugs off pops fast) and Turbo Wolf (a fast four wheeled car with a launcher).
+- Water: Surf Penguin and Ski Croc. Both hold Dive in water to slip under
+  firecrackers until their breath runs out.
+- Air: Sky Eagle. Hold Jump to fly; Throw while high up drops a bomb that pops
+  every enemy nearby.
+
+A match opens on the pick screen, counts down 3, 2, 1, GO!, and ends on a results
+card. Power ups come in phase 4.
 
 ## Run it
 
@@ -33,15 +39,16 @@ npm test         # headless sim tests
 npm run build
 ```
 
-URL options: `?animal=lion|penguin|eagle|wolf` (preselected on the pick screen), `?per=1..16` (animals per team),
+URL options: `?animal=lion|penguin|croc|bird|eagle|mammoth|wolf` (preselected on the pick screen), `?per=1..16` (animals per team),
 `?time=20..900` (Capture match seconds), `?mode=hoard`, `?seed=N`.
 
 ## Controls
 
 - Phone: put your thumb down anywhere on the left half and the stick stays
   there; slide within its ring to steer. Jump (hold to float, the eagle
-  climbs) and Throw on the right.
-- Keyboard: WASD or arrows, Space jumps, J throws.
+  climbs) and Throw on the right. Swimmers get a Dive button in water; its
+  ring drains with their breath.
+- Keyboard: WASD or arrows, Space jumps, J throws, Shift or L dives.
 - Pinch and double tap never zoom the page. Zoom the camera from SETTINGS
   (top left), which also holds the feel tuning sliders and pauses the match.
 

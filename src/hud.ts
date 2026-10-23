@@ -29,6 +29,7 @@ const CSS = `
 .fc-btn.down{transform:translateY(3px);box-shadow:0 2px 0 rgba(43,35,64,.28);opacity:1}
 .fc-jump{width:96px;height:96px;right:max(22px,calc(env(safe-area-inset-right) + 12px));bottom:max(22px,env(safe-area-inset-bottom));background:#46b4e8;font-size:17px}
 .fc-throw{width:78px;height:78px;right:max(132px,calc(env(safe-area-inset-right) + 122px));bottom:max(30px,env(safe-area-inset-bottom));background:#ff6b5b;font-size:15px}
+.fc-dive{width:66px;height:66px;right:max(140px,calc(env(safe-area-inset-right) + 130px));bottom:max(128px,calc(env(safe-area-inset-bottom) + 118px));background:#2fb5b0;font-size:13px;display:none}
 .fc-item{width:56px;height:56px;right:max(52px,calc(env(safe-area-inset-right) + 42px));bottom:max(132px,calc(env(safe-area-inset-bottom) + 122px));background:rgba(150,150,170,.7);font-size:11px}
 .fc-stick{position:absolute;width:128px;height:128px;margin:-64px 0 0 -64px;border-radius:50%;border:3px solid rgba(255,255,255,.7);background:rgba(255,255,255,.14);display:none}
 .fc-knob{position:absolute;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:rgba(255,255,255,.85);box-shadow:0 3px 0 rgba(43,35,64,.2);display:none}
@@ -60,7 +61,9 @@ const CSS = `
 .fc-mode.on{border-color:${PALETTE.ink};background:#fffaf0}
 .fc-timer.goal{font-size:13px;line-height:1.1;padding:5px 10px}
 .fc-row{position:absolute;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));display:flex;justify-content:center;align-items:flex-end;gap:8px;padding:0 max(10px,env(safe-area-inset-right)) 0 max(10px,env(safe-area-inset-left))}
-.fc-tile{pointer-events:auto;width:min(122px,18vw);padding:8px 9px 9px;border-radius:16px;background:rgba(255,250,240,.94);border:3px solid transparent;box-shadow:0 4px 0 rgba(43,35,64,.22);text-align:left;transition:transform .15s}
+.fc-tiles{pointer-events:auto;display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;padding:10px 4px 6px;min-width:0;flex:0 1 auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.fc-tiles::-webkit-scrollbar{display:none}
+.fc-tile{pointer-events:auto;flex:0 0 auto;width:min(118px,17vw);padding:8px 9px 9px;border-radius:16px;background:rgba(255,250,240,.94);border:3px solid transparent;box-shadow:0 4px 0 rgba(43,35,64,.22);text-align:left;transition:transform .15s}
 .fc-tile.on{border-color:${PALETTE.ink};transform:translateY(-6px)}
 .fc-tile b{display:block;font-size:14px;font-weight:900;line-height:1.1}
 .fc-tile .cls{display:inline-block;margin:3px 0 4px;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:900;color:#fff;letter-spacing:.5px}
@@ -69,7 +72,7 @@ const CSS = `
 .fc-tile .bar i{flex:1;height:6px;border-radius:3px;background:rgba(43,35,64,.12);overflow:hidden}
 .fc-tile .bar i u{display:block;height:100%;border-radius:3px}
 .fc-tile .perk{margin-top:5px;font-size:10px;font-weight:700;line-height:1.2;color:rgba(43,35,64,.75)}
-.fc-play{pointer-events:auto;align-self:center;margin-left:6px;padding:16px 24px;border-radius:999px;background:#46b4e8;color:#fff;font-weight:900;font-size:22px;box-shadow:0 5px 0 rgba(43,35,64,.28);border:3px solid rgba(255,255,255,.8)}
+.fc-play{pointer-events:auto;flex:0 0 auto;align-self:center;margin-left:6px;padding:16px 24px;border-radius:999px;background:#46b4e8;color:#fff;font-weight:900;font-size:22px;box-shadow:0 5px 0 rgba(43,35,64,.28);border:3px solid rgba(255,255,255,.8)}
 .fc-count{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%) scale(.4);font-weight:900;font-size:120px;color:#fff;-webkit-text-stroke:4px ${PALETTE.ink};paint-order:stroke fill;opacity:0;pointer-events:none}
 .fc-count.show{animation:fcpop .8s cubic-bezier(.3,1.6,.5,1) forwards}
 @keyframes fcpop{0%{transform:translate(-50%,-50%) scale(.4);opacity:0}25%{transform:translate(-50%,-50%) scale(1.08);opacity:1}70%{transform:translate(-50%,-50%) scale(1);opacity:1}100%{transform:translate(-50%,-50%) scale(1.25);opacity:0}}
@@ -154,6 +157,9 @@ export function createHud(controls: Controls): Hud {
   thr.textContent = "THROW";
   const item = el("div", "fc-btn fc-item", root);
   item.textContent = "ITEM";
+  // Shows only for swimmers in water; the ring drains with their breath.
+  const dive = el("div", "fc-btn fc-dive", root);
+  dive.textContent = "DIVE";
 
   const press = (node: HTMLElement, down: () => void, up: () => void) => {
     node.addEventListener("pointerdown", (e) => {
@@ -171,6 +177,7 @@ export function createHud(controls: Controls): Hud {
   };
   press(jump, () => controls.setButtonJump(true), () => controls.setButtonJump(false));
   press(thr, () => (controls.throwQueued = true), () => {});
+  press(dive, () => controls.setButtonDive(true), () => controls.setButtonDive(false));
 
   const call = el("div", "fc-call", root);
   let callTimer = 0;
@@ -264,6 +271,16 @@ export function createHud(controls: Controls): Hud {
       hint.style.display = hintTimer > 0 ? "block" : "none";
 
       const me = m.players[0];
+      const canDive = me.def.dive && (me.medium === "water" || me.diving);
+      dive.style.display = canDive ? "flex" : "none";
+      if (canDive) {
+        const left = Math.round((me.breath / tune.diveBreath) * 360);
+        dive.style.background = `conic-gradient(#2fb5b0 ${left}deg, #8fa3b8 ${left}deg)`;
+        dive.style.opacity = me.diveCd > 0 ? "0.5" : "";
+      } else if (controls.dive) {
+        controls.setButtonDive(false);
+        dive.classList.remove("down");
+      }
       const land = landOf(me.z);
       if (land !== lastLand) {
         zone.textContent = land === -1 ? "MIDDLE LAND" : land === me.team ? "YOUR LAND" : "ENEMY LAND";
@@ -349,14 +366,15 @@ export function createHud(controls: Controls): Hud {
         tiles.forEach((t, key) => t.classList.toggle("on", key === id));
         onPick(id);
       };
+      // Seven tiles don't fit a phone, so they scroll sideways; a tap (not a swipe) picks.
+      const strip = el("div", "fc-tiles", row);
+      strip.addEventListener("pointerdown", (e) => e.stopPropagation());
       for (const id of ANIMAL_IDS) {
-        const tile = animalTile(ANIMALS[id], row);
-        tile.addEventListener("pointerdown", (e) => {
-          e.stopPropagation();
-          pick(id);
-        });
+        const tile = animalTile(ANIMALS[id], strip);
+        tile.addEventListener("click", () => pick(id));
         tiles.set(id, tile);
       }
+      tiles.get(current)?.scrollIntoView({ inline: "center", block: "nearest" });
       const play = el("div", "fc-play", row);
       play.textContent = "PLAY";
       play.addEventListener("pointerdown", (e) => {

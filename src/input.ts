@@ -9,8 +9,11 @@ export interface Controls {
   steerY: number;
   jump: boolean;
   throwQueued: boolean;
+  /** Held to stay under water (swimmers only). */
+  dive: boolean;
   /** The on-screen Jump button calls this; keys and button combine. */
   setButtonJump(down: boolean): void;
+  setButtonDive(down: boolean): void;
   /** Where the left thumb started and is now, for drawing the stick. */
   stick: { active: boolean; ox: number; oy: number; x: number; y: number };
 }
@@ -27,11 +30,18 @@ export function createControls(surface: HTMLElement): Controls {
       buttonJump = down;
       c.jump = keyJump || buttonJump;
     },
+    dive: false,
+    setButtonDive(down: boolean) {
+      buttonDive = down;
+      c.dive = keyDive || buttonDive;
+    },
     stick: { active: false, ox: 0, oy: 0, x: 0, y: 0 },
   };
   let stickId: number | null = null;
   let keyJump = false;
   let buttonJump = false;
+  let keyDive = false;
+  let buttonDive = false;
   const keys = new Set<string>();
 
   surface.addEventListener("pointerdown", (e) => {
@@ -108,6 +118,8 @@ export function createControls(surface: HTMLElement): Controls {
     }
     keyJump = keys.has("Space");
     c.jump = keyJump || buttonJump;
+    keyDive = keys.has("ShiftLeft") || keys.has("ShiftRight") || keys.has("KeyL");
+    c.dive = keyDive || buttonDive;
   }
 
   return c;

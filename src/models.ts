@@ -102,6 +102,66 @@ export function buildAnimal(id: string, teamColor: string): AnimalRig {
     wings.push(lw, rw);
     body.add(box(teamColor, 0.98, 0.16, 0.84, 0, 1.6, 0));
     flagMount.position.set(0, 1.6, -0.5);
+  } else if (id === "croc") {
+    // Crocodile on two water skis, long snout forward.
+    for (const x of [-0.35, 0.35]) body.add(box("#ffd166", 0.28, 0.1, 2.8, x, 0.08, 0.1));
+    body.add(box(teamColor, 0.9, 0.06, 0.4, 0, 0.16, -0.9));
+    body.add(box("#4f9d5a", 0.9, 0.8, 1.3, 0, 0.75, -0.1));
+    body.add(box("#7cc47f", 0.7, 0.5, 0.1, 0, 0.7, 0.56));
+    body.add(box("#4f9d5a", 0.75, 0.55, 0.7, 0, 1.4, 0.15));
+    body.add(box("#4f9d5a", 0.6, 0.3, 1.0, 0, 1.3, 0.85));
+    body.add(box("#f4f1e8", 0.5, 0.06, 0.8, 0, 1.17, 0.9));
+    body.add(box("#2b2340", 0.12, 0.14, 0.12, -0.22, 1.72, 0.3));
+    body.add(box("#2b2340", 0.12, 0.14, 0.12, 0.22, 1.72, 0.3));
+    body.add(box("#4f9d5a", 0.35, 0.3, 0.9, 0, 0.55, -1.0));
+    body.add(box(teamColor, 0.95, 0.16, 0.9, 0, 1.12, -0.1));
+    const la = box("#4f9d5a", 0.18, 0.55, 0.2, -0.55, 0.85, 0.2);
+    const ra = box("#4f9d5a", 0.18, 0.55, 0.2, 0.55, 0.85, 0.2);
+    body.add(la, ra);
+    wings.push(la, ra);
+    flagMount.position.set(0, 1.6, -0.6);
+  } else if (id === "bird") {
+    // Small round bird on a motorcycle: two wheels, handlebars, a helmet.
+    body.add(box("#3a6ea5", 0.5, 0.45, 1.8, 0, 0.7, 0));
+    body.add(box("#2b2340", 0.3, 0.2, 0.7, 0, 1.0, -0.35));
+    body.add(box("#c9ced8", 0.9, 0.08, 0.08, 0, 1.25, 0.65));
+    body.add(box("#c9ced8", 0.08, 0.5, 0.08, 0, 1.0, 0.7));
+    for (const z of [0.85, -0.85]) {
+      const w = wheel(0, 0.42, z, 0.42, 0.24);
+      wheels.push(w);
+      body.add(w);
+    }
+    body.add(box("#ffcf56", 0.75, 0.75, 0.75, 0, 1.45, -0.15));
+    body.add(box(teamColor, 0.8, 0.32, 0.8, 0, 1.92, -0.15));
+    body.add(box("#ff9f1c", 0.22, 0.16, 0.32, 0, 1.45, 0.35));
+    body.add(box("#2b2340", 0.1, 0.12, 0.05, -0.17, 1.62, 0.23));
+    body.add(box("#2b2340", 0.1, 0.12, 0.05, 0.17, 1.62, 0.23));
+    const lw = box("#f2b33d", 0.12, 0.35, 0.45, -0.45, 1.35, -0.15);
+    const rw = box("#f2b33d", 0.12, 0.35, 0.45, 0.45, 1.35, -0.15);
+    body.add(lw, rw);
+    wings.push(lw, rw);
+    flagMount.position.set(0, 1.7, -0.8);
+  } else if (id === "mammoth") {
+    // Big woolly mammoth riding a skateboard, tusks and trunk forward.
+    body.add(box("#e8455b", 1.3, 0.12, 2.6, 0, 0.32, 0));
+    for (const [x, z] of [[-0.45, 0.95], [0.45, 0.95], [-0.45, -0.95], [0.45, -0.95]] as const) {
+      const w = wheel(x, 0.16, z, 0.15, 0.16);
+      wheels.push(w);
+      body.add(w);
+    }
+    body.add(box("#8a5a3b", 1.4, 1.3, 1.8, 0, 1.2, -0.1));
+    body.add(box("#7a4d33", 1.1, 1.0, 0.9, 0, 1.65, 0.85));
+    body.add(box("#7a4d33", 0.3, 0.9, 0.3, 0, 1.0, 1.35));
+    body.add(box("#f4f1e8", 0.12, 0.12, 0.7, -0.35, 1.2, 1.4));
+    body.add(box("#f4f1e8", 0.12, 0.12, 0.7, 0.35, 1.2, 1.4));
+    body.add(box("#2b2340", 0.12, 0.12, 0.05, -0.28, 1.85, 1.31));
+    body.add(box("#2b2340", 0.12, 0.12, 0.05, 0.28, 1.85, 1.31));
+    const le = box("#6b4430", 0.12, 0.7, 0.6, -0.62, 1.7, 0.8);
+    const re = box("#6b4430", 0.12, 0.7, 0.6, 0.62, 1.7, 0.8);
+    body.add(le, re);
+    wings.push(le, re);
+    body.add(box(teamColor, 1.45, 0.2, 1.4, 0, 1.92, -0.2));
+    flagMount.position.set(0, 2.0, -0.8);
   } else if (id === "wolf") {
     // Four wheeled buggy with a launcher on the hood.
     body.add(box("#2fb59a", 1.5, 0.45, 2.3, 0, 0.62, 0));

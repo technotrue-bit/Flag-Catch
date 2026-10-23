@@ -51,6 +51,8 @@ const flagViews: FlagRig[] = [];
 const fireGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.7, 10);
 fireGeo.rotateX(Math.PI / 2);
 const fireMat = toon("#e8455b");
+const bombGeo = new THREE.SphereGeometry(0.38, 12, 8);
+const bombMat = toon("#3b3550");
 const fireMeshes = new Map<number, THREE.Mesh>();
 const ringGeo = new THREE.CircleGeometry(1.2, 24);
 ringGeo.rotateX(-Math.PI / 2);
@@ -138,7 +140,7 @@ function humanInput(): Input {
   // Screen right is forward x up: (-fz, fx).
   const dirX = fx * controls.steerY - fz * controls.steerX;
   const dirZ = fz * controls.steerY + fx * controls.steerX;
-  const input: Input = { dirX, dirZ, jump: controls.jump, throwPressed: controls.throwQueued };
+  const input: Input = { dirX, dirZ, jump: controls.jump, throwPressed: controls.throwQueued, dive: controls.dive };
   controls.throwQueued = false;
   return input;
 }
@@ -215,6 +217,16 @@ function handleEvents(): void {
         sfx.splash(pan, near);
         fx.burst(e.x, 0.2, e.z, ["#ffffff", "#bff0f5"], 14, 5, 16, 0.2);
         break;
+      case "dive":
+      case "surface":
+        sfx.splash(pan, near * 0.6);
+        fx.burst(e.x, 0.2, e.z, ["#ffffff", "#bff0f5"], 10, 3.5, 14, 0.18);
+        break;
+      case "boom":
+        sfx.pop(pan, near);
+        fx.burst(e.x, e.y + 0.5, e.z, ["#ffd166", "#ff9f1c", "#3b3550", "#ffffff"], 40, 10, 16, 0.32);
+        if (e.player === 0) shake = Math.max(shake, 0.2);
+        break;
     }
   }
 }
@@ -281,7 +293,7 @@ function syncViews(t: number, dt: number): void {
     alive.add(f.id);
     let mesh = fireMeshes.get(f.id);
     if (!mesh) {
-      mesh = new THREE.Mesh(fireGeo, fireMat);
+      mesh = new THREE.Mesh(f.bomb ? bombGeo : fireGeo, f.bomb ? bombMat : fireMat);
       scene.add(mesh);
       fireMeshes.set(f.id, mesh);
     }

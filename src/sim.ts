@@ -26,6 +26,14 @@ export const tune = {
   popPush: 9,
   grabRadius: 1.8,
   baseRadius: 4.2,
+  /** Seconds a diver can stay under, how deep they sit, and their speed there. */
+  diveBreath: 4,
+  diveDepth: 1.1,
+  diveSpeed: 0.8,
+  /** Bombs pop everyone this close to where they land. */
+  bombRadius: 3,
+  /** A flyer must be this high over the ground to drop a bomb. */
+  bombHeight: 2.5,
 };
 
 export interface Input {
@@ -34,9 +42,11 @@ export interface Input {
   dirZ: number;
   jump: boolean;
   throwPressed: boolean;
+  /** Held: water animals stay under while in water. */
+  dive?: boolean;
 }
 
-export const NO_INPUT: Input = { dirX: 0, dirZ: 0, jump: false, throwPressed: false };
+export const NO_INPUT: Input = { dirX: 0, dirZ: 0, jump: false, throwPressed: false, dive: false };
 
 export interface Player {
   id: number;
@@ -62,6 +72,12 @@ export interface Player {
   grabCd: number;
   carrying: number;
   score: number;
+  /** Under water: firecrackers and bombs pass over. */
+  diving: boolean;
+  /** Seconds of dive left; refills at the surface. */
+  breath: number;
+  /** After running out of breath, a short wait before diving again. */
+  diveCd: number;
   /** CPU state. Defenders hold their homeland, attackers raid. */
   role: "attack" | "defend";
   thinkCd: number;
@@ -105,6 +121,8 @@ export interface Firecracker {
   vz: number;
   skidding: boolean;
   life: number;
+  /** Dropped by a flyer: falls straight and bursts on landing. */
+  bomb: boolean;
 }
 
 export type SimEvent =
@@ -116,6 +134,9 @@ export type SimEvent =
   | { kind: "bank"; x: number; y: number; z: number; player: number; team: Team }
   | { kind: "return"; x: number; y: number; z: number; player: number; team: Team }
   | { kind: "jump"; player: number }
+  | { kind: "boom"; x: number; y: number; z: number; player: number }
+  | { kind: "dive"; x: number; z: number; player: number }
+  | { kind: "surface"; x: number; z: number; player: number }
   | { kind: "splash"; x: number; z: number; player: number }
   | { kind: "end"; winner: Team | -1 };
 
@@ -230,6 +251,9 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     grabCd: 0,
     carrying: -1,
     score: 0,
+    diving: false,
+    breath: tune.diveBreath,
+    diveCd: 0,
     role: "attack",
     thinkCd: 0,
     goalX: x,
@@ -279,12 +303,14 @@ export function step(m: Match, human: Input): void {
 
 function speedFor(p: Player): number {
   if (p.medium === "air") return p.def.airSpeed;
-  return p.medium === "water" ? p.def.waterSpeed : p.def.landSpeed;
+  if (p.medium === "water") return p.def.waterSpeed * (p.diving ? tune.diveSpeed : 1);
+  return p.def.landSpeed;
 }
 
 function movePlayer(m: Match, p: Player, input: Input): void {
   p.throwCd = Math.max(0, p.throwCd - STEP);
   p.grabCd = Math.max(0, p.grabCd - STEP);
+  p.diveCd = Math.max(0, p.diveCd - STEP);
   const stunned = p.stun > 0;
   if (stunned) p.stun = Math.max(0, p.stun - STEP);
 
@@ -321,6 +347,11 @@ function movePlayer(m: Match, p: Player, input: Input): void {
   // Jump, hold to float, flyers climb.
   const jumpDown = !stunned && input.jump;
   if (jumpDown && !p.jumpWasHeld && p.onSurface) {
+    if (p.diving) {
+      // Leap straight out of a dive.
+      p.diving = false;
+      p.y = surfaceHeight(p.x, p.z);
+    }
     p.vy = p.def.jumpSpeed;
     p.onSurface = false;
     m.events.push({ kind: "jump", player: p.id });
@@ -354,13 +385,52 @@ function movePlayer(m: Match, p: Player, input: Input): void {
     p.onSurface = false;
   }
   p.medium = !p.onSurface && p.y - surf > 1.2 ? "air" : water ? "water" : "land";
+  stepDive(m, p, !stunned && !!input.dive && water && p.onSurface);
 
-  if (!stunned && input.throwPressed && p.throwCd <= 0) throwFire(m, p);
+  if (!stunned && !p.diving && input.throwPressed && p.throwCd <= 0) throwFire(m, p);
+}
+
+function stepDive(m: Match, p: Player, want: boolean): void {
+  const can = p.def.dive && p.diveCd <= 0 && p.breath > 0;
+  if (want && can && !p.diving) {
+    p.diving = true;
+    m.events.push({ kind: "dive", x: p.x, z: p.z, player: p.id });
+  } else if (p.diving && !(want && can)) {
+    p.diving = false;
+    if (p.breath <= 0) p.diveCd = 1.5;
+    m.events.push({ kind: "surface", x: p.x, z: p.z, player: p.id });
+  }
+  if (p.diving) {
+    p.breath = Math.max(0, p.breath - STEP);
+    p.y = surfaceHeight(p.x, p.z) - tune.diveDepth;
+  } else {
+    p.breath = Math.min(tune.diveBreath, p.breath + STEP * 0.8);
+  }
 }
 
 function throwFire(m: Match, p: Player): void {
   const d = p.def;
   p.throwCd = tune.throwCooldown * d.shotCooldown;
+  if (d.bomber && !p.onSurface && p.y - surfaceHeight(p.x, p.z) > tune.bombHeight) {
+    // Bombs away: falls from under the flyer, carrying a little of its speed.
+    const bomb: Firecracker = {
+      id: m.nextFireId++,
+      owner: p.id,
+      team: p.team,
+      x: p.x,
+      y: p.y - 0.4,
+      z: p.z,
+      vx: Math.sin(p.heading) * p.speed * 0.7,
+      vy: -3,
+      vz: Math.cos(p.heading) * p.speed * 0.7,
+      skidding: false,
+      life: 5,
+      bomb: true,
+    };
+    m.fires.push(bomb);
+    m.events.push({ kind: "throw", x: bomb.x, y: bomb.y, z: bomb.z, player: p.id });
+    return;
+  }
   const fx = Math.sin(p.heading);
   const fz = Math.cos(p.heading);
   const speed = tune.throwSpeed * d.shotSpeed + Math.max(0, p.speed) * 0.6;
@@ -376,6 +446,7 @@ function throwFire(m: Match, p: Player): void {
     vz: fz * speed,
     skidding: false,
     life: tune.fireLife,
+    bomb: false,
   };
   m.fires.push(fire);
   m.events.push({ kind: "throw", x: fire.x, y: fire.y, z: fire.z, player: p.id });
@@ -392,6 +463,11 @@ function stepFires(m: Match): void {
     f.x += f.vx * STEP;
     f.z += f.vz * STEP;
     const surf = surfaceHeight(f.x, f.z);
+    if (f.bomb) {
+      if (f.y <= surf + 0.3) explode(m, f, surf);
+      else if (inWorld(f.x, f.z) && f.life > 0) keep.push(f);
+      continue;
+    }
     if (!f.skidding && f.y <= surf + 0.3) {
       // Landed: skid along the ground and the water like a shell.
       f.skidding = true;
@@ -405,12 +481,12 @@ function stepFires(m: Match): void {
     }
     let hit = false;
     for (const p of m.players) {
-      if (p.team === f.team || p.stun > 0) continue;
+      if (p.team === f.team || p.stun > 0 || p.diving) continue;
       const dx = p.x - f.x;
       const dz = p.z - f.z;
       const dy = p.y + 0.7 - f.y;
       if (dx * dx + dz * dz + dy * dy < tune.hitRadius * tune.hitRadius) {
-        pop(m, p, f);
+        pop(m, p, f.owner, f.vx, f.vz);
         hit = true;
         break;
       }
@@ -425,17 +501,30 @@ function stepFires(m: Match): void {
   m.fires = keep;
 }
 
-function pop(m: Match, p: Player, f: Firecracker): void {
-  p.stun = tune.stunTime;
-  p.vy = tune.popLift;
+function explode(m: Match, f: Firecracker, surf: number): void {
+  m.events.push({ kind: "boom", x: f.x, y: surf, z: f.z, player: f.owner });
+  for (const p of m.players) {
+    if (p.team === f.team || p.stun > 0 || p.diving) continue;
+    const dx = p.x - f.x;
+    const dz = p.z - f.z;
+    if (dx * dx + dz * dz < tune.bombRadius * tune.bombRadius && Math.abs(p.y - surf) < 3) pop(m, p, f.owner, dx, dz);
+  }
+}
+
+/** Knock `p` flying away along (dirX, dirZ); tough animals recover sooner. */
+function pop(m: Match, p: Player, by: number, dirX: number, dirZ: number): void {
+  const t = p.def.toughness;
+  p.stun = tune.stunTime * t;
+  p.vy = tune.popLift * (0.5 + 0.5 * t);
   p.onSurface = false;
-  const len = Math.hypot(f.vx, f.vz) || 1;
-  p.kx = (f.vx / len) * tune.popPush;
-  p.kz = (f.vz / len) * tune.popPush;
+  const len = Math.hypot(dirX, dirZ) || 1;
+  const push = tune.popPush * (0.5 + 0.5 * t);
+  p.kx = (dirX / len) * push;
+  p.kz = (dirZ / len) * push;
   p.speed *= 0.2;
-  const owner = m.players[f.owner];
+  const owner = m.players[by];
   if (owner) owner.score += 5;
-  m.events.push({ kind: "pop", x: p.x, y: p.y + 0.8, z: p.z, player: p.id, by: f.owner });
+  m.events.push({ kind: "pop", x: p.x, y: p.y + 0.8, z: p.z, player: p.id, by });
   dropFlag(m, p);
 }
 
@@ -561,9 +650,26 @@ function cpuInput(m: Match, p: Player): Input {
       break;
     }
   }
-  // Hop small rises and channels now and then.
-  const jump = p.onSurface ? groundHeight(p.x + fwdX * 3, p.z + fwdZ * 3) - p.y > 1.2 || m.rng() < 0.004 : p.vy > 0;
-  return { dirX: (dx / d) * throttle, dirZ: (dz / d) * throttle, jump, throwPressed };
+  let jump: boolean;
+  if (p.def.cls === "air" && d > 18) {
+    // Flyers take to the air for long trips: tap off the ground, hold to climb.
+    jump = p.onSurface ? !p.jumpWasHeld : p.floatLeft > 0.2;
+    if (p.def.bomber && !p.onSurface) throwPressed = enemyBelow(m, p);
+  } else {
+    // Hop small rises and channels now and then.
+    jump = p.onSurface ? groundHeight(p.x + fwdX * 3, p.z + fwdZ * 3) - p.y > 1.2 || m.rng() < 0.004 : p.vy > 0;
+  }
+  // Swimmers duck under incoming firecrackers, or to sneak a flag home.
+  const dive = p.def.dive && (threatened(m, p) || (p.carrying >= 0 && p.breath > 2.5));
+  return { dirX: (dx / d) * throttle, dirZ: (dz / d) * throttle, jump: jump && !dive, throwPressed, dive };
+}
+
+function threatened(m: Match, p: Player): boolean {
+  return m.fires.some((f) => f.team !== p.team && Math.hypot(f.x - p.x, f.z - p.z) < 7);
+}
+
+function enemyBelow(m: Match, p: Player): boolean {
+  return m.players.some((o) => o.team !== p.team && o.stun <= 0 && !o.diving && Math.hypot(o.x - p.x, o.z - p.z) < 3.5);
 }
 
 function cpuGoal(m: Match, p: Player): [number, number] {

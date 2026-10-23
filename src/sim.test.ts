@@ -1,9 +1,36 @@
 import { describe, expect, it } from "vitest";
 import { ANIMALS } from "./animals";
-import { HOARD_TARGET, NO_INPUT, STEP, createMatch, step, tune } from "./sim";
-import { BRIDGE_X, ZONE_EDGE, groundHeight, isWater, landOf } from "./terrain";
+import { type Firecracker, HOARD_TARGET, type Match, NO_INPUT, STEP, createMatch, step, tune } from "./sim";
+import { BRIDGE_X, ZONE_EDGE, groundHeight, isWater, landOf, surfaceHeight } from "./terrain";
 
 const opts = { seed: 3, humanAnimal: "lion", perTeam: 4, duration: 60, flagsPerTeam: 5 };
+
+/** Park everyone but the listed players so they can't move, throw or be hit. */
+function freezeOthers(m: Match, keep: number[]): void {
+  for (const p of m.players) if (!keep.includes(p.id)) p.stun = 999;
+}
+
+function enemyFire(m: Match, target: number, extra: Partial<Firecracker> = {}): Firecracker {
+  const p = m.players[target];
+  const owner = m.players.find((o) => o.team !== p.team)!;
+  const f: Firecracker = {
+    id: m.nextFireId++,
+    owner: owner.id,
+    team: owner.team,
+    x: p.x,
+    y: p.y + 0.7,
+    z: p.z,
+    vx: 1,
+    vy: 0,
+    vz: 0,
+    skidding: false,
+    life: 3,
+    bomb: false,
+    ...extra,
+  };
+  m.fires.push(f);
+  return f;
+}
 
 function run(seed: number, seconds: number) {
   const m = createMatch({ ...opts, seed });
@@ -166,5 +193,99 @@ describe("match sim", () => {
     const z0 = p.z;
     for (let i = 0; i < 60; i++) step(m, { dirX: Math.sin(p.heading), dirZ: Math.cos(p.heading), jump: false, throwPressed: false });
     expect(Math.hypot(p.x - x0, p.z - z0)).toBeGreaterThan(6);
+  });
+
+  it("swimmers dive under shots, but only while they have breath", () => {
+    const m = createMatch({ ...opts, humanAnimal: "penguin" });
+    const p = m.players[0];
+    freezeOthers(m, [0]);
+    let spot: [number, number] | null = null;
+    for (let x = -40; x <= 40 && !spot; x += 2)
+      for (let z = -30; z <= 30 && !spot; z += 2) if (groundHeight(x, z) < -1.5) spot = [x, z];
+    expect(spot).not.toBeNull();
+    [p.x, p.z] = spot!;
+    p.y = 0;
+    p.vy = 0;
+    p.onSurface = true;
+    const dive = { ...NO_INPUT, dive: true };
+    step(m, dive);
+    expect(p.diving).toBe(true);
+    expect(p.y).toBeLessThan(surfaceHeight(p.x, p.z));
+    enemyFire(m, 0, { y: p.y + 0.7 });
+    for (let i = 0; i < 10; i++) step(m, dive);
+    expect(p.stun).toBe(0);
+    // Out of breath: forced up for a moment.
+    for (let i = 0; i < (tune.diveBreath + 0.5) / STEP; i++) step(m, dive);
+    expect(p.diving).toBe(false);
+    expect(p.diveCd).toBeGreaterThan(0);
+    // A land animal can't dive at all.
+    const lion = createMatch(opts);
+    freezeOthers(lion, [0]);
+    const q = lion.players[0];
+    [q.x, q.z] = spot!;
+    q.y = 0;
+    q.onSurface = true;
+    step(lion, dive);
+    expect(q.diving).toBe(false);
+  });
+
+  it("an eagle's bomb pops enemies around where it lands", () => {
+    const m = createMatch({ ...opts, humanAnimal: "eagle" });
+    const target = m.players.find((o) => o.team !== m.players[0].team)!;
+    const bystander = m.players.find((o) => o.team !== m.players[0].team && o.id !== target.id)!;
+    freezeOthers(m, [0, target.id, bystander.id]);
+    target.cpu = false;
+    bystander.cpu = false;
+    bystander.x = target.x + 12;
+    bystander.z = target.z;
+    m.fires.push({
+      id: m.nextFireId++,
+      owner: 0,
+      team: m.players[0].team,
+      x: target.x + 1.5,
+      y: target.y + 6,
+      z: target.z,
+      vx: 0,
+      vy: -3,
+      vz: 0,
+      skidding: false,
+      life: 5,
+      bomb: true,
+    });
+    const kinds: string[] = [];
+    for (let i = 0; i < 90; i++) {
+      step(m, NO_INPUT);
+      for (const e of m.events) kinds.push(e.kind);
+    }
+    expect(kinds).toContain("boom");
+    expect(target.stun > 0 || kinds.includes("pop")).toBe(true);
+    expect(bystander.stun).toBe(0);
+  });
+
+  it("the mammoth shrugs off a pop faster than the lion", () => {
+    const stunAfterHit = (animal: string) => {
+      const m = createMatch({ ...opts, humanAnimal: animal });
+      freezeOthers(m, [0]);
+      enemyFire(m, 0);
+      step(m, NO_INPUT);
+      return m.players[0].stun;
+    };
+    const lion = stunAfterHit("lion");
+    const mammoth = stunAfterHit("mammoth");
+    expect(lion).toBeGreaterThan(0);
+    expect(mammoth).toBeGreaterThan(0);
+    expect(mammoth).toBeLessThan(lion * 0.6);
+  });
+
+  it("the CPU uses dives, bombs and flight over a long match", () => {
+    const m = createMatch({ ...opts, seed: 8, humanAnimal: "eagle", perTeam: 6, duration: 240 });
+    m.players[0].cpu = true;
+    const kinds = new Set<string>();
+    while (!m.over) {
+      step(m, NO_INPUT);
+      for (const e of m.events) kinds.add(e.kind);
+    }
+    expect(kinds.has("dive")).toBe(true);
+    expect(kinds.has("boom")).toBe(true);
   });
 });
