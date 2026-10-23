@@ -125,7 +125,20 @@ export interface Base {
   z: number;
 }
 
+/**
+ * Capture: most flags stolen and brought home when the clock runs out.
+ * Hoard: every flag sitting in your base earns points over time, and the
+ * first team to HOARD_TARGET wins; stealing shifts who earns faster.
+ */
+export type Mode = "capture" | "hoard";
+export const HOARD_TARGET = 1000;
+/** Points each flag in your base earns per second in Hoard. */
+export const HOARD_RATE = 1;
+
 export interface Match {
+  mode: Mode;
+  /** Hoard points with fractions; `scores` shows them rounded down. */
+  points: [number, number];
   rng: RNG;
   time: number;
   timeLeft: number;
@@ -145,6 +158,7 @@ export interface MatchOptions {
   perTeam: number;
   duration: number;
   flagsPerTeam: number;
+  mode?: Mode;
 }
 
 export function createMatch(opts: MatchOptions): Match {
@@ -179,6 +193,8 @@ export function createMatch(opts: MatchOptions): Match {
   return {
     rng,
     time: 0,
+    mode: opts.mode ?? "capture",
+    points: [0, 0],
     timeLeft: opts.duration,
     over: false,
     players,
@@ -243,6 +259,15 @@ export function step(m: Match, human: Input): void {
   }
   stepFires(m);
   stepFlags(m);
+
+  if (m.mode === "hoard") {
+    for (const team of [0, 1] as const) {
+      const held = m.flags.filter((f) => f.team === team && f.state === "home").length;
+      m.points[team] += held * HOARD_RATE * STEP;
+      m.scores[team] = Math.min(HOARD_TARGET, Math.floor(m.points[team]));
+    }
+    if (m.scores[0] >= HOARD_TARGET || m.scores[1] >= HOARD_TARGET) m.timeLeft = 0;
+  }
 
   if (m.timeLeft <= 0) {
     m.timeLeft = 0;
@@ -462,7 +487,8 @@ function stepFlags(m: Match): void {
       if (Math.hypot(c.x - base.x, c.z - base.z) < tune.baseRadius) {
         c.carrying = -1;
         c.score += 25;
-        m.scores[c.team] += 1;
+        // In Hoard the flag pays out by sitting in the base instead.
+        if (m.mode === "capture") m.scores[c.team] += 1;
         placeHome(m, flag, c.team);
         m.events.push({ kind: "bank", x: base.x, y: surfaceHeight(base.x, base.z), z: base.z, player: c.id, team: c.team });
       }

@@ -8,7 +8,7 @@ import { ANIMALS, ANIMAL_IDS, type AnimalDef } from "./animals";
 import type { Controls } from "./input";
 import { FLAG_ENEMY, FLAG_FREE, PALETTE, TEAMS } from "./palette";
 import { sfx } from "./audio";
-import { type Match, tune } from "./sim";
+import { HOARD_TARGET, type Match, type Mode, tune } from "./sim";
 import { WORLD_HALF_X, WORLD_HALF_Z, groundHeight, landOf, onBridge } from "./terrain";
 
 const MAP_W = 156;
@@ -54,6 +54,11 @@ const CSS = `
 .fc-sel{position:absolute;inset:0;pointer-events:none}
 .fc-sel h2{position:absolute;top:max(14px,env(safe-area-inset-top));left:0;right:0;margin:0;text-align:center;font-size:34px;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
 .fc-sel h2 small{display:block;font-size:14px;letter-spacing:0;-webkit-text-stroke:0;color:rgba(43,35,64,.7)}
+.fc-modes{position:absolute;top:calc(max(14px,env(safe-area-inset-top)) + 64px);left:0;right:0;display:flex;justify-content:center;gap:8px}
+.fc-mode{pointer-events:auto;padding:7px 14px;border-radius:999px;background:rgba(255,250,240,.9);border:3px solid transparent;box-shadow:0 3px 0 rgba(43,35,64,.2);font-weight:900;font-size:14px;text-align:center}
+.fc-mode small{display:block;font-size:10px;font-weight:700;color:rgba(43,35,64,.65)}
+.fc-mode.on{border-color:${PALETTE.ink};background:#fffaf0}
+.fc-timer.goal{font-size:13px;line-height:1.1;padding:5px 10px}
 .fc-row{position:absolute;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));display:flex;justify-content:center;align-items:flex-end;gap:8px;padding:0 max(10px,env(safe-area-inset-right)) 0 max(10px,env(safe-area-inset-left))}
 .fc-tile{pointer-events:auto;width:min(122px,18vw);padding:8px 9px 9px;border-radius:16px;background:rgba(255,250,240,.94);border:3px solid transparent;box-shadow:0 4px 0 rgba(43,35,64,.22);text-align:left;transition:transform .15s}
 .fc-tile.on{border-color:${PALETTE.ink};transform:translateY(-6px)}
@@ -83,7 +88,7 @@ export interface Hud {
   update(m: Match, controls: Controls, camYaw: number): void;
   call(text: string, color?: string): void;
   /** Pick your animal. onPick fires on every tap so the 3D preview can swap. */
-  showSelect(current: string, onPick: (id: string) => void, onPlay: () => void): void;
+  showSelect(current: string, mode: Mode, onPick: (id: string) => void, onPlay: (mode: Mode) => void): void;
   /** 3, 2, 1, GO! then onDone. */
   countdown(onDone: () => void): void;
   showResults(m: Match, onAgain: () => void, onChange: () => void): void;
@@ -236,9 +241,16 @@ export function createHud(controls: Controls): Hud {
     update(m, c, camYaw) {
       scoreA.textContent = String(m.scores[0]);
       scoreB.textContent = String(m.scores[1]);
-      const t = Math.ceil(m.timeLeft);
-      timer.textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
-      timer.classList.toggle("low", t <= 15);
+      if (m.mode === "hoard") {
+        timer.textContent = `FIRST TO ${HOARD_TARGET}`;
+        timer.classList.add("goal");
+        timer.classList.toggle("low", Math.max(...m.scores) >= HOARD_TARGET * 0.9);
+      } else {
+        const t = Math.ceil(m.timeLeft);
+        timer.textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+        timer.classList.remove("goal");
+        timer.classList.toggle("low", t <= 15);
+      }
 
       stick.style.display = knob.style.display = c.stick.active ? "block" : "none";
       if (c.stick.active) {
@@ -306,12 +318,30 @@ export function createHud(controls: Controls): Hud {
       call.classList.add("show");
       callTimer = 0.9;
     },
-    showSelect(current, onPick, onPlay) {
+    showSelect(current, mode, onPick, onPlay) {
       root.classList.add("fc-menu");
       const sel = el("div", "fc-sel", root);
       const title = el("h2", "", sel);
       title.textContent = "PICK YOUR ANIMAL";
       el("small", "", title).textContent = "Steal flags from the enemy base and bring them home. Guard yours!";
+      const modes = el("div", "fc-modes", sel);
+      const modeBtns = new Map<Mode, HTMLElement>();
+      const modeInfo: Array<[Mode, string, string]> = [
+        ["capture", "CAPTURE", "Most steals in 3 minutes"],
+        ["hoard", "HOARD", `Held flags earn points, first to ${HOARD_TARGET}`],
+      ];
+      for (const [id, name, info] of modeInfo) {
+        const b = el("div", "fc-mode", modes);
+        b.textContent = name;
+        el("small", "", b).textContent = info;
+        b.addEventListener("pointerdown", (e) => {
+          e.stopPropagation();
+          mode = id;
+          modeBtns.forEach((n, k) => n.classList.toggle("on", k === mode));
+        });
+        modeBtns.set(id, b);
+      }
+      modeBtns.forEach((n, k) => n.classList.toggle("on", k === mode));
       const row = el("div", "fc-row", sel);
       const tiles = new Map<string, HTMLElement>();
       const pick = (id: string) => {
@@ -333,7 +363,7 @@ export function createHud(controls: Controls): Hud {
         e.stopPropagation();
         sel.remove();
         root.classList.remove("fc-menu");
-        onPlay();
+        onPlay(mode);
       });
       pick(current);
     },
@@ -365,7 +395,7 @@ export function createHud(controls: Controls): Hud {
       const box = el("div", "box", card);
       const [a, b] = m.scores;
       el("h1", "", box).textContent = a === b ? "DRAW!" : a > b ? "YOU WIN!" : "SO CLOSE!";
-      el("p", "", box).textContent = `${TEAMS[0].name} ${a}  :  ${b} ${TEAMS[1].name}`;
+      el("p", "", box).textContent = `${TEAMS[0].name} ${a}  :  ${b} ${TEAMS[1].name}${m.mode === "hoard" ? " points" : ""}`;
       el("p", "", box).textContent = `Your points: ${m.players[0].score}`;
       const row = el("div", "row2", box);
       const again = el("div", "go", row);

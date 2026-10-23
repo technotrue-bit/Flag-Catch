@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ANIMALS } from "./animals";
-import { NO_INPUT, STEP, createMatch, step, tune } from "./sim";
+import { HOARD_TARGET, NO_INPUT, STEP, createMatch, step, tune } from "./sim";
 import { BRIDGE_X, ZONE_EDGE, groundHeight, isWater, landOf } from "./terrain";
 
 const opts = { seed: 3, humanAnimal: "lion", perTeam: 4, duration: 60, flagsPerTeam: 5 };
@@ -132,6 +132,19 @@ describe("match sim", () => {
     }
     expect(a).toBeGreaterThan(3);
     expect(b).toBeGreaterThan(3);
+  });
+
+  it("Hoard: flags in your base count points up, and the first to the target wins", () => {
+    const m = createMatch({ ...opts, duration: 900, mode: "hoard" });
+    m.players[0].cpu = true;
+    for (let i = 0; i < 10 / STEP; i++) step(m, NO_INPUT);
+    // Five flags each for ten seconds is about 50 points a side, still climbing.
+    expect(m.scores[0]).toBeGreaterThan(40);
+    expect(m.scores[1]).toBeGreaterThan(40);
+    expect(m.over).toBe(false);
+    while (!m.over) step(m, NO_INPUT);
+    expect(Math.max(...m.scores)).toBe(HOARD_TARGET);
+    expect(m.time).toBeLessThan(600);
   });
 
   it("the wolf is the fastest car and shoots harder and more often", () => {

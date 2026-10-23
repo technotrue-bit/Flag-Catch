@@ -14,7 +14,7 @@ import { createHud } from "./hud";
 import { createControls } from "./input";
 import { type AnimalRig, type FlagRig, buildAnimal, buildFlag, toon } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, TEAMS } from "./palette";
-import { type Input, type Match, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
+import { type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
 import { landOf, surfaceHeight } from "./terrain";
 import { buildWorld } from "./world";
 
@@ -22,6 +22,7 @@ const params = new URLSearchParams(location.search);
 let humanAnimal = ANIMALS[params.get("animal") ?? ""] ? params.get("animal")! : "lion";
 const perTeam = clampInt(Number(params.get("per") ?? 4), 1, 16);
 const duration = clampInt(Number(params.get("time") ?? 180), 20, 900);
+let mode: Mode = params.get("mode") === "hoard" ? "hoard" : loadMode();
 
 const app = document.getElementById("app")!;
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -55,7 +56,8 @@ const ringGeo = new THREE.CircleGeometry(1.2, 24);
 ringGeo.rotateX(-Math.PI / 2);
 
 function newMatch(seed: number): Match {
-  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam: 5 });
+  // Hoard ends at the points target; the 15 minute cap only stops a stalemate.
+  return createMatch({ seed, humanAnimal, perTeam, duration: mode === "hoard" ? 900 : duration, flagsPerTeam: 5, mode });
 }
 
 function rebuildViews(): void {
@@ -203,9 +205,11 @@ function handleEvents(): void {
       case "bank":
         sfx.bank(pan, near);
         fx.burst(e.x, e.y + 1, e.z, ["#ffd166", "#ff6b5b", "#46b4e8", "#7ee36b", "#b3a9ff"], 60, 12, 14, 0.3);
-        if (mine) hud.call("YOU SCORED!", TEAMS[0].color);
-        else if (e.team === 0) hud.call("TEAM SCORED!", TEAMS[0].color);
-        else hud.call("THEY SCORED", TEAMS[1].light);
+        // In Hoard a bank adds a flag that earns points, not a point itself.
+        const hoard = match.mode === "hoard";
+        if (mine) hud.call(hoard ? "FLAG BANKED!" : "YOU SCORED!", TEAMS[0].color);
+        else if (e.team === 0) hud.call(hoard ? "TEAM BANKED A FLAG!" : "TEAM SCORED!", TEAMS[0].color);
+        else hud.call(hoard ? "THEY BANKED ONE" : "THEY SCORED", TEAMS[1].light);
         break;
       case "splash":
         sfx.splash(pan, near);
@@ -384,14 +388,20 @@ function showSelect(): void {
   phase = "select";
   hud.showSelect(
     humanAnimal,
+    mode,
     (id) => {
       unlockAudio();
       if (id !== humanAnimal) sfx.pick();
       swapAnimal(id);
     },
-    () => {
+    (picked) => {
       unlockAudio();
       tryLandscape();
+      if (picked !== mode) {
+        mode = picked;
+        saveMode(mode);
+        freshMatch();
+      }
       // Swoop from the turntable view to behind your animal.
       startCountdown(false);
     },
@@ -420,6 +430,24 @@ function tryLandscape(): void {
     p?.then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> })?.lock?.("landscape")).catch(() => {});
   } catch {
     // Fullscreen is a bonus; iPhone Safari does not offer it.
+  }
+}
+
+const MODE_KEY = "flagcatch.mode";
+
+function loadMode(): Mode {
+  try {
+    return localStorage.getItem(MODE_KEY) === "hoard" ? "hoard" : "capture";
+  } catch {
+    return "capture";
+  }
+}
+
+function saveMode(m: Mode): void {
+  try {
+    localStorage.setItem(MODE_KEY, m);
+  } catch {
+    // Private mode: the pick lasts until the page closes.
   }
 }
 

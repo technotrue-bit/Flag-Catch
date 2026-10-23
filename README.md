@@ -6,7 +6,13 @@ Two teams of animals race across three lands (your homeland, the middle land and
 the enemy's homeland). Each team's flags start in its own base: steal one from
 the enemy base and carry it home to score, and guard your own. Firecrackers pop
 rivals loose so they drop what they carry; touch your own dropped flag to send
-it home. Land, water and air
+it home.
+
+Two modes, picked on the start screen:
+
+- Capture: most flags brought home before the 3 minute clock runs out.
+- Hoard: every flag sitting in your base earns a point a second, and the first
+  team to 1000 points wins. Stealing flags shifts who earns faster. Land, water and air
 animals each rule different ground.
 
 ## Status
@@ -28,7 +34,7 @@ npm run build
 ```
 
 URL options: `?animal=lion|penguin|eagle|wolf` (preselected on the pick screen), `?per=1..16` (animals per team),
-`?time=20..900` (match seconds), `?seed=N`.
+`?time=20..900` (Capture match seconds), `?mode=hoard`, `?seed=N`.
 
 ## Controls
 
