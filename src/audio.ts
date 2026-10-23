@@ -113,6 +113,22 @@ export const sfx = {
     tone("sine", 1800, 1800, 0.12, 0, 0.18);
     tone("sine", 1800, 2200, 0.3, 0, 0.18, 0.16);
   },
+  /** Picked up a power up: a quick rising sparkle. */
+  item(pan: number, near: number) {
+    [880, 1175, 1568].forEach((f, i) => tone("triangle", f, f * 1.02, 0.1, pan, 0.18 * near, i * 0.05));
+  },
+  use(pan: number, near: number) {
+    tone("sawtooth", 300, 900, 0.22, pan, 0.12 * near);
+    hiss(0.25, 3000, pan, 0.12 * near);
+  },
+  block(pan: number, near: number) {
+    tone("sine", 1600, 1400, 0.15, pan, 0.2 * near);
+    tone("sine", 2400, 2200, 0.12, pan, 0.1 * near, 0.03);
+  },
+  zap(pan: number, near: number) {
+    hiss(0.5, 4500, pan, 0.5 * near);
+    tone("square", 90, 40, 0.4, pan, 0.2 * near);
+  },
   end() {
     [784, 659, 523, 784, 1046].forEach((f, i) => tone("triangle", f, f, 0.22, 0, 0.2, i * 0.12));
   },

@@ -1,10 +1,9 @@
 /**
- * FLAG CATCH feel prototype. Three lands in a row (yours, the middle, the
- * enemy's), two teams of four, flags, bases, firecrackers and four animals.
- * Throwaway: it exists to settle movement, camera, thumb controls and throw
- * feel before the real build.
+ * FLAG CATCH. Three lands in a row (yours, the middle, the enemy's), two
+ * teams of 8 to 64 animals, flags, bases, firecrackers and power ups.
  *
- * Flow: pick your animal, then 3, 2, 1, GO!, then the match, then results.
+ * Flow: pick your animal, mode and team size, then 3, 2, 1, GO!, then the
+ * match, then results.
  */
 import * as THREE from "three";
 import { ANIMALS } from "./animals";
@@ -14,14 +13,15 @@ import { createHud } from "./hud";
 import { createControls } from "./input";
 import { type AnimalRig, type FlagRig, buildAnimal, buildFlag, toon } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, TEAMS } from "./palette";
-import { type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
-import { landOf, surfaceHeight } from "./terrain";
-import { buildWorld } from "./world";
+import { ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
+import { MAPS, landOf, mapFor, surfaceHeight } from "./terrain";
+import { type World, buildWorld } from "./world";
 
 const params = new URLSearchParams(location.search);
 let humanAnimal = ANIMALS[params.get("animal") ?? ""] ? params.get("animal")! : "lion";
-const perTeam = clampInt(Number(params.get("per") ?? 4), 1, 16);
-const duration = clampInt(Number(params.get("time") ?? 180), 20, 900);
+// Team size: 8 a side at least, up to 64; ?per= still allows small test games.
+let perTeam = params.has("per") ? clampInt(Number(params.get("per")), 1, 64) : loadSize();
+const timeParam = params.has("time") ? clampInt(Number(params.get("time")), 20, 900) : 0;
 let mode: Mode = params.get("mode") === "hoard" ? "hoard" : loadMode();
 
 const app = document.getElementById("app")!;
@@ -34,7 +34,7 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, 1, 0.3, 400);
 
 let match: Match = newMatch(Number(params.get("seed") ?? 1));
-const world = buildWorld(scene, match.bases);
+let world: World = buildWorld(scene, match);
 const fx = new Fx(scene);
 const controls = createControls(renderer.domElement);
 const hud = createHud(controls);
@@ -42,6 +42,8 @@ const hud = createHud(controls);
 interface PlayerView {
   rig: AnimalRig;
   ring: THREE.Mesh;
+  /** Shield bubble or Star glow, made on first use. */
+  aura?: THREE.Mesh;
   animal: string;
   bank: number;
   spin: number;
@@ -53,19 +55,40 @@ fireGeo.rotateX(Math.PI / 2);
 const fireMat = toon("#e8455b");
 const bombGeo = new THREE.SphereGeometry(0.38, 12, 8);
 const bombMat = toon("#3b3550");
+const missileGeo = new THREE.ConeGeometry(0.3, 1.1, 4);
+missileGeo.rotateX(Math.PI / 2);
+const missileMat = toon("#f4f1e8");
 const fireMeshes = new Map<number, THREE.Mesh>();
 const ringGeo = new THREE.CircleGeometry(1.2, 24);
 ringGeo.rotateX(-Math.PI / 2);
+// Shared so a crowd of rings costs three materials, not 128.
+const ringMats = [
+  new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.75, depthWrite: false }),
+  ...TEAMS.map((t) => new THREE.MeshBasicMaterial({ color: t.color, transparent: true, opacity: 0.5, depthWrite: false })),
+];
+const shieldGeo = new THREE.SphereGeometry(1.7, 16, 12);
+const shieldMat = new THREE.MeshBasicMaterial({ color: "#7fd8ff", transparent: true, opacity: 0.28, depthWrite: false });
+const starMat = new THREE.MeshBasicMaterial({ color: "#ffd166", transparent: true, opacity: 0.4, depthWrite: false });
+const boltGeo = new THREE.CylinderGeometry(0.18, 0.05, 1, 5);
+boltGeo.translate(0, 0.5, 0);
+const boltMat = new THREE.MeshBasicMaterial({ color: "#fff27a", transparent: true, opacity: 0.95 });
+/** Lightning bolts and blast rings that fade out on their own. */
+const flashes: Array<{ mesh: THREE.Mesh; life: number; max: number; grow: number }> = [];
+// Animals beyond the fog are hidden, which matters with 128 of them.
+const DRAW_RANGE = 230;
 
 function newMatch(seed: number): Match {
+  const map = mapFor(perTeam);
   // Hoard ends at the points target; the 15 minute cap only stops a stalemate.
-  return createMatch({ seed, humanAnimal, perTeam, duration: mode === "hoard" ? 900 : duration, flagsPerTeam: 5, mode });
+  const duration = mode === "hoard" ? 900 : timeParam || map.duration;
+  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam: map.flagsPerTeam, mode, map });
 }
 
 function rebuildViews(): void {
   for (const v of views) {
     scene.remove(v.rig.root);
     scene.remove(v.ring);
+    if (v.aura) scene.remove(v.aura);
   }
   views = match.players.map((p) => makeView(p.def.id, p.team, p.id === 0));
   for (const f of flagViews) scene.remove(f.root);
@@ -82,10 +105,7 @@ function rebuildViews(): void {
 function makeView(animal: string, team: number, me: boolean): PlayerView {
   const rig = buildAnimal(animal, TEAMS[team].color);
   scene.add(rig.root);
-  const ring = new THREE.Mesh(
-    ringGeo,
-    new THREE.MeshBasicMaterial({ color: me ? "#ffffff" : TEAMS[team].color, transparent: true, opacity: me ? 0.75 : 0.5, depthWrite: false }),
-  );
+  const ring = new THREE.Mesh(ringGeo, ringMats[me ? 0 : team + 1]);
   scene.add(ring);
   return { rig, ring, animal, bank: 0, spin: 0 };
 }
@@ -140,8 +160,16 @@ function humanInput(): Input {
   // Screen right is forward x up: (-fz, fx).
   const dirX = fx * controls.steerY - fz * controls.steerX;
   const dirZ = fz * controls.steerY + fx * controls.steerX;
-  const input: Input = { dirX, dirZ, jump: controls.jump, throwPressed: controls.throwQueued, dive: controls.dive };
+  const input: Input = {
+    dirX,
+    dirZ,
+    jump: controls.jump,
+    throwPressed: controls.throwQueued,
+    dive: controls.dive,
+    useItem: controls.itemQueued,
+  };
   controls.throwQueued = false;
+  controls.itemQueued = false;
   return input;
 }
 
@@ -227,14 +255,94 @@ function handleEvents(): void {
         fx.burst(e.x, e.y + 0.5, e.z, ["#ffd166", "#ff9f1c", "#3b3550", "#ffffff"], 40, 10, 16, 0.32);
         if (e.player === 0) shake = Math.max(shake, 0.2);
         break;
+      case "item":
+        if (mine) {
+          sfx.item(0, 1);
+          hud.call(`GOT ${ITEMS[e.item].name}!`, "#ff6b9a");
+        }
+        fx.burst(e.x, 2, e.z, ["#ff6b9a", "#ffd166", "#ffffff"], mine ? 24 : 10, 5, 10, 0.2);
+        break;
+      case "use":
+        sfx.use(pan, near);
+        if (e.item === "blast") {
+          sfx.pop(pan, near);
+          flash(e.x, e.y + 0.4, e.z, "blast");
+          if (mine) shake = Math.max(shake, 0.35);
+        } else if (e.item === "superjump") {
+          fx.burst(e.x, e.y, e.z, ["#ffffff", "#bff0f5", "#ffd166"], 24, 7, 12, 0.22);
+        } else if (e.item === "star" || e.item === "shield" || e.item === "turbo") {
+          fx.burst(e.x, e.y + 1, e.z, e.item === "shield" ? ["#7fd8ff", "#ffffff"] : ["#ffd166", "#ff6b9a", "#ffffff"], 20, 5, 10, 0.2);
+        }
+        if (mine && e.item === "lightning") shake = Math.max(shake, 0.3);
+        break;
+      case "zap":
+        sfx.zap(pan, near);
+        flash(e.x, e.y, e.z, "bolt");
+        break;
+      case "block":
+        sfx.block(pan, near);
+        fx.burst(e.x, e.y, e.z, ["#7fd8ff", "#ffffff", "#ffd166"], 12, 5, 8, 0.18);
+        if (mine) hud.call("BLOCKED!", "#7fd8ff");
+        break;
+    }
+  }
+}
+
+/** A lightning bolt down onto a spot, or a blast ring spreading from one. */
+function flash(x: number, y: number, z: number, kind: "bolt" | "blast"): void {
+  const mesh = kind === "bolt" ? new THREE.Mesh(boltGeo, boltMat.clone()) : new THREE.Mesh(ringGeo, starMat.clone());
+  if (kind === "bolt") {
+    mesh.position.set(x, y, z);
+    mesh.scale.set(1, 40, 1);
+    fx.burst(x, y + 0.6, z, ["#fff27a", "#ffffff", "#7fd8ff"], 18, 6, 10, 0.2);
+  } else {
+    mesh.position.set(x, y, z);
+  }
+  scene.add(mesh);
+  flashes.push({ mesh, life: kind === "bolt" ? 0.3 : 0.45, max: kind === "bolt" ? 0.3 : 0.45, grow: kind === "bolt" ? 0 : 5.5 });
+}
+
+function stepFlashes(dt: number): void {
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const f = flashes[i];
+    f.life -= dt;
+    const k = Math.max(0, f.life / f.max);
+    (f.mesh.material as THREE.MeshBasicMaterial).opacity = k * 0.9;
+    if (f.grow) f.mesh.scale.setScalar(1 + (1 - k) * f.grow);
+    if (f.life <= 0) {
+      scene.remove(f.mesh);
+      (f.mesh.material as THREE.Material).dispose();
+      flashes.splice(i, 1);
     }
   }
 }
 
 function syncViews(t: number, dt: number): void {
+  const cx = camera.position.x;
+  const cz = camera.position.z;
   for (const p of match.players) {
     const v = views[p.id];
     const r = v.rig;
+    const far = Math.hypot(p.x - cx, p.z - cz) > DRAW_RANGE;
+    r.root.visible = v.ring.visible = !far;
+    // Shield bubble or Star glow while one runs.
+    const powered = p.shieldT > 0 || p.starT > 0;
+    if (powered && !v.aura) {
+      v.aura = new THREE.Mesh(shieldGeo, shieldMat);
+      scene.add(v.aura);
+    }
+    if (v.aura) {
+      v.aura.visible = powered && !far;
+      if (powered) {
+        v.aura.material = p.starT > 0 ? starMat : shieldMat;
+        v.aura.position.set(p.x, p.y + 1.1, p.z);
+        const blink = Math.min(p.shieldT, p.starT > 0 ? p.starT : Infinity) < 1.5 && Math.sin(t * 30) > 0;
+        v.aura.scale.setScalar(blink ? 0.01 : 1 + Math.sin(t * 8 + p.id) * 0.05);
+      }
+    }
+    if (far) continue;
+    if (p.starT > 0 && Math.random() < 0.5) fx.burst(p.x, p.y + 1, p.z, ["#ffd166", "#ff6b9a", "#7fd8ff", "#7ee36b"], 1, 3, 4, 0.16);
+    if (p.turboT > 0 && p.speed > 4 && Math.random() < 0.6) fx.burst(p.x, p.y + 0.4, p.z, ["#ff6b5b", "#ffd166"], 1, 1.5, 3, 0.14);
     r.root.position.set(p.x, p.y, p.z);
     r.root.rotation.y = p.heading;
     // Lean into turns and squash on landing.
@@ -281,7 +389,7 @@ function syncViews(t: number, dt: number): void {
       glow.opacity = 0.45 + 0.35 * Math.sin(t * 8 + i);
     } else {
       v.root.position.set(f.x, f.y + 0.3, f.z);
-      v.root.rotation.y = Math.sin(t * 1.2 + i) * 0.4 + Math.atan2(f.x - match.bases[f.team].x, f.z - match.bases[f.team].z);
+      v.root.rotation.y = Math.sin(t * 1.2 + i) * 0.4 + Math.atan2(f.x - match.bases[f.base].x, f.z - match.bases[f.base].z);
       v.root.scale.setScalar(0.85);
       v.glow.visible = true;
       glow.opacity = 0.3;
@@ -292,14 +400,16 @@ function syncViews(t: number, dt: number): void {
   for (const f of match.fires) {
     alive.add(f.id);
     let mesh = fireMeshes.get(f.id);
+    const missile = f.homing !== undefined && f.homing !== -1;
     if (!mesh) {
-      mesh = new THREE.Mesh(f.bomb ? bombGeo : fireGeo, f.bomb ? bombMat : fireMat);
+      mesh = new THREE.Mesh(f.bomb ? bombGeo : missile ? missileGeo : fireGeo, f.bomb ? bombMat : missile ? missileMat : fireMat);
       scene.add(mesh);
       fireMeshes.set(f.id, mesh);
     }
     mesh.position.set(f.x, f.y, f.z);
     mesh.rotation.y = Math.atan2(f.vx, f.vz);
-    mesh.rotation.x += dt * 12;
+    if (missile) mesh.rotation.z += dt * 6;
+    else mesh.rotation.x += dt * 12;
     if (Math.random() < 0.5) fx.burst(f.x, f.y + 0.2, f.z, ["#ffd166", "#ff9f1c"], 1, 1.5, 2, 0.14);
   }
   for (const [id, mesh] of fireMeshes) {
@@ -362,7 +472,8 @@ function frame(now: number): void {
   if (me.stun <= 0) camYaw += wrapAngle(me.heading - camYaw) * Math.min(1, dt * 2.6);
   shake = Math.max(0, shake - dt * 2.5);
   const t = now / 1000;
-  world.update(t);
+  world.update(t, match);
+  stepFlashes(dt);
   syncViews(t, Math.max(dt, 1 / 240));
   fx.update(dt);
   if (phase === "select") placeSelectCamera(t);
@@ -390,7 +501,13 @@ function frame(now: number): void {
 requestAnimationFrame(frame);
 
 function freshMatch(): void {
+  const lastMap = match.map;
   match = newMatch(match.rng() * 1e9);
+  // A new team size means a new island.
+  if (match.map !== lastMap) {
+    world.dispose();
+    world = buildWorld(scene, match);
+  }
   rebuildViews();
   camYaw = match.players[0].heading;
   lastLand = landOf(match.players[0].z);
@@ -401,17 +518,21 @@ function showSelect(): void {
   hud.showSelect(
     humanAnimal,
     mode,
+    mapFor(perTeam).size,
     (id) => {
       unlockAudio();
       if (id !== humanAnimal) sfx.pick();
       swapAnimal(id);
     },
-    (picked) => {
+    (picked, size) => {
       unlockAudio();
       tryLandscape();
-      if (picked !== mode) {
+      const newSize = params.has("per") && size === mapFor(perTeam).size ? perTeam : size;
+      if (picked !== mode || newSize !== perTeam) {
         mode = picked;
+        perTeam = newSize;
         saveMode(mode);
+        saveSize(perTeam);
         freshMatch();
       }
       // Swoop from the turntable view to behind your animal.
@@ -458,6 +579,25 @@ function loadMode(): Mode {
 function saveMode(m: Mode): void {
   try {
     localStorage.setItem(MODE_KEY, m);
+  } catch {
+    // Private mode: the pick lasts until the page closes.
+  }
+}
+
+const SIZE_KEY = "flagcatch.size";
+
+function loadSize(): number {
+  try {
+    const v = Number(localStorage.getItem(SIZE_KEY));
+    return MAPS.some((m) => m.size === v) ? v : MAPS[0].size;
+  } catch {
+    return MAPS[0].size;
+  }
+}
+
+function saveSize(n: number): void {
+  try {
+    localStorage.setItem(SIZE_KEY, String(n));
   } catch {
     // Private mode: the pick lasts until the page closes.
   }

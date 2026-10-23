@@ -1,7 +1,7 @@
 /**
  * Thumbs and keys. The left thumb points where to go: drag from wherever it
  * lands, and the animal heads that way relative to the camera, like the
- * original's stylus. The right thumb has Jump and Throw.
+ * original's stylus. The right thumb has Jump, Throw and Item.
  */
 export interface Controls {
   /** Screen space steer: x right, y forward, length 0..1. */
@@ -9,6 +9,8 @@ export interface Controls {
   steerY: number;
   jump: boolean;
   throwQueued: boolean;
+  /** Set by a tap on Item (or E); the game clears it once used. */
+  itemQueued: boolean;
   /** Held to stay under water (swimmers only). */
   dive: boolean;
   /** The on-screen Jump button calls this; keys and button combine. */
@@ -26,6 +28,7 @@ export function createControls(surface: HTMLElement): Controls {
     steerY: 0,
     jump: false,
     throwQueued: false,
+    itemQueued: false,
     setButtonJump(down: boolean) {
       buttonJump = down;
       c.jump = keyJump || buttonJump;
@@ -91,6 +94,7 @@ export function createControls(surface: HTMLElement): Controls {
     if (e.repeat) return;
     keys.add(e.code);
     if (e.code === "KeyJ" || e.code === "KeyK" || e.code === "Enter") c.throwQueued = true;
+    if (e.code === "KeyE" || e.code === "KeyI") c.itemQueued = true;
     syncKeys();
   });
   window.addEventListener("keyup", (e) => {

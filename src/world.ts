@@ -1,87 +1,128 @@
-/** Home Isle scenery: ground, sea, sky, trees, bridges, border posts and the two bases. */
+/**
+ * Island scenery: ground, sea, sky, trees, bridges, border posts, bases and
+ * power up stations. Built for one map; rebuilt when the team size changes.
+ */
 import * as THREE from "three";
-import { RAMP, buildBase, buildBorderPost, buildTree } from "./models";
+import { RAMP, buildBase, buildBorderPost, buildStation, treeParts } from "./models";
 import { PALETTE, TEAMS } from "./palette";
 import { mulberry32 } from "./rng";
-import type { Base } from "./sim";
-import { BRIDGE_X, WATER_Y, WORLD_HALF_X, WORLD_HALF_Z, ZONE_EDGE, groundHeight, landOf, onBridge } from "./terrain";
+import type { Match } from "./sim";
+import { BRIDGES, WATER_Y, WORLD_HALF_X, WORLD_HALF_Z, ZONE_EDGE, groundHeight, landOf, mapScale, onBridge } from "./terrain";
 
 export interface World {
-  water: THREE.Mesh;
-  update(t: number): void;
+  update(t: number, m: Match): void;
+  /** Take everything back out of the scene. */
+  dispose(): void;
 }
 
-export function buildWorld(scene: THREE.Scene, bases: readonly Base[]): World {
+export function buildWorld(scene: THREE.Scene, match: Match): World {
+  const group = new THREE.Group();
+  scene.add(group);
   scene.background = skyTexture();
   scene.fog = new THREE.Fog(PALETTE.fog, 80, 220);
 
   const hemi = new THREE.HemisphereLight("#ffffff", "#9fd3a8", 1.6);
-  scene.add(hemi);
+  group.add(hemi);
   const sun = new THREE.DirectionalLight("#fff6e6", 2.2);
   sun.position.set(-40, 80, 30);
-  scene.add(sun);
+  group.add(sun);
 
-  scene.add(buildGround());
+  const ground = buildGround();
+  group.add(ground);
 
-  const waterGeo = new THREE.PlaneGeometry(600, 600, 1, 1);
+  const waterGeo = new THREE.PlaneGeometry(WORLD_HALF_X * 2 + 600, WORLD_HALF_Z * 2 + 600, 1, 1);
   waterGeo.rotateX(-Math.PI / 2);
   const water = new THREE.Mesh(
     waterGeo,
     new THREE.MeshToonMaterial({ color: PALETTE.waterShallow, gradientMap: RAMP, transparent: true, opacity: 0.82 }),
   );
   water.position.y = WATER_Y;
-  scene.add(water);
+  group.add(water);
 
+  // Trees grow with the island, drawn as one instanced batch per part.
   const rng = mulberry32(7);
-  let placed = 0;
-  for (let i = 0; i < 1200 && placed < 90; i++) {
+  const s = mapScale();
+  const want = Math.min(700, Math.round(90 * ((WORLD_HALF_X * WORLD_HALF_Z) / (60 * 137))));
+  const spots: THREE.Matrix4[] = [];
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i < want * 14 && spots.length < want; i++) {
     const x = (rng() - 0.5) * 2 * WORLD_HALF_X;
     const z = (rng() - 0.5) * 2 * WORLD_HALF_Z;
     const h = groundHeight(x, z);
     if (h < 1.2 || onBridge(x, z)) continue;
-    if (bases.some((b) => Math.hypot(b.x - x, b.z - z) < 10)) continue;
+    if (match.bases.some((b) => Math.hypot(b.x - x, b.z - z) < match.baseRadius + 6)) continue;
+    if (match.stations.some((st) => Math.hypot(st.x - x, st.z - z) < 6)) continue;
     // Keep the bridge mouths open.
-    if (Math.abs(Math.abs(z) - ZONE_EDGE) < 16 && Math.abs(Math.abs(x) - BRIDGE_X) < 6) continue;
-    const t = buildTree(0.7 + rng() * 0.6);
-    t.position.set(x, h - 0.2, z);
-    t.rotation.y = rng() * Math.PI * 2;
-    scene.add(t);
-    placed++;
+    if (Math.abs(Math.abs(z) - ZONE_EDGE) < 16 * s && BRIDGES.some((bx) => Math.abs(x - bx) < 7)) continue;
+    const scale = 0.7 + rng() * 0.6;
+    q.setFromAxisAngle(up, rng() * Math.PI * 2);
+    spots.push(new THREE.Matrix4().compose(new THREE.Vector3(x, h - 0.2, z), q, new THREE.Vector3(scale, scale, scale)));
+  }
+  const tmp = new THREE.Matrix4();
+  for (const part of treeParts()) {
+    const inst = new THREE.InstancedMesh(part.geo, part.mat, Math.max(1, spots.length));
+    inst.count = spots.length;
+    spots.forEach((mtx, i) => inst.setMatrixAt(i, tmp.multiplyMatrices(mtx, part.offset)));
+    inst.instanceMatrix.needsUpdate = true;
+    inst.computeBoundingSphere();
+    group.add(inst);
   }
 
   // Border posts where each bridge lands in a homeland, in that team's colors.
   for (const team of [0, 1] as const) {
     const t = TEAMS[team];
     const zs = team === 0 ? 1 : -1;
-    for (const bx of [-BRIDGE_X, BRIDGE_X]) {
+    for (const bx of BRIDGES) {
       for (const side of [-1, 1]) {
         const x = bx + side * 4.6;
-        const z = zs * (ZONE_EDGE + 10);
+        const z = zs * (ZONE_EDGE + 10 * s);
         const post = buildBorderPost(t.color, t.light);
         post.position.set(x, Math.max(groundHeight(x, z), WATER_Y) - 0.1, z);
         post.rotation.y = side > 0 ? Math.PI : 0;
-        scene.add(post);
+        group.add(post);
       }
     }
   }
 
-  bases.forEach((b) => {
+  for (const b of match.bases) {
     const team = TEAMS[b.team];
-    const g = buildBase(team.color, team.light, team.shape);
+    const g = buildBase(team.color, team.light, team.shape, match.baseRadius);
+    // Outposts wear a shorter banner so the main base stands out.
+    if (!b.main) g.scale.set(1, 0.7, 1);
     g.position.set(b.x, Math.max(groundHeight(b.x, b.z), WATER_Y), b.z);
     // Face the banner toward the island's middle.
     g.rotation.y = Math.atan2(-b.x, -b.z) + Math.PI;
-    scene.add(g);
+    group.add(g);
+  }
+
+  const stations = match.stations.map((st) => {
+    const v = buildStation();
+    v.root.position.set(st.x, Math.max(groundHeight(st.x, st.z), WATER_Y), st.z);
+    group.add(v.root);
+    return v;
   });
 
   const waterMat = water.material as THREE.MeshToonMaterial;
   const shallow = new THREE.Color(PALETTE.waterShallow);
   const deep = new THREE.Color(PALETTE.waterDeep);
   return {
-    water,
-    update(t: number) {
+    update(t: number, m: Match) {
       water.position.y = WATER_Y + Math.sin(t * 0.9) * 0.05;
       waterMat.color.copy(shallow).lerp(deep, 0.25 + 0.1 * Math.sin(t * 0.5));
+      m.stations.forEach((st, i) => {
+        const v = stations[i];
+        if (!v) return;
+        // The gift box is gone while the station recharges.
+        v.box.visible = st.cd <= 0;
+        v.box.rotation.y = t * 1.8 + i;
+        v.box.position.y = 1.8 + Math.sin(t * 2.4 + i) * 0.25;
+      });
+    },
+    dispose() {
+      scene.remove(group);
+      ground.geometry.dispose();
+      waterGeo.dispose();
     },
   };
 }
@@ -89,7 +130,10 @@ export function buildWorld(scene: THREE.Scene, bases: readonly Base[]): World {
 function buildGround(): THREE.Mesh {
   const w = WORLD_HALF_X * 2 + 30;
   const l = WORLD_HALF_Z * 2 + 30;
-  const geo = new THREE.PlaneGeometry(w, l, Math.round(w), Math.round(l));
+  // About a meter per square on Home Isle; coarser on the giants so the
+  // ground stays one cheap mesh (the toon look hides the difference).
+  const cell = Math.max(1, Math.sqrt((w * l) / 90000));
+  const geo = new THREE.PlaneGeometry(w, l, Math.round(w / cell), Math.round(l / cell));
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);

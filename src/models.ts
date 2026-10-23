@@ -4,6 +4,7 @@
  * Every part is a toon material on the shared 3 band ramp.
  */
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { PALETTE } from "./palette";
 
 const rampCanvas = document.createElement("canvas");
@@ -209,10 +210,62 @@ export function buildAnimal(id: string, teamColor: string): AnimalRig {
     flagMount.position.set(0, 1.5, -0.6);
   }
   body.add(flagMount);
-  root.traverse((o) => {
-    if ((o as THREE.Mesh).isMesh) o.castShadow = false;
-  });
+  // With up to 128 animals on screen, each rig is baked down to a handful of
+  // draw calls: the still parts of the body become one mesh, and so does
+  // each wing; only wheels stay separate so they can spin.
+  mergeStill(body, new Set([...wheels, ...wings]));
+  for (const w of wings) if (!(w as THREE.Mesh).isMesh) mergeStill(w as THREE.Group, new Set());
   return { root, body, wings, wheels, flagMount };
+}
+
+const bakedMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: RAMP });
+
+/** Replace the plain mesh children of `group` (not those in `keep`) with one vertex colored mesh. */
+function mergeStill(group: THREE.Group, keep: Set<THREE.Object3D>): void {
+  const parts: THREE.BufferGeometry[] = [];
+  const color = new THREE.Color();
+  for (const child of [...group.children]) {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh || keep.has(mesh)) continue;
+    mesh.updateMatrix();
+    const g = mesh.geometry.clone().applyMatrix4(mesh.matrix);
+    // Keep only what toon shading needs, so every part merges cleanly.
+    for (const name of Object.keys(g.attributes)) if (name !== "position" && name !== "normal") g.deleteAttribute(name);
+    const geo = g.index ? g.toNonIndexed() : g;
+    color.copy((mesh.material as THREE.MeshToonMaterial).color);
+    const n = geo.attributes.position.count;
+    const colors = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) color.toArray(colors, i * 3);
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    parts.push(geo);
+    group.remove(mesh);
+  }
+  if (!parts.length) return;
+  const merged = mergeGeometries(parts);
+  if (merged) group.add(new THREE.Mesh(merged, bakedMat));
+}
+
+/**
+ * A power up station: a short post holding a spinning gift box. The box
+ * hides while the station recharges.
+ */
+export function buildStation(): { root: THREE.Group; box: THREE.Group } {
+  const root = new THREE.Group();
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.5, 0.3, 20), toon("#f4f1e8"));
+  pad.position.y = 0.1;
+  root.add(pad);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.14, 6, 28), toon("#ffd166"));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.28;
+  root.add(ring);
+  const boxG = new THREE.Group();
+  boxG.position.y = 1.8;
+  boxG.add(box("#ff6b9a", 1.1, 1.1, 1.1));
+  boxG.add(box("#ffd166", 1.16, 0.22, 1.16));
+  boxG.add(box("#ffd166", 0.22, 1.16, 1.16));
+  boxG.add(box("#ffffff", 0.5, 0.5, 0.5, 0, 0.75, 0));
+  root.add(boxG);
+  return { root, box: boxG };
 }
 
 export interface FlagRig {
@@ -261,12 +314,21 @@ export function buildTree(scale: number): THREE.Group {
   return g;
 }
 
-export function buildBase(teamColor: string, teamLight: string, shape: string): THREE.Group {
+/** Tree parts for instanced forests: trunk, big leaf ball, small leaf ball. */
+export function treeParts(): Array<{ geo: THREE.BufferGeometry; mat: THREE.Material; offset: THREE.Matrix4 }> {
+  return [
+    { geo: boxGeo, mat: toon(PALETTE.trunk), offset: new THREE.Matrix4().compose(new THREE.Vector3(0, 1.1, 0), new THREE.Quaternion(), new THREE.Vector3(0.5, 2.2, 0.5)) },
+    { geo: new THREE.IcosahedronGeometry(1.5, 0), mat: toon(PALETTE.leaf), offset: new THREE.Matrix4().makeTranslation(0, 2.9, 0) },
+    { geo: new THREE.IcosahedronGeometry(1.0, 0), mat: toon(PALETTE.leafLight), offset: new THREE.Matrix4().makeTranslation(0.5, 3.6, 0.3) },
+  ];
+}
+
+export function buildBase(teamColor: string, teamLight: string, shape: string, radius = 4.2): THREE.Group {
   const g = new THREE.Group();
-  const pad = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.6, 0.5, 32), toon(teamLight));
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius + 0.4, 0.5, 32), toon(teamLight));
   pad.position.y = 0.2;
   g.add(pad);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.22, 8, 40), toon(teamColor));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.22, 8, 40), toon(teamColor));
   ring.rotation.x = Math.PI / 2;
   ring.position.y = 0.48;
   g.add(ring);

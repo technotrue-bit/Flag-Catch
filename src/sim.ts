@@ -4,7 +4,24 @@
  */
 import { ANIMALS, type AnimalDef } from "./animals";
 import { mulberry32, type RNG } from "./rng";
-import { BRIDGE_X, WORLD_HALF_X, WORLD_HALF_Z, ZONE_EDGE, groundHeight, inWorld, isWater, landOf, surfaceHeight } from "./terrain";
+import {
+  BASE_Z,
+  BRIDGES,
+  type MapDef,
+  WORLD_HALF_X,
+  WORLD_HALF_Z,
+  ZONE_EDGE,
+  fromLayout,
+  groundHeight,
+  inWorld,
+  isWater,
+  landOf,
+  mapFor,
+  mapScale,
+  outposts,
+  setMap,
+  surfaceHeight,
+} from "./terrain";
 
 export const STEP = 1 / 60;
 
@@ -25,7 +42,6 @@ export const tune = {
   popLift: 10,
   popPush: 9,
   grabRadius: 1.8,
-  baseRadius: 4.2,
   /** Seconds a diver can stay under, how deep they sit, and their speed there. */
   diveBreath: 4,
   diveDepth: 1.1,
@@ -34,7 +50,65 @@ export const tune = {
   bombRadius: 3,
   /** A flyer must be this high over the ground to drop a bomb. */
   bombHeight: 2.5,
+  /** Power ups: how long Shield and Star last, Turbo too, and how fast it goes. */
+  itemTime: 7,
+  turboTime: 5,
+  turboBoost: 1.45,
+  starBoost: 1.3,
+  /** Seconds a station waits before it offers another item. */
+  stationCooldown: 8,
+  stationRadius: 2.6,
+  lightningRadius: 14,
+  blastRadius: 6.5,
+  missileSpeed: 24,
+  missileTurn: 3.5,
+  superJump: 22,
 };
+
+/**
+ * The eight power ups. Drive through a station to pick one up, and press
+ * Item to use it. Shield and Star are Devin's: Shield blocks every pop for
+ * 7 seconds; Star does too, adds speed, and pops any enemy you bump.
+ */
+export type ItemKind = "shield" | "star" | "triple" | "missile" | "superjump" | "lightning" | "blast" | "turbo";
+
+export const ITEMS: Record<ItemKind, { name: string; info: string; weight: number }> = {
+  shield: { name: "SHIELD", info: "No pops for 7 seconds", weight: 3 },
+  star: { name: "STAR", info: "7 seconds unpoppable and faster; bump enemies to pop them", weight: 1 },
+  triple: { name: "TRIPLE", info: "Three firecrackers in a fan", weight: 3 },
+  missile: { name: "MISSILE", info: "A paper missile that chases the nearest enemy, flag carriers first", weight: 3 },
+  superjump: { name: "SUPER JUMP", info: "A huge leap, over water and walls", weight: 2 },
+  lightning: { name: "LIGHTNING", info: "Pops every enemy close by", weight: 1.5 },
+  blast: { name: "BLAST", info: "Knocks nearby enemies flying", weight: 2 },
+  turbo: { name: "TURBO", info: "Much faster for 5 seconds", weight: 3 },
+};
+const ITEM_KINDS = Object.keys(ITEMS) as ItemKind[];
+
+export interface Station {
+  id: number;
+  x: number;
+  z: number;
+  /** Seconds until it offers an item again; ready at 0. */
+  cd: number;
+}
+
+/** Station spots in layout units; point symmetric like the map. */
+const STATION_SPOTS: Array<[number, number]> = [
+  [0, 0],
+  [16, 20],
+  [-16, -20],
+  [-18, 16],
+  [18, -16],
+  [-12, 52],
+  [12, -52],
+];
+/** More on the gigantic maps, so nobody has a long trip to one. */
+const GIGANTIC_STATION_SPOTS: Array<[number, number]> = [
+  [0, 22],
+  [0, -22],
+  [-24, 60],
+  [24, -60],
+];
 
 export interface Input {
   /** Desired direction in world space; length 0..1 is the throttle. */
@@ -44,9 +118,11 @@ export interface Input {
   throwPressed: boolean;
   /** Held: water animals stay under while in water. */
   dive?: boolean;
+  /** Pressed: use the held power up. */
+  useItem?: boolean;
 }
 
-export const NO_INPUT: Input = { dirX: 0, dirZ: 0, jump: false, throwPressed: false, dive: false };
+export const NO_INPUT: Input = { dirX: 0, dirZ: 0, jump: false, throwPressed: false, dive: false, useItem: false };
 
 export interface Player {
   id: number;
@@ -78,6 +154,13 @@ export interface Player {
   breath: number;
   /** After running out of breath, a short wait before diving again. */
   diveCd: number;
+  /** The power up waiting to be used, and the timers of those running. */
+  item: ItemKind | null;
+  shieldT: number;
+  starT: number;
+  turboT: number;
+  /** CPU: seconds it has held its item, so it uses it eventually. */
+  itemHeld: number;
   /** CPU state. Defenders hold their homeland, attackers raid. */
   role: "attack" | "defend";
   thinkCd: number;
@@ -105,6 +188,8 @@ export interface Flag {
   carrier: number;
   /** Slot in the base ring while home. */
   slot: number;
+  /** The base it sits in, or was taken from while carried or dropped. */
+  base: number;
   /** Seconds left before a dropped flag goes home by itself. */
   timer: number;
 }
@@ -123,6 +208,8 @@ export interface Firecracker {
   life: number;
   /** Dropped by a flyer: falls straight and bursts on landing. */
   bomb: boolean;
+  /** A paper missile chasing this player id; -1 for an ordinary shot. */
+  homing?: number;
 }
 
 export type SimEvent =
@@ -138,12 +225,19 @@ export type SimEvent =
   | { kind: "dive"; x: number; z: number; player: number }
   | { kind: "surface"; x: number; z: number; player: number }
   | { kind: "splash"; x: number; z: number; player: number }
+  | { kind: "item"; x: number; z: number; player: number; item: ItemKind; station: number }
+  | { kind: "use"; x: number; y: number; z: number; player: number; item: ItemKind }
+  | { kind: "block"; x: number; y: number; z: number; player: number }
+  | { kind: "zap"; x: number; y: number; z: number; player: number; by: number }
   | { kind: "end"; winner: Team | -1 };
 
 export interface Base {
+  id: number;
   team: Team;
   x: number;
   z: number;
+  /** Each team's home base; gigantic maps add smaller outposts. */
+  main: boolean;
 }
 
 /**
@@ -153,11 +247,22 @@ export interface Base {
  */
 export type Mode = "capture" | "hoard";
 export const HOARD_TARGET = 1000;
-/** Points each flag in your base earns per second in Hoard. */
+/**
+ * Points per second each flag in your base earns in Hoard, for a match with
+ * five flags a side. Maps with more flags pay less per flag, so the race to
+ * 1000 takes about as long whatever the team size.
+ */
 export const HOARD_RATE = 1;
 
 export interface Match {
   mode: Mode;
+  map: MapDef;
+  /** Carry a flag within this of your base center to bank it. */
+  baseRadius: number;
+  hoardRate: number;
+  /** How keen CPUs are to throw; lower in big crowds. */
+  aggro: number;
+  stations: Station[];
   /** Hoard points with fractions; `scores` shows them rounded down. */
   points: [number, number];
   rng: RNG;
@@ -167,7 +272,8 @@ export interface Match {
   players: Player[];
   flags: Flag[];
   fires: Firecracker[];
-  bases: [Base, Base];
+  /** Main bases first (index = team), then any outposts. */
+  bases: Base[];
   scores: [number, number];
   events: SimEvent[];
   nextFireId: number;
@@ -180,13 +286,18 @@ export interface MatchOptions {
   duration: number;
   flagsPerTeam: number;
   mode?: Mode;
+  /** Defaults to the map made for this many animals a side. */
+  map?: MapDef;
 }
 
 export function createMatch(opts: MatchOptions): Match {
   const rng = mulberry32(opts.seed);
-  const bases: [Base, Base] = [
-    { team: 0, x: 0, z: 84 },
-    { team: 1, x: 0, z: -84 },
+  const map = opts.map ?? mapFor(opts.perTeam);
+  setMap(map);
+  const bases: Base[] = [
+    { id: 0, team: 0, x: 0, z: BASE_Z, main: true },
+    { id: 1, team: 1, x: 0, z: -BASE_Z, main: true },
+    ...outposts().map(([x, z, team], i) => ({ id: 2 + i, team, x, z, main: false })),
   ];
   const players: Player[] = [];
   const ids = Object.keys(ANIMALS);
@@ -195,24 +306,44 @@ export function createMatch(opts: MatchOptions): Match {
       const human = team === 0 && i === 0;
       const def = human ? ANIMALS[opts.humanAnimal] ?? ANIMALS.lion : ANIMALS[ids[Math.floor(rng() * ids.length)]];
       const b = bases[team];
-      const a = (i / opts.perTeam) * Math.PI * 2 + team;
-      const x = b.x + Math.cos(a) * 3;
-      const z = b.z + Math.sin(a) * 3;
+      // A sunflower spiral around the base, so a big team starts spread out.
+      const a = i * 2.39996 + team;
+      const r = 3 + 1.7 * Math.sqrt(i);
+      const x = b.x + Math.cos(a) * r;
+      const z = b.z + Math.sin(a) * r * 0.8;
       const p = makePlayer(players.length, team, def, !human, x, z, Math.atan2(-b.x, -b.z));
-      p.role = i % 3 === 1 ? "defend" : "attack";
+      // A third defend on small teams, a quarter on big ones.
+      p.role = i % 4 === 1 ? "defend" : "attack";
       players.push(p);
     }
     if (team === 1) break;
   }
   const flags: Flag[] = [];
   for (const team of [0, 1] as const) {
+    // Half the flags at the main base, the rest shared among the outposts.
+    const own = bases.filter((b) => b.team === team);
+    const atMain = own.length > 1 ? Math.ceil(opts.flagsPerTeam / 2) : opts.flagsPerTeam;
+    const used = new Map<number, number>();
     for (let i = 0; i < opts.flagsPerTeam; i++) {
-      const [x, z] = baseSlot(bases[team], i);
-      flags.push({ id: flags.length, team, state: "home", x, y: surfaceHeight(x, z), z, carrier: -1, slot: i, timer: 0 });
+      const b = i < atMain ? own[0] : own[1 + ((i - atMain) % (own.length - 1))];
+      const slot = used.get(b.id) ?? 0;
+      used.set(b.id, slot + 1);
+      const [x, z] = baseSlot(b, slot, map.baseRadius);
+      flags.push({ id: flags.length, team, state: "home", x, y: surfaceHeight(x, z), z, carrier: -1, slot, base: b.id, timer: 0 });
     }
   }
+  const spots = map.gigantic ? [...STATION_SPOTS, ...GIGANTIC_STATION_SPOTS] : STATION_SPOTS;
+  const stations: Station[] = spots.map(([u, v], id) => {
+    const [x, z] = fromLayout(u, v);
+    return { id, x, z, cd: 0 };
+  });
   return {
     rng,
+    map,
+    baseRadius: map.baseRadius,
+    hoardRate: (HOARD_RATE * 5) / Math.max(1, opts.flagsPerTeam),
+    aggro: Math.min(1, Math.sqrt(8 / opts.perTeam)),
+    stations,
     time: 0,
     mode: opts.mode ?? "capture",
     points: [0, 0],
@@ -254,6 +385,11 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     diving: false,
     breath: tune.diveBreath,
     diveCd: 0,
+    item: null,
+    shieldT: 0,
+    starT: 0,
+    turboT: 0,
+    itemHeld: 0,
     role: "attack",
     thinkCd: 0,
     goalX: x,
@@ -282,12 +418,14 @@ export function step(m: Match, human: Input): void {
     movePlayer(m, p, input);
   }
   stepFires(m);
+  stepStars(m);
+  stepStations(m);
   stepFlags(m);
 
   if (m.mode === "hoard") {
     for (const team of [0, 1] as const) {
       const held = m.flags.filter((f) => f.team === team && f.state === "home").length;
-      m.points[team] += held * HOARD_RATE * STEP;
+      m.points[team] += held * m.hoardRate * STEP;
       m.scores[team] = Math.min(HOARD_TARGET, Math.floor(m.points[team]));
     }
     if (m.scores[0] >= HOARD_TARGET || m.scores[1] >= HOARD_TARGET) m.timeLeft = 0;
@@ -302,15 +440,20 @@ export function step(m: Match, human: Input): void {
 }
 
 function speedFor(p: Player): number {
-  if (p.medium === "air") return p.def.airSpeed;
-  if (p.medium === "water") return p.def.waterSpeed * (p.diving ? tune.diveSpeed : 1);
-  return p.def.landSpeed;
+  const boost = (p.turboT > 0 ? tune.turboBoost : 1) * (p.starT > 0 ? tune.starBoost : 1);
+  if (p.medium === "air") return p.def.airSpeed * boost;
+  if (p.medium === "water") return p.def.waterSpeed * (p.diving ? tune.diveSpeed : 1) * boost;
+  return p.def.landSpeed * boost;
 }
 
 function movePlayer(m: Match, p: Player, input: Input): void {
   p.throwCd = Math.max(0, p.throwCd - STEP);
   p.grabCd = Math.max(0, p.grabCd - STEP);
   p.diveCd = Math.max(0, p.diveCd - STEP);
+  p.shieldT = Math.max(0, p.shieldT - STEP);
+  p.starT = Math.max(0, p.starT - STEP);
+  p.turboT = Math.max(0, p.turboT - STEP);
+  if (p.item) p.itemHeld += STEP;
   const stunned = p.stun > 0;
   if (stunned) p.stun = Math.max(0, p.stun - STEP);
 
@@ -388,6 +531,7 @@ function movePlayer(m: Match, p: Player, input: Input): void {
   stepDive(m, p, !stunned && !!input.dive && water && p.onSurface);
 
   if (!stunned && !p.diving && input.throwPressed && p.throwCd <= 0) throwFire(m, p);
+  if (!stunned && input.useItem && p.item) useItem(m, p);
 }
 
 function stepDive(m: Match, p: Player, want: boolean): void {
@@ -431,9 +575,17 @@ function throwFire(m: Match, p: Player): void {
     m.events.push({ kind: "throw", x: bomb.x, y: bomb.y, z: bomb.z, player: p.id });
     return;
   }
-  const fx = Math.sin(p.heading);
-  const fz = Math.cos(p.heading);
-  const speed = tune.throwSpeed * d.shotSpeed + Math.max(0, p.speed) * 0.6;
+  launch(m, p, 0);
+}
+
+/** One firecracker off the front, turned `offset` radians from the heading. */
+function launch(m: Match, p: Player, offset: number, homing = -1): void {
+  const d = p.def;
+  const fx = Math.sin(p.heading + offset);
+  const fz = Math.cos(p.heading + offset);
+  // -1 is an ordinary shot; a missile carries its target id, or -2 for none.
+  const missile = homing !== -1;
+  const speed = missile ? tune.missileSpeed : tune.throwSpeed * d.shotSpeed + Math.max(0, p.speed) * 0.6;
   const fire: Firecracker = {
     id: m.nextFireId++,
     owner: p.id,
@@ -442,11 +594,12 @@ function throwFire(m: Match, p: Player): void {
     y: p.y + 1.2,
     z: p.z + fz * 1.4,
     vx: fx * speed,
-    vy: tune.throwLift * d.shotLift,
+    vy: missile ? 0 : tune.throwLift * d.shotLift,
     vz: fz * speed,
     skidding: false,
-    life: tune.fireLife,
+    life: missile ? 4 : tune.fireLife,
     bomb: false,
+    homing,
   };
   m.fires.push(fire);
   m.events.push({ kind: "throw", x: fire.x, y: fire.y, z: fire.z, player: p.id });
@@ -468,12 +621,18 @@ function stepFires(m: Match): void {
       else if (inWorld(f.x, f.z) && f.life > 0) keep.push(f);
       continue;
     }
-    if (!f.skidding && f.y <= surf + 0.3) {
+    const missile = f.homing !== undefined && f.homing !== -1;
+    if (missile) {
+      steerMissile(m, f);
+      // Paper missiles glide at chest height over ground and water alike.
+      f.vy = 0;
+      f.y = surf + 1;
+    } else if (!f.skidding && f.y <= surf + 0.3) {
       // Landed: skid along the ground and the water like a shell.
       f.skidding = true;
       f.vy = 0;
     }
-    if (f.skidding) {
+    if (f.skidding && !missile) {
       f.y = surf + 0.3;
       const k = Math.exp(-tune.skidFriction * STEP);
       f.vx *= k;
@@ -501,6 +660,40 @@ function stepFires(m: Match): void {
   m.fires = keep;
 }
 
+/** Turn a missile toward its target, picking a new one if the old is down. */
+function steerMissile(m: Match, f: Firecracker): void {
+  let t = f.homing !== undefined && f.homing >= 0 ? m.players[f.homing] : undefined;
+  if (!t || t.stun > 0 || t.diving) {
+    t = missileTarget(m, f.team, f.x, f.z, Math.atan2(f.vx, f.vz));
+    f.homing = t ? t.id : -2;
+  }
+  if (!t) return;
+  const heading = Math.atan2(f.vx, f.vz);
+  const want = Math.atan2(t.x - f.x, t.z - f.z);
+  const turn = clamp(wrapAngle(want - heading), -tune.missileTurn * STEP, tune.missileTurn * STEP);
+  const speed = Math.hypot(f.vx, f.vz);
+  f.vx = Math.sin(heading + turn) * speed;
+  f.vz = Math.cos(heading + turn) * speed;
+}
+
+/** The enemy a missile should chase: a flag carrier first, else the nearest ahead. */
+function missileTarget(m: Match, team: Team, x: number, z: number, heading: number): Player | undefined {
+  let best: Player | undefined;
+  let bestScore = Infinity;
+  for (const o of m.players) {
+    if (o.team === team || o.stun > 0 || o.diving) continue;
+    const d = Math.hypot(o.x - x, o.z - z);
+    if (d > 45) continue;
+    const ahead = Math.cos(wrapAngle(Math.atan2(o.x - x, o.z - z) - heading));
+    const score = d * (1.6 - ahead * 0.6) * (o.carrying >= 0 ? 0.4 : 1);
+    if (score < bestScore) {
+      bestScore = score;
+      best = o;
+    }
+  }
+  return best;
+}
+
 function explode(m: Match, f: Firecracker, surf: number): void {
   m.events.push({ kind: "boom", x: f.x, y: surf, z: f.z, player: f.owner });
   for (const p of m.players) {
@@ -511,14 +704,25 @@ function explode(m: Match, f: Firecracker, surf: number): void {
   }
 }
 
-/** Knock `p` flying away along (dirX, dirZ); tough animals recover sooner. */
-function pop(m: Match, p: Player, by: number, dirX: number, dirZ: number): void {
+function protectedFrom(p: Player): boolean {
+  return p.shieldT > 0 || p.starT > 0;
+}
+
+/**
+ * Knock `p` flying away along (dirX, dirZ); tough animals recover sooner.
+ * Shield and Star block it. Returns whether the pop landed.
+ */
+function pop(m: Match, p: Player, by: number, dirX: number, dirZ: number, power = 1): boolean {
+  if (protectedFrom(p)) {
+    m.events.push({ kind: "block", x: p.x, y: p.y + 0.8, z: p.z, player: p.id });
+    return false;
+  }
   const t = p.def.toughness;
   p.stun = tune.stunTime * t;
   p.vy = tune.popLift * (0.5 + 0.5 * t);
   p.onSurface = false;
   const len = Math.hypot(dirX, dirZ) || 1;
-  const push = tune.popPush * (0.5 + 0.5 * t);
+  const push = tune.popPush * (0.5 + 0.5 * t) * power;
   p.kx = (dirX / len) * push;
   p.kz = (dirZ / len) * push;
   p.speed *= 0.2;
@@ -526,6 +730,111 @@ function pop(m: Match, p: Player, by: number, dirX: number, dirZ: number): void 
   if (owner) owner.score += 5;
   m.events.push({ kind: "pop", x: p.x, y: p.y + 0.8, z: p.z, player: p.id, by });
   dropFlag(m, p);
+  return true;
+}
+
+/** A Star pops any enemy it bumps into. */
+function stepStars(m: Match): void {
+  for (const p of m.players) {
+    if (p.starT <= 0 || p.stun > 0) continue;
+    for (const o of m.players) {
+      if (o.team === p.team || o.stun > 0 || o.diving) continue;
+      const dx = o.x - p.x;
+      const dz = o.z - p.z;
+      if (dx * dx + dz * dz < 3.2 && Math.abs(o.y - p.y) < 2) pop(m, o, p.id, dx, dz, 1.3);
+    }
+  }
+}
+
+/** Drive through a ready station with empty hands to get an item. */
+function stepStations(m: Match): void {
+  for (const st of m.stations) {
+    if (st.cd > 0) {
+      st.cd = Math.max(0, st.cd - STEP);
+      continue;
+    }
+    const surf = surfaceHeight(st.x, st.z);
+    for (const p of m.players) {
+      if (p.item || p.stun > 0) continue;
+      const dx = p.x - st.x;
+      const dz = p.z - st.z;
+      if (dx * dx + dz * dz > tune.stationRadius * tune.stationRadius || p.y - surf > 3) continue;
+      p.item = rollItem(m);
+      p.itemHeld = 0;
+      st.cd = tune.stationCooldown;
+      m.events.push({ kind: "item", x: st.x, z: st.z, player: p.id, item: p.item, station: st.id });
+      break;
+    }
+  }
+}
+
+function rollItem(m: Match): ItemKind {
+  let total = 0;
+  for (const k of ITEM_KINDS) total += ITEMS[k].weight;
+  let r = m.rng() * total;
+  for (const k of ITEM_KINDS) {
+    r -= ITEMS[k].weight;
+    if (r <= 0) return k;
+  }
+  return "turbo";
+}
+
+/** Give `p` a power up directly (tests and the CPU sandbox). */
+export function giveItem(p: Player, item: ItemKind): void {
+  p.item = item;
+  p.itemHeld = 0;
+}
+
+function useItem(m: Match, p: Player): void {
+  const item = p.item!;
+  p.item = null;
+  p.itemHeld = 0;
+  if (p.diving && item !== "shield" && item !== "star") {
+    p.diving = false;
+    p.y = surfaceHeight(p.x, p.z);
+  }
+  m.events.push({ kind: "use", x: p.x, y: p.y, z: p.z, player: p.id, item });
+  switch (item) {
+    case "shield":
+      p.shieldT = tune.itemTime;
+      break;
+    case "star":
+      p.starT = tune.itemTime;
+      break;
+    case "turbo":
+      p.turboT = tune.turboTime;
+      break;
+    case "triple":
+      for (const off of [-0.26, 0, 0.26]) launch(m, p, off);
+      p.throwCd = tune.throwCooldown * p.def.shotCooldown;
+      break;
+    case "missile": {
+      const t = missileTarget(m, p.team, p.x, p.z, p.heading);
+      launch(m, p, 0, t ? t.id : -2);
+      break;
+    }
+    case "superjump":
+      p.vy = tune.superJump;
+      p.onSurface = false;
+      p.floatLeft = p.def.floatTime + 0.6;
+      m.events.push({ kind: "jump", player: p.id });
+      break;
+    case "lightning":
+      for (const o of m.players) {
+        if (o.team === p.team || o.stun > 0 || o.diving) continue;
+        if (Math.hypot(o.x - p.x, o.z - p.z) > tune.lightningRadius) continue;
+        if (!protectedFrom(o)) m.events.push({ kind: "zap", x: o.x, y: o.y, z: o.z, player: o.id, by: p.id });
+        pop(m, o, p.id, o.x - p.x, o.z - p.z);
+      }
+      break;
+    case "blast":
+      for (const o of m.players) {
+        if (o.team === p.team || o.stun > 0 || o.diving) continue;
+        if (Math.hypot(o.x - p.x, o.z - p.z) > tune.blastRadius) continue;
+        pop(m, o, p.id, o.x - p.x, o.z - p.z, 2);
+      }
+      break;
+  }
 }
 
 function dropFlag(m: Match, p: Player): void {
@@ -542,21 +851,37 @@ function dropFlag(m: Match, p: Player): void {
   m.events.push({ kind: "drop", x: flag.x, y: flag.y, z: flag.z, player: p.id });
 }
 
-/** Where flag number `slot` stands in a base: an outer ring, then an inner one. */
-export function baseSlot(b: Base, slot: number): [number, number] {
-  const outer = slot < 8;
-  const k = outer ? slot : slot - 8;
-  const a = outer ? (k / 8) * Math.PI * 2 + Math.PI / 8 : (k / 4) * Math.PI * 2;
-  const r = outer ? 2.7 : slot < 12 ? 1.3 : 0.4;
-  return [b.x + Math.cos(a) * r, b.z + Math.sin(a) * r];
+/** Rings of flag slots in a base: 8 around, 4 inside, then wider rings outward. */
+const SLOT_RINGS: Array<[radius: number, count: number]> = [
+  [2.7, 8],
+  [1.3, 4],
+  [4.0, 12],
+  [5.3, 16],
+  [6.5, 20],
+  [7.7, 24],
+];
+
+/** Where flag number `slot` stands in a base, kept inside the pad. */
+export function baseSlot(b: Base, slot: number, padRadius = 4.2): [number, number] {
+  let k = slot;
+  for (const [r0, count] of SLOT_RINGS) {
+    if (k < count) {
+      const r = Math.min(r0, padRadius - 0.5);
+      const a = (k / count) * Math.PI * 2 + Math.PI / count;
+      return [b.x + Math.cos(a) * r, b.z + Math.sin(a) * r];
+    }
+    k -= count;
+  }
+  return [b.x, b.z];
 }
 
-function placeHome(m: Match, flag: Flag, team: Team): void {
-  const taken = new Set(m.flags.filter((f) => f !== flag && f.team === team && f.state === "home").map((f) => f.slot));
+function placeHome(m: Match, flag: Flag, base: Base): void {
+  const taken = new Set(m.flags.filter((f) => f !== flag && f.base === base.id && f.state === "home").map((f) => f.slot));
   let slot = 0;
   while (taken.has(slot)) slot++;
-  const [x, z] = baseSlot(m.bases[team], slot);
-  flag.team = team;
+  const [x, z] = baseSlot(base, slot, m.baseRadius);
+  flag.team = base.team;
+  flag.base = base.id;
   flag.state = "home";
   flag.slot = slot;
   flag.carrier = -1;
@@ -572,13 +897,13 @@ function stepFlags(m: Match): void {
       flag.x = c.x;
       flag.y = c.y;
       flag.z = c.z;
-      const base = m.bases[c.team];
-      if (Math.hypot(c.x - base.x, c.z - base.z) < tune.baseRadius) {
+      const base = nearestBase(m, c.team, c.x, c.z);
+      if (Math.hypot(c.x - base.x, c.z - base.z) < m.baseRadius) {
         c.carrying = -1;
         c.score += 25;
         // In Hoard the flag pays out by sitting in the base instead.
         if (m.mode === "capture") m.scores[c.team] += 1;
-        placeHome(m, flag, c.team);
+        placeHome(m, flag, base);
         m.events.push({ kind: "bank", x: base.x, y: surfaceHeight(base.x, base.z), z: base.z, player: c.id, team: c.team });
       }
       continue;
@@ -614,8 +939,23 @@ function stepFlags(m: Match): void {
 
 function sendHome(m: Match, flag: Flag, by: number): void {
   const at = { x: flag.x, y: flag.y, z: flag.z };
-  placeHome(m, flag, flag.team);
+  placeHome(m, flag, m.bases[flag.base]);
   m.events.push({ kind: "return", ...at, player: by, team: flag.team });
+}
+
+/** The closest base of `team` to a spot; where carriers head to bank. */
+export function nearestBase(m: Match, team: Team, x: number, z: number): Base {
+  let best = m.bases[team];
+  let bestD = Infinity;
+  for (const b of m.bases) {
+    if (b.team !== team) continue;
+    const d = Math.hypot(b.x - x, b.z - z);
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
 }
 
 /**
@@ -646,7 +986,8 @@ function cpuInput(m: Match, p: Player): Input {
     const oz = o.z - p.z;
     const od = Math.hypot(ox, oz);
     if (od < 14 && od > 1 && (ox * fwdX + oz * fwdZ) / od > 0.93) {
-      throwPressed = m.rng() < (o.carrying >= 0 ? 0.12 : 0.03);
+      // Big crowds would turn into a wall of firecrackers, so each CPU throws less.
+      throwPressed = m.rng() < (o.carrying >= 0 ? 0.12 : 0.03) * m.aggro;
       break;
     }
   }
@@ -661,7 +1002,44 @@ function cpuInput(m: Match, p: Player): Input {
   }
   // Swimmers duck under incoming firecrackers, or to sneak a flag home.
   const dive = p.def.dive && (threatened(m, p) || (p.carrying >= 0 && p.breath > 2.5));
-  return { dirX: (dx / d) * throttle, dirZ: (dz / d) * throttle, jump: jump && !dive, throwPressed, dive };
+  const useItem = p.item !== null && cpuWantsItem(m, p, d);
+  return { dirX: (dx / d) * throttle, dirZ: (dz / d) * throttle, jump: jump && !dive, throwPressed, dive, useItem };
+}
+
+/** When a CPU fires its power up. Anything held too long gets used anyway. */
+function cpuWantsItem(m: Match, p: Player, goalDist: number): boolean {
+  if (p.itemHeld > 9) return true;
+  if (p.itemHeld < 0.4) return false;
+  const near = (r: number) => countEnemies(m, p, r);
+  switch (p.item) {
+    case "shield":
+    case "star":
+      return threatened(m, p) || (p.carrying >= 0 && near(16) > 0) || (p.item === "star" && near(10) > 1);
+    case "turbo":
+      return p.carrying >= 0 || goalDist > 40;
+    case "triple":
+    case "missile": {
+      const t = missileTarget(m, p.team, p.x, p.z, p.heading);
+      return !!t && Math.hypot(t.x - p.x, t.z - p.z) < (p.item === "missile" ? 35 : 15);
+    }
+    case "superjump": {
+      // Leap channels and lakes on the way to the goal.
+      const ahead = isWater(p.x + Math.sin(p.heading) * 6, p.z + Math.cos(p.heading) * 6);
+      return p.onSurface && p.medium === "land" && ahead && p.def.cls !== "water";
+    }
+    case "lightning":
+      return near(tune.lightningRadius) > 1 || m.players.some((o) => o.team !== p.team && o.carrying >= 0 && o.stun <= 0 && Math.hypot(o.x - p.x, o.z - p.z) < tune.lightningRadius);
+    case "blast":
+      return near(tune.blastRadius - 1) > 0;
+    default:
+      return false;
+  }
+}
+
+function countEnemies(m: Match, p: Player, r: number): number {
+  let n = 0;
+  for (const o of m.players) if (o.team !== p.team && o.stun <= 0 && !o.diving && Math.hypot(o.x - p.x, o.z - p.z) < r) n++;
+  return n;
 }
 
 function threatened(m: Match, p: Player): boolean {
@@ -673,46 +1051,86 @@ function enemyBelow(m: Match, p: Player): boolean {
 }
 
 function cpuGoal(m: Match, p: Player): [number, number] {
-  const home = m.bases[p.team];
+  const s = mapScale();
+  const home = nearestBase(m, p.team, p.x, p.z);
   if (p.carrying >= 0) return [home.x, home.z];
+  // A ready station close by is worth a short detour for empty hands.
+  if (!p.item) {
+    const st = nearest(p, m.stations.filter((x) => x.cd <= 0), 14);
+    if (st) return [st.x, st.z];
+  }
   const enemies = m.players.filter((o) => o.team !== p.team && o.stun <= 0);
   const thieves = enemies.filter((o) => o.carrying >= 0 && m.flags[o.carrying].team === p.team);
   const ourDropped = m.flags.filter((f) => f.team === p.team && f.state === "dropped");
+  // A few chase each runner while the rest keep their posts, so a big team
+  // doesn't pile onto one thief and leave everything else open.
+  const mine = (o: { x: number; z: number }) => fewCloser(m, p, o, 3);
   if (p.role === "defend") {
-    const thief = nearest(p, thieves, 70);
+    const thief = nearest(p, thieves.filter(mine), 70 * s);
     if (thief) return lead(thief);
-    const dropped = nearest(p, ourDropped, 60);
+    const dropped = nearest(p, ourDropped.filter(mine), 60 * s);
     if (dropped) return [dropped.x, dropped.z];
-    const raider = nearest(p, enemies.filter((o) => landOf(o.z) === p.team), 45);
+    const raider = nearest(p, enemies.filter((o) => landOf(o.z) === p.team && o.carrying < 0).filter((o) => fewCloser(m, p, o, 1)), 30 * s);
     if (raider) return lead(raider);
-    // Stand guard in front of the base.
-    const side = p.id % 2 === 0 ? 1 : -1;
-    return [home.x + side * 7, home.z * 0.84];
+    // Each defender minds one base: stand guard in a line in front of it.
+    const own = m.bases.filter((b) => b.team === p.team);
+    const post = own[p.id % own.length];
+    const slot = (Math.floor(p.id / own.length) % 5) - 2;
+    return [post.x + slot * 5 * s, post.z - Math.sign(post.z) * 14 * s];
   }
-  const dropped = nearest(p, ourDropped, 25);
+  const dropped = nearest(p, ourDropped.filter(mine), 25 * s);
   if (dropped) return [dropped.x, dropped.z];
-  const thief = nearest(p, thieves, 22);
+  const thief = nearest(p, thieves.filter(mine), 22 * s);
   if (thief) return lead(thief);
+  // Escort a teammate carrying a flag home: run just ahead and clear the way.
+  const runner = nearest(
+    p,
+    m.players.filter((o) => o.team === p.team && o.carrying >= 0 && o.stun <= 0 && fewCloser(m, p, o, 2)),
+    30 * s,
+  );
+  if (runner) {
+    const goal = nearestBase(m, p.team, runner.x, runner.z);
+    const hx = goal.x - runner.x;
+    const hz = goal.z - runner.z;
+    const hd = Math.hypot(hx, hz) || 1;
+    return [runner.x + (hx / hd) * 6, runner.z + (hz / hd) * 6];
+  }
   const prize = nearest(p, m.flags.filter((f) => f.team !== p.team && f.state !== "carried"), Infinity);
   if (prize) return [prize.x, prize.z];
   const enemyHome = m.bases[p.team === 0 ? 1 : 0];
   return [0, enemyHome.z * 0.6];
 }
 
+/** True when fewer than `max` teammates are already closer to `o` than `p` is. */
+function fewCloser(m: Match, p: Player, o: { x: number; z: number }, max: number): boolean {
+  const d = (o.x - p.x) ** 2 + (o.z - p.z) ** 2;
+  let n = 0;
+  for (const t of m.players) {
+    if (t === p || t.team !== p.team || t.stun > 0 || t === o) continue;
+    if ((o.x - t.x) ** 2 + (o.z - t.z) ** 2 < d && ++n >= max) return false;
+  }
+  return true;
+}
+
 function lead(o: Player): [number, number] {
   return [o.x + Math.sin(o.heading) * 3, o.z + Math.cos(o.heading) * 3];
 }
 
-/** Route a land animal over the nearest bridge when its goal is across a channel. */
+/** Route a land animal over the best bridge when its goal is across a channel. */
 function viaBridge(p: Player, gx: number, gz: number): [number, number] {
+  const s = mapScale();
   let best: [number, number] | null = null;
   let bestGap = Infinity;
   for (const g of [ZONE_EDGE, -ZONE_EDGE]) {
     const away = Math.abs(p.z - g);
     if ((p.z - g) * (gz - g) >= 0 || away < 5 || away >= bestGap) continue;
-    const bx = (p.x + gx) / 2 >= 0 ? BRIDGE_X : -BRIDGE_X;
+    // The bridge closest to the straight line from here to the goal.
+    const t = (g - p.z) / (gz - p.z || 1);
+    const crossX = p.x + (gx - p.x) * Math.max(0, Math.min(1, t));
+    let bx = BRIDGES[0];
+    for (const b of BRIDGES) if (Math.abs(b - crossX) < Math.abs(bx - crossX)) bx = b;
     // Line up with the bridge first, then drive across it.
-    best = away > 11 ? [bx, g + Math.sign(p.z - g) * 9] : [bx, g];
+    best = away > 11 * s ? [bx, g + Math.sign(p.z - g) * 9 * s] : [bx, g];
     bestGap = away;
   }
   return best ?? [gx, gz];

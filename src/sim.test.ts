@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ANIMALS } from "./animals";
-import { type Firecracker, HOARD_TARGET, type Match, NO_INPUT, STEP, createMatch, step, tune } from "./sim";
-import { BRIDGE_X, ZONE_EDGE, groundHeight, isWater, landOf, surfaceHeight } from "./terrain";
+import { type Firecracker, HOARD_TARGET, type Input, type Match, NO_INPUT, STEP, createMatch, giveItem, step, tune } from "./sim";
+import { BRIDGES, MAPS, ZONE_EDGE, fromLayout, groundHeight, isWater, landOf, mapScale, setMap, surfaceHeight } from "./terrain";
 
 const opts = { seed: 3, humanAnimal: "lion", perTeam: 4, duration: 60, flagsPerTeam: 5 };
 
@@ -66,21 +66,54 @@ describe("match sim", () => {
     expect(eagle.floatTime).toBeGreaterThan(lion.floatTime);
   });
 
-  it("the map is three lands split by channels, with bridges across", () => {
-    expect(groundHeight(0, 0)).toBeGreaterThan(1);
-    expect(groundHeight(0, 70)).toBeGreaterThan(1);
-    expect(groundHeight(0, -70)).toBeGreaterThan(1);
-    expect(isWater(0, ZONE_EDGE)).toBe(true);
-    expect(isWater(0, -ZONE_EDGE)).toBe(true);
-    expect(isWater(13, -6)).toBe(true);
-    expect(isWater(48, 0)).toBe(true);
-    // Every bridge stays dry from the middle land into the homeland.
-    for (const x of [BRIDGE_X, -BRIDGE_X]) {
-      for (let z = 20; z <= 52; z += 0.5) {
-        expect(groundHeight(x, z)).toBeGreaterThan(0);
-        expect(groundHeight(x, -z)).toBeGreaterThan(0);
+  it("every map is three lands split by channels, with bridges across", () => {
+    for (const map of MAPS) {
+      setMap(map);
+      const at = (u: number, v: number) => groundHeight(...fromLayout(u, v));
+      expect(at(0, 0)).toBeGreaterThan(1);
+      expect(at(0, 70)).toBeGreaterThan(1);
+      expect(at(0, -70)).toBeGreaterThan(1);
+      expect(isWater(...fromLayout(-24, 35))).toBe(true);
+      expect(isWater(...fromLayout(24, -35))).toBe(true);
+      expect(at(13, -6)).toBeLessThan(0);
+      expect(at(48, 0)).toBeLessThan(0);
+      // Every bridge stays dry from the middle land into the homeland.
+      const s = mapScale();
+      for (const x of BRIDGES) {
+        for (let z = 20 * s; z <= 52 * s; z += 0.5) {
+          expect(groundHeight(x, z)).toBeGreaterThan(0);
+          expect(groundHeight(-x, -z)).toBeGreaterThan(0);
+        }
       }
     }
+    setMap(MAPS[0]);
+  });
+
+  it("bigger teams get bigger maps, gigantic from 32 a side", () => {
+    expect(MAPS.map((m) => m.size)).toEqual([8, 16, 32, 64]);
+    expect(MAPS.filter((m) => m.gigantic).map((m) => m.size)).toEqual([32, 64]);
+    for (let i = 1; i < MAPS.length; i++) {
+      expect(MAPS[i].scale * MAPS[i].wide).toBeGreaterThan(MAPS[i - 1].scale * MAPS[i - 1].wide);
+      expect(MAPS[i].bridges.length).toBeGreaterThanOrEqual(MAPS[i - 1].bridges.length);
+    }
+    const m = createMatch({ ...opts, perTeam: 64, flagsPerTeam: MAPS[3].flagsPerTeam });
+    expect(m.map.name).toBe(MAPS[3].name);
+    expect(m.players).toHaveLength(128);
+    // Everyone starts on dry land around their own base, not stacked up.
+    for (const p of m.players) {
+      expect(isWater(p.x, p.z)).toBe(false);
+      expect(landOf(p.z)).toBe(p.team);
+    }
+    // Every flag starts inside its base pad and every station is on land.
+    for (const f of m.flags) expect(Math.hypot(f.x - m.bases[f.base].x, f.z - m.bases[f.base].z)).toBeLessThan(m.baseRadius);
+    // Gigantic maps give each team two outposts, and flags start spread across them.
+    expect(m.bases.filter((b) => !b.main)).toHaveLength(4);
+    for (const b of m.bases) {
+      expect(landOf(b.z)).toBe(b.team);
+      expect(m.flags.some((f) => f.base === b.id)).toBe(true);
+    }
+    for (const st of m.stations) expect(groundHeight(st.x, st.z)).toBeGreaterThan(0.5);
+    setMap(MAPS[0]);
   });
 
   it("the map is the same for both teams", () => {
@@ -100,7 +133,7 @@ describe("match sim", () => {
       expect(mine).toHaveLength(5);
       for (const f of mine) {
         expect(f.state).toBe("home");
-        expect(Math.hypot(f.x - m.bases[team].x, f.z - m.bases[team].z)).toBeLessThan(tune.baseRadius);
+        expect(Math.hypot(f.x - m.bases[team].x, f.z - m.bases[team].z)).toBeLessThan(m.baseRadius);
       }
     }
     m.players[0].cpu = true;
@@ -144,7 +177,7 @@ describe("match sim", () => {
     ours.y = me.y = groundHeight(0, 20);
     step(m, NO_INPUT);
     expect(ours.state).toBe("home");
-    expect(Math.hypot(ours.x - m.bases[0].x, ours.z - m.bases[0].z)).toBeLessThan(tune.baseRadius);
+    expect(Math.hypot(ours.x - m.bases[0].x, ours.z - m.bases[0].z)).toBeLessThan(m.baseRadius);
   });
 
   it("both teams capture flags over a full match", () => {
@@ -287,5 +320,107 @@ describe("match sim", () => {
     }
     expect(kinds.has("dive")).toBe(true);
     expect(kinds.has("boom")).toBe(true);
+  });
+});
+
+describe("power ups", () => {
+  const USE: Input = { ...NO_INPUT, useItem: true };
+
+  /** A quiet match: everyone but player 0 and the listed enemies is parked. */
+  function setup(enemies = 1) {
+    const m = createMatch({ ...opts, perTeam: 8 });
+    const me = m.players[0];
+    const foes = m.players.filter((o) => o.team !== me.team).slice(0, enemies);
+    freezeOthers(m, [0, ...foes.map((f) => f.id)]);
+    for (const f of foes) f.cpu = false;
+    me.cpu = false;
+    return { m, me, foes };
+  }
+
+  /** Put a player on dry ground at a spot. */
+  function place(p: Match["players"][number], x: number, z: number) {
+    p.x = x;
+    p.z = z;
+    p.y = surfaceHeight(x, z);
+    p.vy = 0;
+  }
+
+  it("driving over a station hands out an item and the station recharges", () => {
+    const { m, me } = setup(0);
+    const st = m.stations[0];
+    place(me, st.x, st.z);
+    const kinds: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      step(m, NO_INPUT);
+      for (const e of m.events) kinds.push(e.kind);
+    }
+    expect(kinds).toContain("item");
+    expect(me.item).not.toBeNull();
+    expect(st.cd).toBeGreaterThan(0);
+  });
+
+  it("a shield blocks a hit while it lasts", () => {
+    const { m, me } = setup(0);
+    giveItem(me, "shield");
+    step(m, USE);
+    expect(me.shieldT).toBeGreaterThan(0);
+    enemyFire(m, 0);
+    const kinds: string[] = [];
+    step(m, NO_INPUT);
+    for (const e of m.events) kinds.push(e.kind);
+    expect(kinds).toContain("block");
+    expect(me.stun).toBe(0);
+  });
+
+  it("with a star you pop any enemy you bump into", () => {
+    const { m, me, foes } = setup(1);
+    const [foe] = foes;
+    place(me, 0, 0);
+    place(foe, 0.8, 0);
+    giveItem(me, "star");
+    step(m, USE);
+    step(m, NO_INPUT);
+    expect(foe.stun).toBeGreaterThan(0);
+    expect(me.stun).toBe(0);
+  });
+
+  it("lightning pops enemies nearby but not far away", () => {
+    const { m, me, foes } = setup(2);
+    const [near, far] = foes;
+    place(me, 0, 0);
+    place(near, 8, 4);
+    place(far, 0, tune.lightningRadius + 15);
+    giveItem(me, "lightning");
+    step(m, USE);
+    expect(near.stun).toBeGreaterThan(0);
+    expect(far.stun).toBe(0);
+  });
+
+  it("a missile homes in on an enemy off to the side", () => {
+    const { m, me, foes } = setup(1);
+    const [foe] = foes;
+    place(me, 0, 0);
+    place(foe, 12, -14);
+    me.heading = Math.PI;
+    giveItem(me, "missile");
+    step(m, USE);
+    expect(m.fires.some((f) => f.homing === foe.id)).toBe(true);
+    for (let i = 0; i < 4 / STEP && foe.stun === 0; i++) step(m, NO_INPUT);
+    expect(foe.stun).toBeGreaterThan(0);
+  });
+
+  it("turbo makes you faster for a while", () => {
+    const ride = (turbo: boolean) => {
+      const { m, me } = setup(0);
+      place(me, 0, 10);
+      if (turbo) {
+        giveItem(me, "turbo");
+        step(m, USE);
+      }
+      const z0 = me.z;
+      for (let i = 0; i < 2 / STEP; i++) step(m, { ...NO_INPUT, dirX: 0, dirZ: -1 });
+      return Math.abs(me.z - z0);
+    };
+    expect(ride(true)).toBeGreaterThan(ride(false) * 1.2);
   });
 });
