@@ -55,20 +55,20 @@ const CSS = `
 @media (orientation:portrait){.fc-rotate{display:flex}}
 .fc-menu .fc-stick,.fc-menu .fc-knob{display:none!important}
 .fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power{display:none!important}
-.fc-sel{position:absolute;inset:0;pointer-events:none}
-.fc-sel h2{position:absolute;top:max(14px,env(safe-area-inset-top));left:0;right:0;margin:0;text-align:center;font-size:34px;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
-.fc-sel h2 small{display:block;font-size:14px;letter-spacing:0;-webkit-text-stroke:0;color:rgba(43,35,64,.7)}
-.fc-modes{position:absolute;top:calc(max(14px,env(safe-area-inset-top)) + 64px);left:0;right:0;display:flex;justify-content:center;gap:8px}
-.fc-mode{pointer-events:auto;padding:7px 14px;border-radius:999px;background:rgba(255,250,240,.9);border:3px solid transparent;box-shadow:0 3px 0 rgba(43,35,64,.2);font-weight:900;font-size:14px;text-align:center}
-.fc-mode small{display:block;font-size:10px;font-weight:700;color:rgba(43,35,64,.65)}
-.fc-mode.on{border-color:${PALETTE.ink};background:#fffaf0}
-.fc-sizes{position:absolute;top:calc(max(14px,env(safe-area-inset-top)) + 112px);left:0;right:0;display:flex;justify-content:center;gap:6px}
-.fc-size{pointer-events:auto;padding:4px 10px;border-radius:999px;background:rgba(255,250,240,.9);border:3px solid transparent;box-shadow:0 3px 0 rgba(43,35,64,.2);font-weight:900;font-size:13px;text-align:center;line-height:1.1}
-.fc-size small{display:block;font-size:9px;font-weight:800;color:rgba(43,35,64,.6);letter-spacing:.5px}
+.fc-sel{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:8px;padding:max(10px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+.fc-sel h2{flex:none;margin:0;text-align:center;font-size:30px;line-height:1.05;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
+.fc-sel h2 small{display:block;margin-top:2px;font-size:13px;letter-spacing:0;-webkit-text-stroke:0;color:rgba(43,35,64,.75)}
+.fc-setup{flex:none;pointer-events:auto;display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-end;gap:8px 14px;padding:6px 12px 8px;border-radius:20px;background:rgba(255,250,240,.82);box-shadow:0 4px 0 rgba(43,35,64,.18)}
+.fc-group{display:flex;flex-direction:column;align-items:center;gap:3px}
+.fc-group>label{font-size:10px;font-weight:900;letter-spacing:1px;color:rgba(43,35,64,.55)}
+.fc-seg{display:flex;gap:4px;padding:3px;border-radius:999px;background:rgba(43,35,64,.1)}
+.fc-mode,.fc-size{pointer-events:auto;min-height:40px;min-width:64px;padding:4px 14px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:999px;background:transparent;border:3px solid transparent;font-weight:900;font-size:15px;line-height:1.05;text-align:center;color:${PALETTE.ink};cursor:pointer;-webkit-tap-highlight-color:transparent}
+.fc-mode small,.fc-size small{display:block;margin-top:1px;font-size:9px;font-weight:800;letter-spacing:.4px;color:rgba(43,35,64,.6)}
 .fc-size.big small{color:#e8455b}
-.fc-size.on{border-color:${PALETTE.ink};background:#fffaf0}
+.fc-mode.on,.fc-size.on{background:#fffaf0;border-color:${PALETTE.ink};box-shadow:0 2px 0 rgba(43,35,64,.2)}
+@media (max-height:380px){.fc-sel{gap:6px}.fc-sel h2{font-size:24px}.fc-sel h2 small{display:none}.fc-mode,.fc-size{min-height:38px}}
 .fc-timer.goal{font-size:13px;line-height:1.1;padding:5px 10px}
-.fc-row{position:absolute;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));display:flex;justify-content:center;align-items:flex-end;gap:8px;padding:0 max(10px,env(safe-area-inset-right)) 0 max(10px,env(safe-area-inset-left))}
+.fc-row{flex:none;margin-top:auto;max-width:100%;display:flex;justify-content:center;align-items:flex-end;gap:8px}
 .fc-tiles{pointer-events:auto;display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;padding:10px 4px 6px;min-width:0;flex:0 1 auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .fc-tiles::-webkit-scrollbar{display:none}
 .fc-tile{pointer-events:auto;flex:0 0 auto;width:min(118px,17vw);padding:8px 9px 9px;border-radius:16px;background:rgba(255,250,240,.94);border:3px solid transparent;box-shadow:0 4px 0 rgba(43,35,64,.22);text-align:left;transition:transform .15s}
@@ -376,33 +376,39 @@ export function createHud(controls: Controls): Hud {
       const title = el("h2", "", sel);
       title.textContent = "PICK YOUR ANIMAL";
       el("small", "", title).textContent = "Steal flags from the enemy base and bring them home. Guard yours!";
-      const modes = el("div", "fc-modes", sel);
+      // Mode and team size share one panel above the animals, so nothing overlaps.
+      const setup = el("div", "fc-setup", sel);
+      setup.addEventListener("pointerdown", (e) => e.stopPropagation());
+      const modeGroup = el("div", "fc-group", setup);
+      el("label", "", modeGroup).textContent = "MODE";
+      const modes = el("div", "fc-seg", modeGroup);
       const modeBtns = new Map<Mode, HTMLElement>();
       const modeInfo: Array<[Mode, string, string]> = [
-        ["capture", "CAPTURE", "Most steals before time is up"],
-        ["hoard", "HOARD", `Held flags earn points, first to ${HOARD_TARGET}`],
+        ["capture", "CAPTURE", "Most steals wins"],
+        ["hoard", "HOARD", `First to ${HOARD_TARGET} points`],
       ];
       for (const [id, name, info] of modeInfo) {
         const b = el("div", "fc-mode", modes);
         b.textContent = name;
         el("small", "", b).textContent = info;
-        b.addEventListener("pointerdown", (e) => {
-          e.stopPropagation();
+        b.addEventListener("click", () => {
           mode = id;
           modeBtns.forEach((n, k) => n.classList.toggle("on", k === mode));
+          sfx.pick();
         });
         modeBtns.set(id, b);
       }
       modeBtns.forEach((n, k) => n.classList.toggle("on", k === mode));
       // Team size; the two biggest play on gigantic maps with outposts.
-      const sizes = el("div", "fc-sizes", sel);
+      const sizeGroup = el("div", "fc-group", setup);
+      el("label", "", sizeGroup).textContent = "TEAM SIZE";
+      const sizes = el("div", "fc-seg", sizeGroup);
       const sizeBtns = new Map<number, HTMLElement>();
       for (const def of MAPS) {
         const b = el("div", def.gigantic ? "fc-size big" : "fc-size", sizes);
-        b.textContent = `${def.size} v ${def.size}`;
-        el("small", "", b).textContent = def.gigantic ? "GIGANTIC" : def.name.toUpperCase();
-        b.addEventListener("pointerdown", (e) => {
-          e.stopPropagation();
+        b.textContent = `${def.size}v${def.size}`;
+        el("small", "", b).textContent = def.gigantic ? "GIGANTIC" : def.size === 8 ? "CLASSIC" : "BIG";
+        b.addEventListener("click", () => {
           size = def.size;
           sizeBtns.forEach((n, k) => n.classList.toggle("on", k === size));
           sfx.pick();
