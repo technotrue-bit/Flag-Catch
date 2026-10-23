@@ -45,6 +45,21 @@
   </head>
   <body>
     <div id="app"></div>
+    <div id="boot-error" style="display:none;position:fixed;inset:0;align-items:center;justify-content:center;padding:24px;text-align:center;font:700 16px system-ui,sans-serif;color:#2b2340;background:#7cc4f2"></div>
+    <script>
+      // Show a readable message instead of a blank sky if the game cannot start.
+      (function () {
+        function show(msg) {
+          var el = document.getElementById("boot-error");
+          if (!el || el.dataset.shown) return;
+          el.dataset.shown = "1";
+          el.style.display = "flex";
+          el.textContent = "Flag Catch could not start: " + msg;
+        }
+        window.addEventListener("error", function (e) { show(e.message || "unknown error"); });
+        window.addEventListener("unhandledrejection", function (e) { show(String(e.reason)); });
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
