@@ -59,6 +59,28 @@
         window.addEventListener("error", function (e) { show(e.message || "unknown error"); });
         window.addEventListener("unhandledrejection", function (e) { show(String(e.reason)); });
       })();
+      // Two thumbs on the glass must never zoom or scroll the page. Phone
+      // browsers can ignore user-scalable=no, so block pinch and double tap
+      // zoom here too. Zoom lives in the game's own Settings instead.
+      (function () {
+        var stop = function (e) { e.preventDefault(); };
+        ["gesturestart", "gesturechange", "gestureend"].forEach(function (t) {
+          document.addEventListener(t, stop, { passive: false });
+        });
+        document.addEventListener("touchmove", function (e) {
+          if (e.touches.length > 1 || (e.scale !== undefined && e.scale !== 1)) e.preventDefault();
+        }, { passive: false });
+        var lastEnd = 0;
+        document.addEventListener("touchend", function (e) {
+          var now = Date.now();
+          if (now - lastEnd < 320 && e.target && e.target.tagName !== "INPUT") e.preventDefault();
+          lastEnd = now;
+        }, { passive: false });
+        document.addEventListener("wheel", function (e) { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+        document.addEventListener("keydown", function (e) {
+          if ((e.ctrlKey || e.metaKey) && ["+", "=", "-", "0"].indexOf(e.key) >= 0) e.preventDefault();
+        });
+      })();
     </script>
     <script type="module" src="/src/main.ts"></script>
   </body>

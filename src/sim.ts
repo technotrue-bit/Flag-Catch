@@ -69,16 +69,28 @@ export interface Player {
   goalZ: number;
 }
 
-export type FlagState = "free" | "carried" | "banked";
+/**
+ * Capture the flag rules. Each team's flags start in its own base. Steal
+ * one from the enemy base and bring it to yours to score; it then sits in
+ * your base and they can steal it back. A popped carrier drops the flag:
+ * its owners touch it to send it home, the thieves can pick it up again,
+ * and left alone it goes home on its own.
+ */
+export type FlagState = "home" | "carried" | "dropped";
 
 export interface Flag {
   id: number;
+  /** The team whose base the flag belongs to right now. */
+  team: Team;
   state: FlagState;
   x: number;
   y: number;
   z: number;
   carrier: number;
-  respawn: number;
+  /** Slot in the base ring while home. */
+  slot: number;
+  /** Seconds left before a dropped flag goes home by itself. */
+  timer: number;
 }
 
 export interface Firecracker {
@@ -102,6 +114,7 @@ export type SimEvent =
   | { kind: "grab"; x: number; y: number; z: number; player: number }
   | { kind: "drop"; x: number; y: number; z: number; player: number }
   | { kind: "bank"; x: number; y: number; z: number; player: number; team: Team }
+  | { kind: "return"; x: number; y: number; z: number; player: number; team: Team }
   | { kind: "jump"; player: number }
   | { kind: "splash"; x: number; z: number; player: number }
   | { kind: "end"; winner: Team | -1 };
@@ -126,32 +139,12 @@ export interface Match {
   nextFireId: number;
 }
 
-/** Flag spots in mirrored pairs, so both homelands get the same chances. */
-export const FLAG_SPOTS: ReadonlyArray<[number, number]> = [
-  // Middle land, two of them out in the lagoons for swimmers.
-  [-14, -14],
-  [14, 14],
-  [-24, 4],
-  [24, -4],
-  [0, 18],
-  [0, -18],
-  [13, -6],
-  [-13, 6],
-  // Homelands.
-  [-16, 54],
-  [16, -54],
-  [16, 58],
-  [-16, -58],
-  [0, 66],
-  [0, -66],
-];
-
 export interface MatchOptions {
   seed: number;
   humanAnimal: string;
   perTeam: number;
   duration: number;
-  flagCount: number;
+  flagsPerTeam: number;
 }
 
 export function createMatch(opts: MatchOptions): Match {
@@ -176,15 +169,12 @@ export function createMatch(opts: MatchOptions): Match {
     }
     if (team === 1) break;
   }
-  // Start with half the flags in the middle and a fair share in each homeland.
-  const byLand = [-1, 0, -1, 1].map((land) => shuffled(FLAG_SPOTS.filter(([, z]) => landOf(z) === land), rng));
-  const used = [0, 0, 0, 0];
   const flags: Flag[] = [];
-  for (let i = 0; i < opts.flagCount; i++) {
-    const k = i % 4;
-    const list = byLand[k];
-    const [x, z] = list[used[k]++ % list.length];
-    flags.push({ id: i, state: "free", x, y: surfaceHeight(x, z), z, carrier: -1, respawn: 0 });
+  for (const team of [0, 1] as const) {
+    for (let i = 0; i < opts.flagsPerTeam; i++) {
+      const [x, z] = baseSlot(bases[team], i);
+      flags.push({ id: flags.length, team, state: "home", x, y: surfaceHeight(x, z), z, carrier: -1, slot: i, timer: 0 });
+    }
   }
   return {
     rng,
@@ -429,7 +419,8 @@ function dropFlag(m: Match, p: Player): void {
   const flag = m.flags[p.carrying];
   p.carrying = -1;
   p.grabCd = 0.8;
-  flag.state = "free";
+  flag.state = "dropped";
+  flag.timer = 12;
   flag.carrier = -1;
   flag.x = p.x;
   flag.z = p.z;
@@ -437,13 +428,31 @@ function dropFlag(m: Match, p: Player): void {
   m.events.push({ kind: "drop", x: flag.x, y: flag.y, z: flag.z, player: p.id });
 }
 
+/** Where flag number `slot` stands in a base: an outer ring, then an inner one. */
+export function baseSlot(b: Base, slot: number): [number, number] {
+  const outer = slot < 8;
+  const k = outer ? slot : slot - 8;
+  const a = outer ? (k / 8) * Math.PI * 2 + Math.PI / 8 : (k / 4) * Math.PI * 2;
+  const r = outer ? 2.7 : slot < 12 ? 1.3 : 0.4;
+  return [b.x + Math.cos(a) * r, b.z + Math.sin(a) * r];
+}
+
+function placeHome(m: Match, flag: Flag, team: Team): void {
+  const taken = new Set(m.flags.filter((f) => f !== flag && f.team === team && f.state === "home").map((f) => f.slot));
+  let slot = 0;
+  while (taken.has(slot)) slot++;
+  const [x, z] = baseSlot(m.bases[team], slot);
+  flag.team = team;
+  flag.state = "home";
+  flag.slot = slot;
+  flag.carrier = -1;
+  flag.x = x;
+  flag.z = z;
+  flag.y = surfaceHeight(x, z);
+}
+
 function stepFlags(m: Match): void {
   for (const flag of m.flags) {
-    if (flag.state === "banked") {
-      flag.respawn -= STEP;
-      if (flag.respawn <= 0) respawnFlag(m, flag);
-      continue;
-    }
     if (flag.state === "carried") {
       const c = m.players[flag.carrier];
       flag.x = c.x;
@@ -451,59 +460,55 @@ function stepFlags(m: Match): void {
       flag.z = c.z;
       const base = m.bases[c.team];
       if (Math.hypot(c.x - base.x, c.z - base.z) < tune.baseRadius) {
-        flag.state = "banked";
-        flag.carrier = -1;
-        flag.respawn = 3;
         c.carrying = -1;
         c.score += 25;
         m.scores[c.team] += 1;
+        placeHome(m, flag, c.team);
         m.events.push({ kind: "bank", x: base.x, y: surfaceHeight(base.x, base.z), z: base.z, player: c.id, team: c.team });
       }
       continue;
     }
+    if (flag.state === "dropped") {
+      flag.timer -= STEP;
+      if (flag.timer <= 0) {
+        sendHome(m, flag, -1);
+        continue;
+      }
+    }
     for (const p of m.players) {
-      if (p.carrying >= 0 || p.stun > 0 || p.grabCd > 0) continue;
+      if (p.stun > 0) continue;
       const dx = p.x - flag.x;
       const dz = p.z - flag.z;
-      const dy = p.y - flag.y;
-      if (dx * dx + dz * dz < tune.grabRadius * tune.grabRadius && Math.abs(dy) < 2.5) {
-        flag.state = "carried";
-        flag.carrier = p.id;
-        p.carrying = flag.id;
-        m.events.push({ kind: "grab", x: flag.x, y: flag.y, z: flag.z, player: p.id });
+      if (dx * dx + dz * dz >= tune.grabRadius * tune.grabRadius || Math.abs(p.y - flag.y) >= 2.5) continue;
+      if (p.team === flag.team) {
+        // Owners can't pick up their own flag, but touching a dropped one saves it.
+        if (flag.state !== "dropped") continue;
+        p.score += 5;
+        sendHome(m, flag, p.id);
         break;
       }
+      if (p.carrying >= 0 || p.grabCd > 0) continue;
+      flag.state = "carried";
+      flag.carrier = p.id;
+      p.carrying = flag.id;
+      m.events.push({ kind: "grab", x: flag.x, y: flag.y, z: flag.z, player: p.id });
+      break;
     }
   }
 }
 
-function respawnFlag(m: Match, flag: Flag): void {
-  // Pick the spot farthest from the other loose flags so they stay spread out.
-  let best = FLAG_SPOTS[0];
-  let bestD = -1;
-  for (const s of FLAG_SPOTS) {
-    let d = Infinity;
-    for (const o of m.flags) {
-      if (o === flag || o.state === "banked") continue;
-      d = Math.min(d, Math.hypot(o.x - s[0], o.z - s[1]));
-    }
-    d += m.rng() * 6;
-    if (d > bestD) {
-      bestD = d;
-      best = s;
-    }
-  }
-  flag.state = "free";
-  flag.x = best[0];
-  flag.z = best[1];
-  flag.y = surfaceHeight(best[0], best[1]);
+function sendHome(m: Match, flag: Flag, by: number): void {
+  const at = { x: flag.x, y: flag.y, z: flag.z };
+  placeHome(m, flag, flag.team);
+  m.events.push({ kind: "return", ...at, player: by, team: flag.team });
 }
 
 /**
- * Prototype CPU. Everyone carries a held flag home. Defenders chase raiders
- * in their homeland, grab flags there and otherwise stand guard. Attackers
- * chase nearby enemy carriers, else go for loose flags outside their own
- * homeland. Land animals use the bridges. Throws when an enemy is ahead.
+ * Prototype CPU. Everyone carries a stolen flag home. Defenders hunt
+ * whoever took one of their flags, save dropped ones, chase raiders in
+ * their homeland and otherwise guard the base. Attackers save nearby dropped
+ * flags, chase thieves close by, else raid the enemy base. Land animals use
+ * the bridges. Throws when an enemy is ahead.
  */
 function cpuInput(m: Match, p: Player): Input {
   p.thinkCd -= STEP;
@@ -539,20 +544,25 @@ function cpuGoal(m: Match, p: Player): [number, number] {
   const home = m.bases[p.team];
   if (p.carrying >= 0) return [home.x, home.z];
   const enemies = m.players.filter((o) => o.team !== p.team && o.stun <= 0);
-  const free = m.flags.filter((f) => f.state === "free");
+  const thieves = enemies.filter((o) => o.carrying >= 0 && m.flags[o.carrying].team === p.team);
+  const ourDropped = m.flags.filter((f) => f.team === p.team && f.state === "dropped");
   if (p.role === "defend") {
+    const thief = nearest(p, thieves, 70);
+    if (thief) return lead(thief);
+    const dropped = nearest(p, ourDropped, 60);
+    if (dropped) return [dropped.x, dropped.z];
     const raider = nearest(p, enemies.filter((o) => landOf(o.z) === p.team), 45);
     if (raider) return lead(raider);
-    const flag = nearest(p, free.filter((f) => landOf(f.z) === p.team), Infinity);
-    if (flag) return [flag.x, flag.z];
-    // Stand guard between the base and the bridges.
+    // Stand guard in front of the base.
     const side = p.id % 2 === 0 ? 1 : -1;
-    return [side * BRIDGE_X, home.z * 0.62];
+    return [home.x + side * 7, home.z * 0.84];
   }
-  const carrier = nearest(p, enemies.filter((o) => o.carrying >= 0), 22);
-  if (carrier) return lead(carrier);
-  const flag = nearest(p, free.filter((f) => landOf(f.z) !== p.team), Infinity) ?? nearest(p, free, Infinity);
-  if (flag) return [flag.x, flag.z];
+  const dropped = nearest(p, ourDropped, 25);
+  if (dropped) return [dropped.x, dropped.z];
+  const thief = nearest(p, thieves, 22);
+  if (thief) return lead(thief);
+  const prize = nearest(p, m.flags.filter((f) => f.team !== p.team && f.state !== "carried"), Infinity);
+  if (prize) return [prize.x, prize.z];
   const enemyHome = m.bases[p.team === 0 ? 1 : 0];
   return [0, enemyHome.z * 0.6];
 }
@@ -587,14 +597,6 @@ function nearest<T extends { x: number; z: number }>(p: Player, list: T[], maxD:
     }
   }
   return best;
-}
-
-function shuffled<T>(arr: T[], rng: RNG): T[] {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
 }
 
 export function wrapAngle(a: number): number {

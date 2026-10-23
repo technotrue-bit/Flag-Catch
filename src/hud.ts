@@ -38,7 +38,7 @@ const CSS = `
 .fc-call{position:absolute;left:50%;top:30%;transform:translate(-50%,-50%) scale(.6);font-weight:900;font-size:44px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill;opacity:0;transition:transform .18s cubic-bezier(.3,1.6,.5,1),opacity .18s;white-space:nowrap}
 .fc-call.show{transform:translate(-50%,-50%) scale(1);opacity:1}
 .fc-top-left{position:absolute;top:max(10px,env(safe-area-inset-top));left:max(10px,env(safe-area-inset-left));display:flex;gap:6px;pointer-events:auto}
-.fc-chip{padding:6px 10px;border-radius:12px;background:rgba(255,255,255,.82);font-weight:800;font-size:12px;border:2px solid transparent;box-shadow:0 2px 0 rgba(43,35,64,.15)}
+.fc-chip{padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.82);font-weight:800;font-size:12px;border:2px solid transparent;box-shadow:0 2px 0 rgba(43,35,64,.15)}
 .fc-chip.on{border-color:${PALETTE.ink}}
 .fc-card{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(124,196,242,.55);pointer-events:auto;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
 .fc-card .box{background:#fffaf0;border-radius:24px;padding:20px 28px;text-align:center;box-shadow:0 6px 0 rgba(43,35,64,.25);max-width:min(560px,90vw)}
@@ -50,7 +50,7 @@ const CSS = `
 @keyframes fcrot{0%,20%{transform:rotate(0)}50%,80%{transform:rotate(-90deg)}100%{transform:rotate(0)}}
 @media (orientation:portrait){.fc-rotate{display:flex}}
 .fc-menu .fc-stick,.fc-menu .fc-knob{display:none!important}
-.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-top-left{display:none}
+.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint{display:none}
 .fc-sel{position:absolute;inset:0;pointer-events:none}
 .fc-sel h2{position:absolute;top:max(14px,env(safe-area-inset-top));left:0;right:0;margin:0;text-align:center;font-size:34px;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
 .fc-sel h2 small{display:block;font-size:14px;letter-spacing:0;-webkit-text-stroke:0;color:rgba(43,35,64,.7)}
@@ -70,7 +70,11 @@ const CSS = `
 @keyframes fcpop{0%{transform:translate(-50%,-50%) scale(.4);opacity:0}25%{transform:translate(-50%,-50%) scale(1.08);opacity:1}70%{transform:translate(-50%,-50%) scale(1);opacity:1}100%{transform:translate(-50%,-50%) scale(1.25);opacity:0}}
 .fc-card .row2{display:flex;gap:10px;justify-content:center}
 .fc-card .go.alt{background:#ff8a4c}
-.fc-tune{position:absolute;top:56px;left:max(10px,env(safe-area-inset-left));background:rgba(255,255,255,.92);border-radius:14px;padding:8px 10px;font-size:11px;font-weight:700;pointer-events:auto;display:none;max-height:70vh;overflow:auto}
+.fc-tune{display:none;margin-top:8px;text-align:left;font-size:11px;font-weight:700;max-height:34vh;overflow:auto}
+.fc-set{display:flex;align-items:center;gap:10px;margin:10px 0 4px;font-weight:800;font-size:15px}
+.fc-set span{font-size:12px;color:rgba(43,35,64,.6)}
+.fc-set input{flex:1;min-width:180px;height:28px}
+.fc-card .small{margin-top:6px;display:inline-block;padding:6px 14px;border-radius:999px;background:rgba(43,35,64,.1);font-weight:800;font-size:13px}
 .fc-tune label{display:flex;justify-content:space-between;gap:8px;align-items:center}
 .fc-tune input{width:110px}
 `;
@@ -83,6 +87,21 @@ export interface Hud {
   /** 3, 2, 1, GO! then onDone. */
   countdown(onDone: () => void): void;
   showResults(m: Match, onAgain: () => void, onChange: () => void): void;
+  /** True while the settings card is open; the match waits. */
+  readonly paused: boolean;
+  /** Camera distance multiplier from the Zoom setting (smaller is closer). */
+  readonly camScale: number;
+}
+
+const ZOOM_KEY = "flagcatch.zoom";
+
+function loadZoom(): number {
+  try {
+    const v = Number(localStorage.getItem(ZOOM_KEY));
+    return Number.isFinite(v) && v > 0 ? Math.min(1, v) : 0.5;
+  } catch {
+    return 0.5;
+  }
 }
 
 const CLASS_COLORS = { land: "#5cb85c", water: "#46b4e8", air: "#9b7be8" } as const;
@@ -151,13 +170,52 @@ export function createHud(controls: Controls): Hud {
   const call = el("div", "fc-call", root);
   let callTimer = 0;
 
+  // Settings: the only way to zoom, since pinching the page is turned off.
+  let zoom = loadZoom();
+  let paused = false;
   const tl = el("div", "fc-top-left", root);
-  const tuneChip = el("div", "fc-chip", tl);
-  tuneChip.textContent = "Tune";
-  const tunePanel = buildTunePanel(root);
-  tuneChip.addEventListener("pointerdown", (e) => {
+  const setChip = el("div", "fc-chip", tl);
+  setChip.textContent = "SETTINGS";
+  setChip.addEventListener("pointerdown", (e) => {
     e.stopPropagation();
-    tunePanel.style.display = tunePanel.style.display === "block" ? "none" : "block";
+    if (paused) return;
+    paused = true;
+    const card = el("div", "fc-card", root);
+    card.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    const box = el("div", "box", card);
+    el("h1", "", box).textContent = "SETTINGS";
+    const row = el("label", "fc-set", box);
+    el("b", "", row).textContent = "Zoom";
+    el("span", "", row).textContent = "Out";
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "1";
+    slider.step = "0.05";
+    slider.value = String(zoom);
+    slider.addEventListener("input", () => {
+      zoom = Number(slider.value);
+      try {
+        localStorage.setItem(ZOOM_KEY, String(zoom));
+      } catch {
+        // Private mode: the setting lasts until the page closes.
+      }
+    });
+    row.appendChild(slider);
+    el("span", "", row).textContent = "In";
+    const feelBtn = el("div", "small", box);
+    feelBtn.textContent = "Feel tuning";
+    const tunePanel = buildTunePanel(box);
+    feelBtn.addEventListener("pointerdown", () => {
+      tunePanel.style.display = tunePanel.style.display === "block" ? "none" : "block";
+    });
+    el("div", "", box);
+    const done = el("div", "go", box);
+    done.textContent = "DONE";
+    done.addEventListener("pointerdown", () => {
+      card.remove();
+      paused = false;
+    });
   });
 
   const rotate = el("div", "fc-rotate", root);
@@ -168,6 +226,13 @@ export function createHud(controls: Controls): Hud {
   let hintTimer = 8;
 
   return {
+    get paused() {
+      return paused;
+    },
+    get camScale() {
+      // Slider 0 is zoomed out, 1 is zoomed in; the middle is the default view.
+      return 1.35 - zoom * 0.7;
+    },
     update(m, c, camYaw) {
       scoreA.textContent = String(m.scores[0]);
       scoreB.textContent = String(m.scores[1]);
@@ -193,10 +258,11 @@ export function createHud(controls: Controls): Hud {
         zone.style.background = land === -1 ? "rgba(43,35,64,.45)" : TEAMS[land].color;
         lastLand = land;
       }
-      // Point at your base while carrying, else at the nearest free flag.
+      // Point home while carrying; else at the nearest flag to steal from
+      // the enemy, or one of ours lying dropped that needs saving.
       let tx = NaN;
       let tz = NaN;
-      let color = FLAG_FREE;
+      let color: string = TEAMS[1].color;
       if (me.carrying >= 0) {
         tx = m.bases[0].x;
         tz = m.bases[0].z;
@@ -204,12 +270,15 @@ export function createHud(controls: Controls): Hud {
       } else {
         let best = Infinity;
         for (const f of m.flags) {
-          if (f.state !== "free") continue;
+          const steal = f.team !== me.team && f.state !== "carried";
+          const save = f.team === me.team && f.state === "dropped";
+          if (!steal && !save) continue;
           const d = Math.hypot(f.x - me.x, f.z - me.z);
           if (d < best) {
             best = d;
             tx = f.x;
             tz = f.z;
+            color = TEAMS[f.team].color;
           }
         }
       }
@@ -242,7 +311,7 @@ export function createHud(controls: Controls): Hud {
       const sel = el("div", "fc-sel", root);
       const title = el("h2", "", sel);
       title.textContent = "PICK YOUR ANIMAL";
-      el("small", "", title).textContent = "Grab green flags and bring them home. Defend your land!";
+      el("small", "", title).textContent = "Steal flags from the enemy base and bring them home. Guard yours!";
       const row = el("div", "fc-row", sel);
       const tiles = new Map<string, HTMLElement>();
       const pick = (id: string) => {
@@ -401,10 +470,15 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
   for (const b of m.bases) {
     ctx.fillStyle = TEAMS[b.team].color;
     ctx.fillRect(mapX(b.z, w) - 5 * s, mapY(b.x, h) - 5 * s, 10 * s, 10 * s);
+    // Pips for how many flags this base holds right now.
+    const held = m.flags.filter((f) => f.team === b.team && f.state === "home").length;
+    ctx.fillStyle = "#ffffff";
+    for (let i = 0; i < held; i++) ctx.fillRect(mapX(b.z, w) - 6 * s + (i % 5) * 2.6 * s, mapY(b.x, h) + (b.team === 0 ? 7 : -9) * s - Math.floor(i / 5) * 2.6 * s, 2 * s, 2 * s);
   }
   for (const f of m.flags) {
-    if (f.state !== "free") continue;
-    ctx.fillStyle = FLAG_FREE;
+    if (f.state !== "dropped") continue;
+    // Dropped flags stand out; the ones at home sit inside the base square.
+    ctx.fillStyle = TEAMS[f.team].color;
     ctx.beginPath();
     ctx.arc(mapX(f.z, w), mapY(f.x, h), 3.5 * s, 0, Math.PI * 2);
     ctx.fill();
@@ -414,6 +488,7 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
   }
   for (const p of m.players) {
     const me = p.id === 0;
+    // A thief carrying one of our flags shows red.
     ctx.fillStyle = p.carrying >= 0 && p.team === 1 ? FLAG_ENEMY : TEAMS[p.team].color;
     ctx.beginPath();
     ctx.arc(mapX(p.z, w), mapY(p.x, h), (me ? 4.5 : 3) * s, 0, Math.PI * 2);
@@ -427,8 +502,8 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
   ctx.restore();
 }
 
-function buildTunePanel(root: HTMLElement): HTMLElement {
-  const panel = el("div", "fc-tune", root);
+function buildTunePanel(parent: HTMLElement): HTMLElement {
+  const panel = el("div", "fc-tune", parent);
   const knobs: Array<[keyof typeof tune, number, number, number]> = [
     ["accel", 8, 60, 1],
     ["gravity", 12, 40, 1],

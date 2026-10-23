@@ -55,7 +55,7 @@ const ringGeo = new THREE.CircleGeometry(1.2, 24);
 ringGeo.rotateX(-Math.PI / 2);
 
 function newMatch(seed: number): Match {
-  return createMatch({ seed, humanAnimal, perTeam, duration, flagCount: 8 });
+  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam: 5 });
 }
 
 function rebuildViews(): void {
@@ -105,14 +105,14 @@ let hitStop = 0;
 type Phase = "select" | "countdown" | "play" | "results";
 let phase: Phase = "select";
 let lastLand = landOf(match.players[0].z);
-let raidAlertCd = 0;
 placeCamera(1);
 
 function placeCamera(blend: number): void {
   const p = match.players[0];
   const air = Math.max(0, p.y - surfaceHeight(p.x, p.z));
-  const dist = 9.5 + Math.min(4, air * 0.4) + p.speed * 0.08;
-  const height = 4.2 + Math.min(5, air * 0.5);
+  const z = hud.camScale;
+  const dist = (9.5 + Math.min(4, air * 0.4) + p.speed * 0.08) * z;
+  const height = (4.2 + Math.min(5, air * 0.5)) * z;
   const fx = Math.sin(camYaw);
   const fz = Math.cos(camYaw);
   const want = new THREE.Vector3(p.x - fx * dist, p.y + height, p.z - fz * dist);
@@ -183,10 +183,19 @@ function handleEvents(): void {
         sfx.fizzle(pan, near);
         fx.burst(e.x, e.y, e.z, ["#ffd166", "#ffffff"], 6, 3, 6, 0.18);
         break;
-      case "grab":
+      case "grab": {
         sfx.grab(pan, near);
-        fx.burst(e.x, e.y + 2, e.z, [FLAG_FREE, "#ffffff"], 10, 4, 10, 0.2);
-        if (mine) hud.call("GOT IT!", FLAG_FREE);
+        const thief = match.players[e.player];
+        fx.burst(e.x, e.y + 2, e.z, [TEAMS[thief.team === 0 ? 1 : 0].color, "#ffffff"], 10, 4, 10, 0.2);
+        if (mine) hud.call("GOT ONE! RUN HOME!", FLAG_FREE);
+        else if (thief.team === 1) hud.call("THEY TOOK A FLAG!", FLAG_ENEMY);
+        break;
+      }
+      case "return":
+        sfx.grab(pan, near);
+        fx.burst(e.x, e.y + 1, e.z, [TEAMS[e.team].color, "#ffffff"], 16, 6, 12, 0.22);
+        if (mine) hud.call("SAVED!", TEAMS[0].color);
+        else if (e.team === 0 && e.player >= 0) hud.call("FLAG SAVED", TEAMS[0].light);
         break;
       case "drop":
         sfx.drop(pan, near);
@@ -194,8 +203,9 @@ function handleEvents(): void {
       case "bank":
         sfx.bank(pan, near);
         fx.burst(e.x, e.y + 1, e.z, ["#ffd166", "#ff6b5b", "#46b4e8", "#7ee36b", "#b3a9ff"], 60, 12, 14, 0.3);
-        if (mine) hud.call("+1 FLAG!", TEAMS[0].color);
-        else if (e.team === 1) hud.call("THEY SCORED", TEAMS[1].light);
+        if (mine) hud.call("YOU SCORED!", TEAMS[0].color);
+        else if (e.team === 0) hud.call("TEAM SCORED!", TEAMS[0].color);
+        else hud.call("THEY SCORED", TEAMS[1].light);
         break;
       case "splash":
         sfx.splash(pan, near);
@@ -231,12 +241,14 @@ function syncViews(t: number, dt: number): void {
     v.ring.scale.setScalar(Math.max(0.4, 1 - air * 0.06));
   }
 
+  // Flags wear the color of the base they belong to.
   match.flags.forEach((f, i) => {
     const v = flagViews[i];
-    v.root.visible = f.state !== "banked";
-    if (!v.root.visible) return;
     const cloth = v.cloth.material as THREE.MeshToonMaterial;
     const glow = v.glow.material as THREE.MeshBasicMaterial;
+    const team = TEAMS[f.team];
+    cloth.color.set(team.color);
+    glow.color.set(team.light);
     if (f.state === "carried") {
       const c = match.players[f.carrier];
       const back = 0.7;
@@ -244,15 +256,19 @@ function syncViews(t: number, dt: number): void {
       v.root.rotation.y = c.heading + Math.PI / 2;
       v.root.scale.setScalar(0.8);
       v.glow.visible = false;
-      cloth.color.set(c.team === 0 ? TEAMS[0].color : FLAG_ENEMY);
-    } else {
-      v.root.position.set(f.x, f.y + Math.sin(t * 2.5 + i) * 0.12, f.z);
-      v.root.rotation.y = t * 0.8 + i;
-      v.root.scale.setScalar(1);
+    } else if (f.state === "dropped") {
+      // A dropped flag bobs and pulses so both teams spot it.
+      v.root.position.set(f.x, f.y + Math.sin(t * 5 + i) * 0.2, f.z);
+      v.root.rotation.y = t * 1.6 + i;
+      v.root.scale.setScalar(1.1);
       v.glow.visible = true;
-      cloth.color.set(FLAG_FREE);
-      glow.color.set(FLAG_FREE);
-      glow.opacity = 0.4 + 0.25 * Math.sin(t * 4 + i);
+      glow.opacity = 0.45 + 0.35 * Math.sin(t * 8 + i);
+    } else {
+      v.root.position.set(f.x, f.y + 0.3, f.z);
+      v.root.rotation.y = Math.sin(t * 1.2 + i) * 0.4 + Math.atan2(f.x - match.bases[f.team].x, f.z - match.bases[f.team].z);
+      v.root.scale.setScalar(0.85);
+      v.glow.visible = true;
+      glow.opacity = 0.3;
     }
   });
 
@@ -288,19 +304,14 @@ function placeSelectCamera(t: number): void {
   camera.lookAt(camLook);
 }
 
-/** Call outs for crossing into enemy land, and for raiders in yours. */
-function watchLands(dt: number): void {
+/** Call outs for crossing into enemy land and for heading home with a flag. */
+function watchLands(): void {
   const me = match.players[0];
   const land = landOf(me.z);
   if (land !== lastLand) {
     if (land === 1) hud.call("ENEMY LAND!", TEAMS[1].light);
     else if (land === 0 && me.carrying >= 0) hud.call("HOME STRETCH!", TEAMS[0].color);
     lastLand = land;
-  }
-  raidAlertCd -= dt;
-  if (raidAlertCd <= 0 && land !== 0 && match.players.some((p) => p.team === 1 && landOf(p.z) === 0 && p.carrying >= 0)) {
-    hud.call("THEY'RE RAIDING!", TEAMS[1].light);
-    raidAlertCd = 10;
   }
 }
 
@@ -323,7 +334,7 @@ function frame(now: number): void {
   last = now;
   if (hitStop > 0) {
     hitStop -= dt;
-  } else if (phase === "play") {
+  } else if (phase === "play" && !hud.paused) {
     acc += dt;
     while (acc >= STEP) {
       step(match, humanInput());
@@ -340,7 +351,7 @@ function frame(now: number): void {
   fx.update(dt);
   if (phase === "select") placeSelectCamera(t);
   else placeCamera(Math.min(1, dt * 7));
-  if (phase === "play") watchLands(dt);
+  if (phase === "play") watchLands();
   hud.update(match, controls, camYaw);
   renderer.render(scene, camera);
 
@@ -367,7 +378,6 @@ function freshMatch(): void {
   rebuildViews();
   camYaw = match.players[0].heading;
   lastLand = landOf(match.players[0].z);
-  raidAlertCd = 0;
 }
 
 function showSelect(): void {

@@ -3,8 +3,10 @@
 A fast, colorful 3D capture the flag game for TrueAIGaming.com. Phone first, landscape.
 
 Two teams of animals race across three lands (your homeland, the middle land and
-the enemy's homeland), grab flags and carry them home.
-Firecrackers pop rivals loose so they drop what they carry. Land, water and air
+the enemy's homeland). Each team's flags start in its own base: steal one from
+the enemy base and carry it home to score, and guard your own. Firecrackers pop
+rivals loose so they drop what they carry; touch your own dropped flag to send
+it home. Land, water and air
 animals each rule different ground.
 
 ## Status
@@ -34,6 +36,8 @@ URL options: `?animal=lion|penguin|eagle|wolf` (preselected on the pick screen),
   there; slide within its ring to steer. Jump (hold to float, the eagle
   climbs) and Throw on the right.
 - Keyboard: WASD or arrows, Space jumps, J throws.
+- Pinch and double tap never zoom the page. Zoom the camera from SETTINGS
+  (top left), which also holds the feel tuning sliders and pauses the match.
 
 ## Layout
 

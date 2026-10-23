@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { RAMP, buildBase, buildBorderPost, buildTree } from "./models";
 import { PALETTE, TEAMS } from "./palette";
 import { mulberry32 } from "./rng";
-import { type Base, FLAG_SPOTS } from "./sim";
+import type { Base } from "./sim";
 import { BRIDGE_X, WATER_Y, WORLD_HALF_X, WORLD_HALF_Z, ZONE_EDGE, groundHeight, landOf, onBridge } from "./terrain";
 
 export interface World {
@@ -40,7 +40,6 @@ export function buildWorld(scene: THREE.Scene, bases: readonly Base[]): World {
     const h = groundHeight(x, z);
     if (h < 1.2 || onBridge(x, z)) continue;
     if (bases.some((b) => Math.hypot(b.x - x, b.z - z) < 10)) continue;
-    if (FLAG_SPOTS.some(([fx, fz]) => Math.hypot(fx - x, fz - z) < 4)) continue;
     // Keep the bridge mouths open.
     if (Math.abs(Math.abs(z) - ZONE_EDGE) < 16 && Math.abs(Math.abs(x) - BRIDGE_X) < 6) continue;
     const t = buildTree(0.7 + rng() * 0.6);
