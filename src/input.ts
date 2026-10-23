@@ -11,6 +11,8 @@ export interface Controls {
   throwQueued: boolean;
   /** Set by a tap on Item (or E); the game clears it once used. */
   itemQueued: boolean;
+  /** Set by a tap on the medic's FLAG button (or R); cleared once used. */
+  plantQueued: boolean;
   /** Held to stay under water (swimmers only). */
   dive: boolean;
   /** The on-screen Jump button calls this; keys and button combine. */
@@ -29,6 +31,7 @@ export function createControls(surface: HTMLElement): Controls {
     jump: false,
     throwQueued: false,
     itemQueued: false,
+    plantQueued: false,
     setButtonJump(down: boolean) {
       buttonJump = down;
       c.jump = keyJump || buttonJump;
@@ -95,6 +98,7 @@ export function createControls(surface: HTMLElement): Controls {
     keys.add(e.code);
     if (e.code === "KeyJ" || e.code === "KeyK" || e.code === "Enter") c.throwQueued = true;
     if (e.code === "KeyE" || e.code === "KeyI") c.itemQueued = true;
+    if (e.code === "KeyR" || e.code === "KeyQ") c.plantQueued = true;
     syncKeys();
   });
   window.addEventListener("keyup", (e) => {

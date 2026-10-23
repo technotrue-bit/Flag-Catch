@@ -352,3 +352,34 @@ export function buildBorderPost(teamColor: string, teamLight: string): THREE.Gro
   g.add(box(teamLight, 0.5, 0.3, 0.5, 0, 3.1, 0));
   return g;
 }
+
+/** A white cross on a red disc, worn over a medic's head. */
+export function buildMedicBadge(): THREE.Group {
+  const g = new THREE.Group();
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.12, 16), toon("#e8455b"));
+  disc.rotation.x = Math.PI / 2;
+  g.add(disc);
+  g.add(box("#ffffff", 0.5, 0.15, 0.16, 0, 0, 0.02));
+  g.add(box("#ffffff", 0.15, 0.5, 0.16, 0, 0, 0.02));
+  return g;
+}
+
+/** A medic's respawn flag: a tall white pole, a team pennant and a cross. */
+export function buildRespawnFlag(teamColor: string): THREE.Group {
+  const g = new THREE.Group();
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.3, 0.2, 16), toon("#f4f1e8"));
+  pad.position.y = 0.08;
+  g.add(pad);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.1, 6, 24), toon(teamColor));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.2;
+  g.add(ring);
+  const pole = new THREE.Mesh(cylGeo, toon("#f4f1e8"));
+  pole.scale.set(0.12, 3.4, 0.12);
+  pole.position.y = 1.7;
+  g.add(pole);
+  g.add(box(teamColor, 1.2, 0.8, 0.08, 0.62, 3.0, 0));
+  g.add(box("#ffffff", 0.5, 0.14, 0.1, 0.62, 3.0, 0));
+  g.add(box("#ffffff", 0.14, 0.5, 0.1, 0.62, 3.0, 0));
+  return g;
+}

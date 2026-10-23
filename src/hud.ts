@@ -33,6 +33,13 @@ const CSS = `
 .fc-item{width:64px;height:64px;right:max(46px,calc(env(safe-area-inset-right) + 36px));bottom:max(130px,calc(env(safe-area-inset-bottom) + 120px));background:rgba(150,150,170,.55);font-size:10px;text-align:center;line-height:1.05;padding:4px;box-sizing:border-box}
 .fc-item.has{background:linear-gradient(135deg,#ff6b9a,#ffb347);opacity:1;animation:fcglow 1.2s ease-in-out infinite}
 @keyframes fcglow{50%{box-shadow:0 5px 0 rgba(43,35,64,.28),0 0 18px 4px rgba(255,209,102,.9)}}
+.fc-medic{width:64px;height:64px;right:max(222px,calc(env(safe-area-inset-right) + 212px));bottom:max(36px,calc(env(safe-area-inset-bottom) + 26px));background:#3cbf7a;font-size:11px;text-align:center;line-height:1.05;flex-direction:column;display:none}
+.fc-medic b{font-size:20px;line-height:1}
+.fc-hearts{position:absolute;top:calc(max(10px,env(safe-area-inset-top)) + 42px);left:max(10px,env(safe-area-inset-left));display:flex;gap:3px;font-size:20px;line-height:1;filter:drop-shadow(0 2px 0 rgba(43,35,64,.25))}
+.fc-hearts i{font-style:normal;color:#e8455b;transition:transform .15s}
+.fc-hearts i.gone{color:rgba(43,35,64,.25);transform:scale(.8)}
+.fc-out{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);padding:10px 22px;border-radius:18px;background:rgba(43,35,64,.72);color:#fff;font-weight:900;font-size:22px;text-align:center;display:none;white-space:nowrap}
+.fc-out small{display:block;font-size:13px;font-weight:700;opacity:.8}
 .fc-power{position:absolute;top:calc(max(10px,env(safe-area-inset-top)) + 108px);left:50%;transform:translateX(-50%);padding:3px 12px;border-radius:999px;font-weight:900;font-size:13px;letter-spacing:1px;color:#fff;background:#ff6b9a;display:none;white-space:nowrap}
 .fc-stick{position:absolute;width:128px;height:128px;margin:-64px 0 0 -64px;border-radius:50%;border:3px solid rgba(255,255,255,.7);background:rgba(255,255,255,.14);display:none}
 .fc-knob{position:absolute;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:rgba(255,255,255,.85);box-shadow:0 3px 0 rgba(43,35,64,.2);display:none}
@@ -54,7 +61,7 @@ const CSS = `
 @keyframes fcrot{0%,20%{transform:rotate(0)}50%,80%{transform:rotate(-90deg)}100%{transform:rotate(0)}}
 @media (orientation:portrait){.fc-rotate{display:flex}}
 .fc-menu .fc-stick,.fc-menu .fc-knob{display:none!important}
-.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power{display:none!important}
+.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power,.fc-menu .fc-hearts,.fc-menu .fc-out{display:none!important}
 .fc-sel{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:8px;padding:max(10px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
 .fc-sel h2{flex:none;margin:0;text-align:center;font-size:30px;line-height:1.05;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
 .fc-sel h2 small{display:block;margin-top:2px;font-size:13px;letter-spacing:0;-webkit-text-stroke:0;color:rgba(43,35,64,.75)}
@@ -99,7 +106,14 @@ export interface Hud {
   update(m: Match, controls: Controls, camYaw: number): void;
   call(text: string, color?: string): void;
   /** Pick your animal, mode and team size. onPick fires on every tap so the 3D preview can swap. */
-  showSelect(current: string, mode: Mode, size: number, onPick: (id: string) => void, onPlay: (mode: Mode, size: number) => void): void;
+  showSelect(
+    current: string,
+    mode: Mode,
+    size: number,
+    medic: boolean,
+    onPick: (id: string) => void,
+    onPlay: (mode: Mode, size: number, medic: boolean) => void,
+  ): void;
   /** 3, 2, 1, GO! then onDone. */
   countdown(onDone: () => void): void;
   showResults(m: Match, onAgain: () => void, onChange: () => void): void;
@@ -172,6 +186,17 @@ export function createHud(controls: Controls): Hud {
   // Shows only for swimmers in water; the ring drains with their breath.
   const dive = el("div", "fc-btn fc-dive", root);
   dive.textContent = "DIVE";
+  // Medics only: plant a respawn flag; the ring fills back up over 30 seconds.
+  const medicBtn = el("div", "fc-btn fc-medic", root);
+  el("b", "", medicBtn).textContent = "+";
+  const medicLabel = el("span", "", medicBtn);
+  const hearts = el("div", "fc-hearts", root);
+  const heartIcons = Array.from({ length: tune.maxHits }, () => {
+    const h = el("i", "", hearts);
+    h.textContent = "\u2665";
+    return h;
+  });
+  const outCard = el("div", "fc-out", root);
 
   const press = (node: HTMLElement, down: () => void, up: () => void) => {
     node.addEventListener("pointerdown", (e) => {
@@ -191,6 +216,7 @@ export function createHud(controls: Controls): Hud {
   press(thr, () => (controls.throwQueued = true), () => {});
   press(dive, () => controls.setButtonDive(true), () => controls.setButtonDive(false));
   press(item, () => (controls.itemQueued = true), () => {});
+  press(medicBtn, () => (controls.plantQueued = true), () => {});
 
   const call = el("div", "fc-call", root);
   let callTimer = 0;
@@ -305,6 +331,17 @@ export function createHud(controls: Controls): Hud {
         power.textContent = `${on[0]} ${Math.ceil(on[1])}`;
         power.style.background = on[2];
       }
+      heartIcons.forEach((h, i) => h.classList.toggle("gone", i >= me.hp));
+      outCard.style.display = me.out > 0 ? "block" : "none";
+      if (me.out > 0) outCard.innerHTML = `KNOCKED OUT<small>Back in ${Math.ceil(me.out)}</small>`;
+      medicBtn.style.display = me.medic ? "flex" : "none";
+      if (me.medic) {
+        const ready = me.medicCd <= 0;
+        const fill = Math.round((1 - me.medicCd / tune.medicCooldown) * 360);
+        medicBtn.style.background = ready ? "#3cbf7a" : `conic-gradient(#3cbf7a ${fill}deg, #8fa3b8 ${fill}deg)`;
+        medicLabel.textContent = ready ? "FLAG" : String(Math.ceil(me.medicCd));
+        medicBtn.style.opacity = ready ? "1" : "0.75";
+      }
       const canDive = me.def.dive && (me.medium === "water" || me.diving);
       dive.style.display = canDive ? "flex" : "none";
       if (canDive) {
@@ -370,7 +407,7 @@ export function createHud(controls: Controls): Hud {
       call.classList.add("show");
       callTimer = 0.9;
     },
-    showSelect(current, mode, size, onPick, onPlay) {
+    showSelect(current, mode, size, medic, onPick, onPlay) {
       root.classList.add("fc-menu");
       const sel = el("div", "fc-sel", root);
       const title = el("h2", "", sel);
@@ -416,6 +453,26 @@ export function createHud(controls: Controls): Hud {
         sizeBtns.set(def.size, b);
       }
       sizeBtns.forEach((n, k) => n.classList.toggle("on", k === size));
+      // Runner, or a medic who plants respawn flags for the team.
+      const roleGroup = el("div", "fc-group", setup);
+      el("label", "", roleGroup).textContent = "ROLE";
+      const roles = el("div", "fc-seg", roleGroup);
+      const roleBtns: Array<[boolean, HTMLElement]> = [];
+      for (const [isMedic, name, info] of [
+        [false, "RUNNER", "STEAL FLAGS"],
+        [true, "MEDIC", "RESPAWN FLAGS"],
+      ] as const) {
+        const b = el("div", "fc-size", roles);
+        b.textContent = name;
+        el("small", "", b).textContent = info;
+        b.addEventListener("click", () => {
+          medic = isMedic;
+          roleBtns.forEach(([k, n]) => n.classList.toggle("on", k === medic));
+          sfx.pick();
+        });
+        roleBtns.push([isMedic, b]);
+      }
+      roleBtns.forEach(([k, n]) => n.classList.toggle("on", k === medic));
       const row = el("div", "fc-row", sel);
       const tiles = new Map<string, HTMLElement>();
       const pick = (id: string) => {
@@ -438,7 +495,7 @@ export function createHud(controls: Controls): Hud {
         e.stopPropagation();
         sel.remove();
         root.classList.remove("fc-menu");
-        onPlay(mode, size);
+        onPlay(mode, size, medic);
       });
       pick(current);
     },
@@ -577,6 +634,14 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
     ctx.fillStyle = "#ff6b9a";
     ctx.fillRect(mapX(st.z, w) - 2 * s, mapY(st.x, h) - 2 * s, 4 * s, 4 * s);
   }
+  // Respawn flags as small crosses in their team's color.
+  for (const f of m.respawns) {
+    const x = mapX(f.z, w);
+    const y = mapY(f.x, h);
+    ctx.fillStyle = TEAMS[f.team].color;
+    ctx.fillRect(x - 3 * s, y - 1 * s, 6 * s, 2 * s);
+    ctx.fillRect(x - 1 * s, y - 3 * s, 2 * s, 6 * s);
+  }
   for (const b of m.bases) {
     const r = b.main ? 5 : 3.5;
     ctx.fillStyle = TEAMS[b.team].color;
@@ -600,6 +665,7 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
   // Smaller dots when the teams are big, so a crowd still reads.
   const dot = m.players.length > 40 ? 1.6 : m.players.length > 20 ? 2.2 : 3;
   for (const p of m.players) {
+    if (p.out > 0) continue;
     const me = p.id === 0;
     // A thief carrying one of our flags shows red.
     ctx.fillStyle = p.carrying >= 0 && p.team === 1 ? FLAG_ENEMY : TEAMS[p.team].color;

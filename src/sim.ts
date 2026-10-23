@@ -63,6 +63,23 @@ export const tune = {
   missileSpeed: 24,
   missileTurn: 3.5,
   superJump: 22,
+  /** Flyers stop climbing this high over the ground. */
+  flyCeiling: 11,
+  /** Hits an animal can take; the last one knocks it out. */
+  maxHits: 3,
+  /** A hit that doesn't knock you out only makes you flinch. */
+  flinchTime: 0.35,
+  /** One hit heals back after this long without being hit. */
+  healTime: 6,
+  /** Seconds out after a knockout, then you're back at a respawn point. */
+  outTime: 2,
+  /** Seconds of protection after coming back. */
+  spawnShield: 1.5,
+  /** A medic can plant a respawn flag this often, and keeps this many up. */
+  medicCooldown: 30,
+  medicFlags: 2,
+  /** Enemies touching a respawn flag knock it down. */
+  respawnRadius: 1.8,
 };
 
 /**
@@ -120,9 +137,11 @@ export interface Input {
   dive?: boolean;
   /** Pressed: use the held power up. */
   useItem?: boolean;
+  /** Pressed: a medic plants a respawn flag. */
+  plant?: boolean;
 }
 
-export const NO_INPUT: Input = { dirX: 0, dirZ: 0, jump: false, throwPressed: false, dive: false, useItem: false };
+export const NO_INPUT: Input = { dirX: 0, dirZ: 0, jump: false, throwPressed: false, dive: false, useItem: false, plant: false };
 
 export interface Player {
   id: number;
@@ -161,8 +180,16 @@ export interface Player {
   turboT: number;
   /** CPU: seconds it has held its item, so it uses it eventually. */
   itemHeld: number;
-  /** CPU state. Defenders hold their homeland, attackers raid. */
-  role: "attack" | "defend";
+  /** Hits left before a knockout, and seconds until one heals back. */
+  hp: number;
+  healCd: number;
+  /** Seconds left knocked out; while above 0 the animal is off the field. */
+  out: number;
+  /** Medics plant respawn flags; medicCd counts down to the next one. */
+  medic: boolean;
+  medicCd: number;
+  /** CPU state. Defenders hold their homeland, attackers raid, medics follow. */
+  role: "attack" | "defend" | "medic";
   thinkCd: number;
   goalX: number;
   goalZ: number;
@@ -212,6 +239,15 @@ export interface Firecracker {
   homing?: number;
 }
 
+/** A forward spawn point a medic planted; knocked out teammates can come back here. */
+export interface RespawnFlag {
+  id: number;
+  team: Team;
+  owner: number;
+  x: number;
+  z: number;
+}
+
 export type SimEvent =
   | { kind: "throw"; x: number; y: number; z: number; player: number }
   | { kind: "pop"; x: number; y: number; z: number; player: number; by: number }
@@ -229,6 +265,11 @@ export type SimEvent =
   | { kind: "use"; x: number; y: number; z: number; player: number; item: ItemKind }
   | { kind: "block"; x: number; y: number; z: number; player: number }
   | { kind: "zap"; x: number; y: number; z: number; player: number; by: number }
+  | { kind: "hit"; x: number; y: number; z: number; player: number; by: number; hp: number }
+  | { kind: "ko"; x: number; y: number; z: number; player: number; by: number }
+  | { kind: "respawn"; x: number; y: number; z: number; player: number }
+  | { kind: "plant"; x: number; z: number; player: number; flag: number }
+  | { kind: "unplant"; x: number; z: number; flag: number; by: number }
   | { kind: "end"; winner: Team | -1 };
 
 export interface Base {
@@ -274,6 +315,8 @@ export interface Match {
   fires: Firecracker[];
   /** Main bases first (index = team), then any outposts. */
   bases: Base[];
+  respawns: RespawnFlag[];
+  nextRespawnId: number;
   scores: [number, number];
   events: SimEvent[];
   nextFireId: number;
@@ -288,6 +331,8 @@ export interface MatchOptions {
   mode?: Mode;
   /** Defaults to the map made for this many animals a side. */
   map?: MapDef;
+  /** The human plays a medic. */
+  humanMedic?: boolean;
 }
 
 export function createMatch(opts: MatchOptions): Match {
@@ -312,8 +357,9 @@ export function createMatch(opts: MatchOptions): Match {
       const x = b.x + Math.cos(a) * r;
       const z = b.z + Math.sin(a) * r * 0.8;
       const p = makePlayer(players.length, team, def, !human, x, z, Math.atan2(-b.x, -b.z));
-      // A third defend on small teams, a quarter on big ones.
-      p.role = i % 4 === 1 ? "defend" : "attack";
+      // A quarter defend; one in eight is a medic (the human only if picked).
+      p.role = i % 4 === 1 ? "defend" : i % 8 === 3 ? "medic" : "attack";
+      p.medic = human ? !!opts.humanMedic : p.role === "medic";
       players.push(p);
     }
     if (team === 1) break;
@@ -353,6 +399,8 @@ export function createMatch(opts: MatchOptions): Match {
     flags,
     fires: [],
     bases,
+    respawns: [],
+    nextRespawnId: 0,
     scores: [0, 0],
     events: [],
     nextFireId: 0,
@@ -390,6 +438,11 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     starT: 0,
     turboT: 0,
     itemHeld: 0,
+    hp: tune.maxHits,
+    healCd: 0,
+    out: 0,
+    medic: false,
+    medicCd: 0,
     role: "attack",
     thinkCd: 0,
     goalX: x,
@@ -420,6 +473,7 @@ export function step(m: Match, human: Input): void {
   stepFires(m);
   stepStars(m);
   stepStations(m);
+  stepRespawns(m);
   stepFlags(m);
 
   if (m.mode === "hoard") {
@@ -447,6 +501,19 @@ function speedFor(p: Player): number {
 }
 
 function movePlayer(m: Match, p: Player, input: Input): void {
+  if (p.out > 0) {
+    p.out -= STEP;
+    if (p.out <= 0) respawn(m, p);
+    return;
+  }
+  p.medicCd = Math.max(0, p.medicCd - STEP);
+  if (p.hp < tune.maxHits) {
+    p.healCd -= STEP;
+    if (p.healCd <= 0) {
+      p.hp++;
+      p.healCd = tune.healTime;
+    }
+  }
   p.throwCd = Math.max(0, p.throwCd - STEP);
   p.grabCd = Math.max(0, p.grabCd - STEP);
   p.diveCd = Math.max(0, p.diveCd - STEP);
@@ -500,14 +567,21 @@ function movePlayer(m: Match, p: Player, input: Input): void {
     m.events.push({ kind: "jump", player: p.id });
   }
   let g = tune.gravity;
-  if (!p.onSurface && jumpDown && p.floatLeft > 0) {
-    p.floatLeft -= STEP;
-    if (p.def.climb > 0) {
-      p.vy = Math.min(p.vy + p.def.climb * STEP, 7);
-      g *= 0.35;
-    } else if (p.vy < 2) {
-      g *= 0.3;
+  if (p.def.climb > 0 && !p.onSurface) {
+    // Flyers fly for as long as Jump is held, up to a ceiling, and glide
+    // down slowly once it's let go.
+    const height = p.y - surfaceHeight(p.x, p.z);
+    if (jumpDown) {
+      if (height < tune.flyCeiling) p.vy = Math.min(p.vy + p.def.climb * STEP, 7);
+      else p.vy = Math.min(p.vy, 0);
+      g = height < tune.flyCeiling ? g * 0.35 : 0;
+    } else if (p.vy < 0) {
+      g *= 0.25;
+      p.vy = Math.max(p.vy, -6);
     }
+  } else if (!p.onSurface && jumpDown && p.floatLeft > 0) {
+    p.floatLeft -= STEP;
+    if (p.vy < 2) g *= 0.3;
   }
   p.jumpWasHeld = jumpDown;
   p.vy -= g * STEP;
@@ -532,6 +606,7 @@ function movePlayer(m: Match, p: Player, input: Input): void {
 
   if (!stunned && !p.diving && input.throwPressed && p.throwCd <= 0) throwFire(m, p);
   if (!stunned && input.useItem && p.item) useItem(m, p);
+  if (!stunned && input.plant && p.medic) plantRespawn(m, p);
 }
 
 function stepDive(m: Match, p: Player, want: boolean): void {
@@ -709,28 +784,132 @@ function protectedFrom(p: Player): boolean {
 }
 
 /**
- * Knock `p` flying away along (dirX, dirZ); tough animals recover sooner.
- * Shield and Star block it. Returns whether the pop landed.
+ * Hit `p` from along (dirX, dirZ). Every animal takes tune.maxHits hits:
+ * the earlier ones make it flinch and stagger back, the last one pops it
+ * out of the match for tune.outTime seconds, dropping any flag, before it
+ * comes back at a respawn point. Shield and Star block hits. A power 2 hit
+ * (Blast) counts twice. Returns whether the hit landed.
  */
 function pop(m: Match, p: Player, by: number, dirX: number, dirZ: number, power = 1): boolean {
+  if (p.out > 0) return false;
   if (protectedFrom(p)) {
     m.events.push({ kind: "block", x: p.x, y: p.y + 0.8, z: p.z, player: p.id });
     return false;
   }
-  const t = p.def.toughness;
-  p.stun = tune.stunTime * t;
-  p.vy = tune.popLift * (0.5 + 0.5 * t);
-  p.onSurface = false;
-  const len = Math.hypot(dirX, dirZ) || 1;
-  const push = tune.popPush * (0.5 + 0.5 * t) * power;
-  p.kx = (dirX / len) * push;
-  p.kz = (dirZ / len) * push;
-  p.speed *= 0.2;
+  p.hp = Math.max(0, p.hp - (power >= 2 ? 2 : 1));
+  p.healCd = tune.healTime;
   const owner = m.players[by];
-  if (owner) owner.score += 5;
+  const len = Math.hypot(dirX, dirZ) || 1;
+  const t = p.def.toughness;
+  if (p.hp > 0) {
+    // A flinch: a short stagger and a shove, but the animal keeps going.
+    p.stun = tune.flinchTime * t;
+    p.vy = tune.popLift * 0.3;
+    p.onSurface = false;
+    const push = tune.popPush * 0.5 * (0.5 + 0.5 * t) * power;
+    p.kx = (dirX / len) * push;
+    p.kz = (dirZ / len) * push;
+    p.speed *= 0.5;
+    if (owner) owner.score += 2;
+    m.events.push({ kind: "hit", x: p.x, y: p.y + 0.8, z: p.z, player: p.id, by, hp: p.hp });
+    return true;
+  }
+  // Knocked out: drop the flag and leave the field for a moment.
+  if (owner) owner.score += 8;
   m.events.push({ kind: "pop", x: p.x, y: p.y + 0.8, z: p.z, player: p.id, by });
+  m.events.push({ kind: "ko", x: p.x, y: p.y + 0.8, z: p.z, player: p.id, by });
   dropFlag(m, p);
+  p.out = tune.outTime;
+  p.stun = tune.outTime;
+  p.speed = 0;
+  p.kx = p.kz = p.vy = 0;
+  p.diving = false;
+  p.shieldT = p.starT = p.turboT = 0;
   return true;
+}
+
+/**
+ * Bring a knocked out animal back at the closest of its team's bases and
+ * respawn flags to where it fell, with full health and a moment of shield.
+ */
+function respawn(m: Match, p: Player): void {
+  const spots: Array<{ x: number; z: number; r: number }> = [
+    ...m.bases.filter((b) => b.team === p.team).map((b) => ({ x: b.x, z: b.z, r: m.baseRadius + 2 })),
+    ...m.respawns.filter((f) => f.team === p.team).map((f) => ({ x: f.x, z: f.z, r: 2 })),
+  ];
+  let best = spots[0];
+  let bestD = Infinity;
+  for (const sp of spots) {
+    const d = (sp.x - p.x) ** 2 + (sp.z - p.z) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = sp;
+    }
+  }
+  // Land in a dry spot around it, facing the middle of the island.
+  let x = best.x;
+  let z = best.z;
+  for (let i = 0; i < 8; i++) {
+    const a = m.rng() * Math.PI * 2;
+    const tx = best.x + Math.cos(a) * best.r;
+    const tz = best.z + Math.sin(a) * best.r;
+    if (!isWater(tx, tz) && inWorld(tx, tz)) {
+      x = tx;
+      z = tz;
+      break;
+    }
+  }
+  p.x = x;
+  p.z = z;
+  p.y = surfaceHeight(x, z);
+  p.vy = 0;
+  p.kx = p.kz = 0;
+  p.speed = 0;
+  p.onSurface = true;
+  p.medium = isWater(x, z) ? "water" : "land";
+  p.heading = Math.atan2(-x, -z);
+  p.hp = tune.maxHits;
+  p.healCd = 0;
+  p.out = 0;
+  p.stun = 0;
+  p.breath = tune.diveBreath;
+  p.shieldT = tune.spawnShield;
+  p.grabCd = 0.5;
+  m.events.push({ kind: "respawn", x, y: p.y, z, player: p.id });
+}
+
+/** True where a medic may plant: dry ground, outside the enemy's bases. */
+export function canPlant(m: Match, p: Player): boolean {
+  if (!p.medic || p.medicCd > 0 || p.out > 0) return false;
+  if (isWater(p.x, p.z) || !p.onSurface) return false;
+  return !m.bases.some((b) => b.team !== p.team && Math.hypot(b.x - p.x, b.z - p.z) < m.baseRadius + 6);
+}
+
+function plantRespawn(m: Match, p: Player): void {
+  if (!canPlant(m, p)) return;
+  // Each medic keeps a couple up; a new one replaces their oldest.
+  const mine = m.respawns.filter((f) => f.owner === p.id);
+  if (mine.length >= tune.medicFlags) m.respawns.splice(m.respawns.indexOf(mine[0]), 1);
+  const flag: RespawnFlag = { id: m.nextRespawnId++, team: p.team, owner: p.id, x: p.x, z: p.z };
+  m.respawns.push(flag);
+  p.medicCd = tune.medicCooldown;
+  p.score += 3;
+  m.events.push({ kind: "plant", x: p.x, z: p.z, player: p.id, flag: flag.id });
+}
+
+/** Enemies who drive into a respawn flag knock it down. */
+function stepRespawns(m: Match): void {
+  for (let i = m.respawns.length - 1; i >= 0; i--) {
+    const f = m.respawns[i];
+    const surf = surfaceHeight(f.x, f.z);
+    const by = m.players.find(
+      (o) => o.team !== f.team && o.out <= 0 && o.stun <= 0 && Math.hypot(o.x - f.x, o.z - f.z) < tune.respawnRadius && o.y - surf < 2.5,
+    );
+    if (!by) continue;
+    m.respawns.splice(i, 1);
+    by.score += 3;
+    m.events.push({ kind: "unplant", x: f.x, z: f.z, flag: f.id, by: by.id });
+  }
 }
 
 /** A Star pops any enemy it bumps into. */
@@ -994,7 +1173,7 @@ function cpuInput(m: Match, p: Player): Input {
   let jump: boolean;
   if (p.def.cls === "air" && d > 18) {
     // Flyers take to the air for long trips: tap off the ground, hold to climb.
-    jump = p.onSurface ? !p.jumpWasHeld : p.floatLeft > 0.2;
+    jump = p.onSurface ? !p.jumpWasHeld : true;
     if (p.def.bomber && !p.onSurface) throwPressed = enemyBelow(m, p);
   } else {
     // Hop small rises and channels now and then.
@@ -1003,7 +1182,16 @@ function cpuInput(m: Match, p: Player): Input {
   // Swimmers duck under incoming firecrackers, or to sneak a flag home.
   const dive = p.def.dive && (threatened(m, p) || (p.carrying >= 0 && p.breath > 2.5));
   const useItem = p.item !== null && cpuWantsItem(m, p, d);
-  return { dirX: (dx / d) * throttle, dirZ: (dz / d) * throttle, jump: jump && !dive, throwPressed, dive, useItem };
+  const plant = p.medic && cpuWantsPlant(m, p);
+  return { dirX: (dx / d) * throttle, dirZ: (dz / d) * throttle, jump: jump && !dive, throwPressed, dive, useItem, plant };
+}
+
+/** Medics plant once they're out of their homeland and well clear of any other spawn point. */
+function cpuWantsPlant(m: Match, p: Player): boolean {
+  if (!canPlant(m, p) || landOf(p.z) === p.team) return false;
+  const far = 30 * mapScale();
+  const clear = (x: number, z: number) => Math.hypot(x - p.x, z - p.z) > far;
+  return m.bases.every((b) => b.team !== p.team || clear(b.x, b.z)) && m.respawns.every((f) => f.team !== p.team || clear(f.x, f.z));
 }
 
 /** When a CPU fires its power up. Anything held too long gets used anyway. */
@@ -1065,6 +1253,21 @@ function cpuGoal(m: Match, p: Player): [number, number] {
   // A few chase each runner while the rest keep their posts, so a big team
   // doesn't pile onto one thief and leave everything else open.
   const mine = (o: { x: number; z: number }) => fewCloser(m, p, o, 3);
+  if (p.role === "medic") {
+    // Follow the teammate furthest into enemy ground, a little behind them.
+    const enemyZ = m.bases[p.team === 0 ? 1 : 0].z;
+    let front: Player | undefined;
+    for (const t of m.players) {
+      if (t.team !== p.team || t === p || t.out > 0 || t.role === "defend" || t.medic) continue;
+      if (!front || Math.abs(t.z - enemyZ) < Math.abs(front.z - enemyZ)) front = t;
+    }
+    if (front) return [front.x, front.z - Math.sign(enemyZ) * 8 * s];
+  }
+  // Knock down an enemy respawn flag close by.
+  if (p.role !== "defend") {
+    const spawn = nearest(p, m.respawns.filter((f) => f.team !== p.team), 15 * s);
+    if (spawn) return [spawn.x, spawn.z];
+  }
   if (p.role === "defend") {
     const thief = nearest(p, thieves.filter(mine), 70 * s);
     if (thief) return lead(thief);

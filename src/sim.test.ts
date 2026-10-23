@@ -291,7 +291,7 @@ describe("match sim", () => {
       for (const e of m.events) kinds.push(e.kind);
     }
     expect(kinds).toContain("boom");
-    expect(target.stun > 0 || kinds.includes("pop")).toBe(true);
+    expect(kinds.includes("hit") || kinds.includes("pop")).toBe(true);
     expect(bystander.stun).toBe(0);
   });
 
@@ -422,5 +422,140 @@ describe("power ups", () => {
       return Math.abs(me.z - z0);
     };
     expect(ride(true)).toBeGreaterThan(ride(false) * 1.2);
+  });
+});
+
+describe("health, knockouts and medics", () => {
+  function quiet(extra: Partial<Parameters<typeof createMatch>[0]> = {}) {
+    const m = createMatch({ ...opts, perTeam: 8, ...extra });
+    freezeOthers(m, [0]);
+    m.players[0].cpu = false;
+    return m;
+  }
+
+  function hitAndSettle(m: Match, id: number) {
+    enemyFire(m, id);
+    const kinds: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      step(m, NO_INPUT);
+      for (const e of m.events) kinds.push(e.kind);
+    }
+    return kinds;
+  }
+
+  it("the first two hits only make you flinch; the third knocks you out and drops your flag", () => {
+    const m = quiet();
+    const me = m.players[0];
+    me.x = 0;
+    me.z = 0;
+    me.y = surfaceHeight(0, 0);
+    const flag = m.flags.find((f) => f.team === 1)!;
+    flag.state = "carried";
+    flag.carrier = 0;
+    me.carrying = flag.id;
+    expect(hitAndSettle(m, 0)).toContain("hit");
+    expect(me.hp).toBe(2);
+    expect(me.carrying).toBe(flag.id);
+    hitAndSettle(m, 0);
+    expect(me.hp).toBe(1);
+    expect(me.carrying).toBe(flag.id);
+    enemyFire(m, 0);
+    step(m, NO_INPUT);
+    expect(me.out).toBeGreaterThan(0);
+    expect(me.carrying).toBe(-1);
+    expect(flag.state).toBe("dropped");
+  });
+
+  it("a knocked out animal is back at home after 2 seconds with full health", () => {
+    const m = quiet();
+    const me = m.players[0];
+    me.x = 0;
+    me.z = 0;
+    me.y = surfaceHeight(0, 0);
+    me.hp = 1;
+    me.healCd = 10;
+    enemyFire(m, 0);
+    step(m, NO_INPUT);
+    expect(me.out).toBeGreaterThan(0);
+    for (let i = 0; i < 1.9 / STEP; i++) step(m, NO_INPUT);
+    expect(me.out).toBeGreaterThan(0);
+    const kinds: string[] = [];
+    for (let i = 0; i < 0.2 / STEP; i++) {
+      step(m, NO_INPUT);
+      for (const e of m.events) kinds.push(e.kind);
+    }
+    expect(kinds).toContain("respawn");
+    expect(me.out).toBe(0);
+    expect(me.hp).toBe(tune.maxHits);
+    const home = m.bases[0];
+    expect(Math.hypot(me.x - home.x, me.z - home.z)).toBeLessThan(m.baseRadius + 3);
+  });
+
+  it("a hurt animal heals a hit back after a while without being hit", () => {
+    const m = quiet();
+    const me = m.players[0];
+    hitAndSettle(m, 0);
+    expect(me.hp).toBe(2);
+    for (let i = 0; i < tune.healTime / STEP; i++) step(m, NO_INPUT);
+    expect(me.hp).toBe(3);
+  });
+
+  it("a medic plants a respawn flag at most every 30 seconds, and teammates come back there", () => {
+    const m = quiet({ humanMedic: true });
+    const me = m.players[0];
+    const [x, z] = [0, 0];
+    me.x = x;
+    me.z = z;
+    me.y = surfaceHeight(x, z);
+    step(m, { ...NO_INPUT, plant: true });
+    expect(m.respawns.length).toBe(1);
+    step(m, { ...NO_INPUT, plant: true });
+    expect(m.respawns.length).toBe(1);
+    expect(me.medicCd).toBeGreaterThan(tune.medicCooldown - 1);
+    for (let i = 0; i < tune.medicCooldown / STEP; i++) step(m, NO_INPUT);
+    expect(me.medicCd).toBe(0);
+    // A teammate knocked out near the flag comes back beside it, not at home.
+    const mate = m.players.find((p) => p.team === 0 && p.id !== 0)!;
+    mate.stun = 0;
+    mate.x = 6;
+    mate.z = -4;
+    mate.y = surfaceHeight(6, -4);
+    mate.hp = 1;
+    mate.healCd = 10;
+    enemyFire(m, mate.id);
+    step(m, NO_INPUT);
+    expect(mate.out).toBeGreaterThan(0);
+    for (let i = 0; i < (tune.outTime + 0.1) / STEP; i++) step(m, NO_INPUT);
+    expect(mate.out).toBe(0);
+    expect(Math.hypot(mate.x - x, mate.z - z)).toBeLessThan(4);
+  });
+
+  it("an enemy knocks a respawn flag down by driving into it", () => {
+    const m = quiet({ humanMedic: true });
+    const me = m.players[0];
+    me.x = 0;
+    me.z = 0;
+    me.y = surfaceHeight(0, 0);
+    step(m, { ...NO_INPUT, plant: true });
+    expect(m.respawns.length).toBe(1);
+    me.x = 20;
+    const foe = m.players.find((p) => p.team === 1)!;
+    foe.stun = 0;
+    foe.cpu = false;
+    foe.x = 0.5;
+    foe.z = 0;
+    foe.y = surfaceHeight(0.5, 0);
+    step(m, NO_INPUT);
+    expect(m.respawns.length).toBe(0);
+  });
+
+  it("flyers keep flying while Jump is held, and glide down once it's let go", () => {
+    const m = quiet({ humanAnimal: "eagle" });
+    const me = m.players[0];
+    for (let i = 0; i < 6 / STEP; i++) step(m, { ...NO_INPUT, jump: true });
+    expect(me.onSurface).toBe(false);
+    expect(me.y - surfaceHeight(me.x, me.z)).toBeGreaterThan(tune.flyCeiling - 2);
+    for (let i = 0; i < 8 / STEP && !me.onSurface; i++) step(m, NO_INPUT);
+    expect(me.onSurface).toBe(true);
   });
 });

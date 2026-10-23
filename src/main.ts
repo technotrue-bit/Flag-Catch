@@ -11,7 +11,7 @@ import { sfx, unlockAudio } from "./audio";
 import { Fx } from "./fx";
 import { createHud } from "./hud";
 import { createControls } from "./input";
-import { type AnimalRig, type FlagRig, buildAnimal, buildFlag, toon } from "./models";
+import { type AnimalRig, type FlagRig, buildAnimal, buildFlag, buildMedicBadge, buildRespawnFlag, toon } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, TEAMS } from "./palette";
 import { ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
 import { MAPS, landOf, mapFor, surfaceHeight } from "./terrain";
@@ -20,6 +20,7 @@ import { type World, buildWorld } from "./world";
 const params = new URLSearchParams(location.search);
 let humanAnimal = ANIMALS[params.get("animal") ?? ""] ? params.get("animal")! : "lion";
 // Team size: 8 a side at least, up to 64; ?per= still allows small test games.
+let humanMedic = loadMedic();
 let perTeam = params.has("per") ? clampInt(Number(params.get("per")), 1, 64) : loadSize();
 const timeParam = params.has("time") ? clampInt(Number(params.get("time")), 20, 900) : 0;
 let mode: Mode = params.get("mode") === "hoard" ? "hoard" : loadMode();
@@ -44,6 +45,8 @@ interface PlayerView {
   ring: THREE.Mesh;
   /** Shield bubble or Star glow, made on first use. */
   aura?: THREE.Mesh;
+  /** The red cross a medic wears. */
+  badge?: THREE.Group;
   animal: string;
   bank: number;
   spin: number;
@@ -59,6 +62,7 @@ const missileGeo = new THREE.ConeGeometry(0.3, 1.1, 4);
 missileGeo.rotateX(Math.PI / 2);
 const missileMat = toon("#f4f1e8");
 const fireMeshes = new Map<number, THREE.Mesh>();
+const respawnViews = new Map<number, THREE.Group>();
 const ringGeo = new THREE.CircleGeometry(1.2, 24);
 ringGeo.rotateX(-Math.PI / 2);
 // Shared so a crowd of rings costs three materials, not 128.
@@ -81,7 +85,7 @@ function newMatch(seed: number): Match {
   const map = mapFor(perTeam);
   // Hoard ends at the points target; the 15 minute cap only stops a stalemate.
   const duration = mode === "hoard" ? 900 : timeParam || map.duration;
-  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam: map.flagsPerTeam, mode, map });
+  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam: map.flagsPerTeam, mode, map, humanMedic });
 }
 
 function rebuildViews(): void {
@@ -100,6 +104,8 @@ function rebuildViews(): void {
   }
   for (const mesh of fireMeshes.values()) scene.remove(mesh);
   fireMeshes.clear();
+  for (const g of respawnViews.values()) scene.remove(g);
+  respawnViews.clear();
 }
 
 function makeView(animal: string, team: number, me: boolean): PlayerView {
@@ -107,7 +113,10 @@ function makeView(animal: string, team: number, me: boolean): PlayerView {
   scene.add(rig.root);
   const ring = new THREE.Mesh(ringGeo, ringMats[me ? 0 : team + 1]);
   scene.add(ring);
-  return { rig, ring, animal, bank: 0, spin: 0 };
+  const badge = buildMedicBadge();
+  badge.position.y = 2.6;
+  rig.root.add(badge);
+  return { rig, ring, animal, bank: 0, spin: 0, badge };
 }
 
 function swapAnimal(id: string): void {
@@ -167,9 +176,11 @@ function humanInput(): Input {
     throwPressed: controls.throwQueued,
     dive: controls.dive,
     useItem: controls.itemQueued,
+    plant: controls.plantQueued,
   };
   controls.throwQueued = false;
   controls.itemQueued = false;
+  controls.plantQueued = false;
   return input;
 }
 
@@ -279,6 +290,36 @@ function handleEvents(): void {
         sfx.zap(pan, near);
         flash(e.x, e.y, e.z, "bolt");
         break;
+      case "hit": {
+        sfx.block(pan, near);
+        const p = match.players[e.player];
+        fx.burst(e.x, e.y, e.z, ["#ffd166", "#ffffff", TEAMS[p.team].color], 10, 5, 8, 0.18);
+        if (mine) {
+          shake = Math.max(shake, 0.3);
+          hud.call(e.hp === 1 ? "ONE HIT LEFT!" : "HIT!", "#ff6b5b");
+        } else if (e.by === 0) {
+          hud.call("HIT!", "#ffd166");
+        }
+        break;
+      }
+      case "respawn":
+        fx.burst(e.x, e.y + 0.8, e.z, ["#ffffff", "#7ee36b", TEAMS[match.players[e.player].team].light], 18, 5, 9, 0.2);
+        if (mine) hud.call("BACK IN!", "#7ee36b");
+        break;
+      case "plant": {
+        const team = match.players[e.player].team;
+        sfx.item(pan, near);
+        fx.burst(e.x, 1.5, e.z, ["#ffffff", "#3cbf7a", TEAMS[team].color], 20, 5, 9, 0.2);
+        if (mine) hud.call("RESPAWN FLAG UP!", "#3cbf7a");
+        break;
+      }
+      case "unplant":
+        sfx.pop(pan, near);
+        fx.burst(e.x, 1.5, e.z, ["#ffffff", "#e8455b", "#ffd166"], 20, 6, 10, 0.2);
+        if (e.by === 0) hud.call("KNOCKED DOWN THEIR FLAG!", "#ffd166");
+        // An enemy knocking one down means it was ours.
+        else if (match.players[e.by].team === 1) hud.call("OUR RESPAWN FLAG FELL", TEAMS[1].light);
+        break;
       case "block":
         sfx.block(pan, near);
         fx.burst(e.x, e.y, e.z, ["#7fd8ff", "#ffffff", "#ffd166"], 12, 5, 8, 0.18);
@@ -323,8 +364,10 @@ function syncViews(t: number, dt: number): void {
   for (const p of match.players) {
     const v = views[p.id];
     const r = v.rig;
-    const far = Math.hypot(p.x - cx, p.z - cz) > DRAW_RANGE;
+    // Knocked out animals are off the field until they respawn.
+    const far = Math.hypot(p.x - cx, p.z - cz) > DRAW_RANGE || p.out > 0;
     r.root.visible = v.ring.visible = !far;
+    if (v.badge) v.badge.visible = p.medic;
     // Shield bubble or Star glow while one runs.
     const powered = p.shieldT > 0 || p.starT > 0;
     if (powered && !v.aura) {
@@ -395,6 +438,25 @@ function syncViews(t: number, dt: number): void {
       glow.opacity = 0.3;
     }
   });
+
+  // Respawn flags come and go as medics plant them and enemies knock them down.
+  const planted = new Set<number>();
+  for (const f of match.respawns) {
+    planted.add(f.id);
+    let g = respawnViews.get(f.id);
+    if (!g) {
+      g = buildRespawnFlag(TEAMS[f.team].color);
+      g.position.set(f.x, surfaceHeight(f.x, f.z), f.z);
+      scene.add(g);
+      respawnViews.set(f.id, g);
+    }
+    g.rotation.y = Math.sin(t * 1.5 + f.id) * 0.3;
+  }
+  for (const [id, g] of respawnViews) {
+    if (planted.has(id)) continue;
+    scene.remove(g);
+    respawnViews.delete(id);
+  }
 
   const alive = new Set<number>();
   for (const f of match.fires) {
@@ -519,13 +581,17 @@ function showSelect(): void {
     humanAnimal,
     mode,
     mapFor(perTeam).size,
+    humanMedic,
     (id) => {
       unlockAudio();
       if (id !== humanAnimal) sfx.pick();
       swapAnimal(id);
     },
-    (picked, size) => {
+    (picked, size, medic) => {
       unlockAudio();
+      humanMedic = medic;
+      saveMedic(medic);
+      match.players[0].medic = medic;
       tryLandscape();
       const newSize = params.has("per") && size === mapFor(perTeam).size ? perTeam : size;
       if (picked !== mode || newSize !== perTeam) {
@@ -579,6 +645,24 @@ function loadMode(): Mode {
 function saveMode(m: Mode): void {
   try {
     localStorage.setItem(MODE_KEY, m);
+  } catch {
+    // Private mode: the pick lasts until the page closes.
+  }
+}
+
+const MEDIC_KEY = "flagcatch.medic";
+
+function loadMedic(): boolean {
+  try {
+    return localStorage.getItem(MEDIC_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveMedic(on: boolean): void {
+  try {
+    localStorage.setItem(MEDIC_KEY, on ? "1" : "0");
   } catch {
     // Private mode: the pick lasts until the page closes.
   }

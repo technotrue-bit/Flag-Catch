@@ -30,6 +30,22 @@ The two gigantic maps give each team two outpost bases on the flanks of its
 homeland as well as the main base. Flags start spread across all three, and a
 carrier banks at whichever of its team's bases is nearest.
 
+## Health, knockouts and medics
+
+Every animal takes 3 hits. The first two make it flinch and stagger, and one
+heals back after 6 seconds without being hit. The third knocks it out: it
+drops any flag, is off the field for 2 seconds, and comes back with full health
+and a short shield at whichever of its team's bases or respawn flags is
+closest to where it fell. Blast counts as two hits.
+
+Pick MEDIC as your role on the start screen to get a FLAG button (or R): it
+plants a respawn flag where you stand, once every 30 seconds, anywhere but on
+the enemy's bases. Each medic keeps two up at a time, and an enemy who drives
+into one knocks it down. One in eight CPU animals is a medic.
+
+Flyers fly for as long as Jump is held, up to a ceiling, and glide down slowly
+when it's let go.
+
 ## Power ups
 
 Gift box stations dot every map (more on the gigantic ones). Drive through one
@@ -78,7 +94,7 @@ URL options: `?animal=lion|penguin|croc|bird|eagle|mammoth|wolf` (preselected on
   there; slide within its ring to steer. Jump (hold to float, the eagle
   climbs), Throw and Item on the right. Swimmers get a Dive button in water; its
   ring drains with their breath.
-- Keyboard: WASD or arrows, Space jumps, J throws, E uses your item, Shift or L dives.
+- Keyboard: WASD or arrows, Space jumps (hold to fly), J throws, E uses your item, R plants a respawn flag as a medic, Shift or L dives.
 - Pinch and double tap never zoom the page. Zoom the camera from SETTINGS
   (top left), which also holds the feel tuning sliders and pauses the match.
 
