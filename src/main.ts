@@ -13,7 +13,7 @@ import { createHud } from "./hud";
 import { createControls } from "./input";
 import { type AnimalRig, type FlagRig, buildAnimal, buildFlag, buildMedicBadge, buildRespawnFlag, toon } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, TEAMS } from "./palette";
-import { ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
+import { type Difficulty, ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
 import { MAPS, landOf, mapFor, surfaceHeight } from "./terrain";
 import { type World, buildWorld } from "./world";
 
@@ -21,6 +21,7 @@ const params = new URLSearchParams(location.search);
 let humanAnimal = ANIMALS[params.get("animal") ?? ""] ? params.get("animal")! : "lion";
 // Team size: 8 a side at least, up to 64; ?per= still allows small test games.
 let humanMedic = loadMedic();
+let difficulty: Difficulty = loadDifficulty();
 let perTeam = params.has("per") ? clampInt(Number(params.get("per")), 1, 64) : loadSize();
 const timeParam = params.has("time") ? clampInt(Number(params.get("time")), 20, 900) : 0;
 let mode: Mode = params.get("mode") === "hoard" ? "hoard" : loadMode();
@@ -85,7 +86,7 @@ function newMatch(seed: number): Match {
   const map = mapFor(perTeam);
   // Hoard ends at the points target; the 15 minute cap only stops a stalemate.
   const duration = mode === "hoard" ? 900 : timeParam || map.duration;
-  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam: map.flagsPerTeam, mode, map, humanMedic });
+  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam: map.flagsPerTeam, mode, map, humanMedic, difficulty });
 }
 
 function rebuildViews(): void {
@@ -579,22 +580,24 @@ function showSelect(): void {
   phase = "select";
   hud.showSelect(
     humanAnimal,
-    mode,
-    mapFor(perTeam).size,
-    humanMedic,
+    { mode, size: mapFor(perTeam).size, medic: humanMedic, difficulty },
     (id) => {
       unlockAudio();
       if (id !== humanAnimal) sfx.pick();
       swapAnimal(id);
     },
-    (picked, size, medic) => {
+    (setup) => {
+      const { mode: picked, size, medic } = setup;
       unlockAudio();
       humanMedic = medic;
       saveMedic(medic);
       match.players[0].medic = medic;
+      const newDifficulty = setup.difficulty !== difficulty;
+      difficulty = setup.difficulty;
+      saveDifficulty(difficulty);
       tryLandscape();
       const newSize = params.has("per") && size === mapFor(perTeam).size ? perTeam : size;
-      if (picked !== mode || newSize !== perTeam) {
+      if (picked !== mode || newSize !== perTeam || newDifficulty) {
         mode = picked;
         perTeam = newSize;
         saveMode(mode);
@@ -645,6 +648,27 @@ function loadMode(): Mode {
 function saveMode(m: Mode): void {
   try {
     localStorage.setItem(MODE_KEY, m);
+  } catch {
+    // Private mode: the pick lasts until the page closes.
+  }
+}
+
+const DIFFICULTY_KEY = "flagcatch.difficulty";
+
+function loadDifficulty(): Difficulty {
+  const want = params.get("difficulty");
+  if (want === "easy" || want === "medium" || want === "hard") return want;
+  try {
+    const v = localStorage.getItem(DIFFICULTY_KEY);
+    return v === "easy" || v === "hard" ? v : "medium";
+  } catch {
+    return "medium";
+  }
+}
+
+function saveDifficulty(d: Difficulty): void {
+  try {
+    localStorage.setItem(DIFFICULTY_KEY, d);
   } catch {
     // Private mode: the pick lasts until the page closes.
   }

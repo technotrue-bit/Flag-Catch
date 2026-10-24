@@ -46,6 +46,28 @@ into one knocks it down. One in eight CPU animals is a medic.
 Flyers fly for as long as Jump is held, up to a ceiling, and glide down slowly
 when it's let go.
 
+## CPU brains and difficulty
+
+Every CPU weighs its options a few times a second, the way a player would:
+carry a flag home, chase a thief, save or grab a dropped flag, steal from the
+base fewest enemies guard, fight anyone close (a hurt one first), detour for a
+power up, back off to heal at its last hit, escort a teammate, follow the
+front as a medic, or knock down an enemy respawn flag. It reads the score and
+the clock: a team trailing late pushes forward, one leading late holds. Between
+decisions it dodges shots it sees coming (hopping skidding ones), aims where a
+moving target is going, and carriers steer around enemies.
+
+Pick the rivals' level on the start screen. Your teammates always play Medium.
+
+- Easy: slow to react, loose choices, rarely dodges, aims where you are, and
+  everyone chases the same target.
+- Medium: a fair fight.
+- Hard: quick, reads the game, dodges most shots, aims ahead and spreads out.
+
+With dozens of CPUs a side, small edges add up, so on bigger teams Easy and
+Hard sit closer to Medium. That keeps each level about as winnable at 64v64
+as at 8v8. `?difficulty=easy|medium|hard` presets it.
+
 ## Power ups
 
 Gift box stations dot every map (more on the gigantic ones). Drive through one

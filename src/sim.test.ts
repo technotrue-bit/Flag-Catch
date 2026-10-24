@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ANIMALS } from "./animals";
-import { type Firecracker, HOARD_TARGET, type Input, type Match, NO_INPUT, STEP, createMatch, giveItem, step, tune } from "./sim";
+import { type Difficulty, type Firecracker, HOARD_TARGET, type Input, type Match, NO_INPUT, SKILLS, STEP, createMatch, giveItem, rivalSkill, step, tune } from "./sim";
 import { BRIDGES, MAPS, ZONE_EDGE, fromLayout, groundHeight, isWater, landOf, mapScale, setMap, surfaceHeight } from "./terrain";
 
 const opts = { seed: 3, humanAnimal: "lion", perTeam: 4, duration: 60, flagsPerTeam: 5 };
@@ -557,5 +557,74 @@ describe("health, knockouts and medics", () => {
     expect(me.y - surfaceHeight(me.x, me.z)).toBeGreaterThan(tune.flyCeiling - 2);
     for (let i = 0; i < 8 / STEP && !me.onSurface; i++) step(m, NO_INPUT);
     expect(me.onSurface).toBe(true);
+  });
+});
+
+describe("CPU brains and difficulty", () => {
+  it("harder rivals win more against the same teammates", () => {
+    const margin = (difficulty: Difficulty) => {
+      let total = 0;
+      for (let seed = 1; seed <= 8; seed++) {
+        const m = createMatch({ ...opts, seed, perTeam: 8, duration: 120, difficulty });
+        m.players[0].cpu = true;
+        while (!m.over) step(m, NO_INPUT);
+        total += m.scores[0] - m.scores[1];
+      }
+      return total;
+    };
+    const easy = margin("easy");
+    const hard = margin("hard");
+    expect(easy).toBeGreaterThan(0);
+    expect(easy).toBeGreaterThan(hard + 4);
+  });
+
+  it("hard CPUs dodge more of the shots they see coming than easy ones", () => {
+    const dodged = (difficulty: Difficulty) => {
+      let safe = 0;
+      for (let seed = 1; seed <= 30; seed++) {
+        const m = createMatch({ ...opts, seed, perTeam: 8, difficulty });
+        const target = m.players.find((p) => p.team === 1)!;
+        freezeOthers(m, [target.id]);
+        target.x = 0;
+        target.z = 0;
+        target.y = surfaceHeight(0, 0);
+        target.thinkCd = 99;
+        target.goalX = 0;
+        target.goalZ = -10;
+        // A skidding shot coming straight at it from 6 m away.
+        enemyFire(m, target.id, { x: 0, z: 6, y: target.y + 0.3, vx: 0, vz: -14, vy: 0, skidding: true });
+        for (let i = 0; i < 40; i++) step(m, NO_INPUT);
+        if (target.hp === tune.maxHits) safe++;
+      }
+      return safe;
+    };
+    expect(dodged("hard")).toBeGreaterThan(dodged("easy") + 5);
+  });
+
+  it("a CPU down to its last hit backs off when an enemy is close", () => {
+    const m = createMatch({ ...opts, perTeam: 8 });
+    const p = m.players.find((o) => o.team === 1 && o.role === "attack")!;
+    const foe = m.players[0];
+    freezeOthers(m, [p.id, 0]);
+    foe.cpu = false;
+    p.x = 0;
+    p.z = 0;
+    p.y = surfaceHeight(0, 0);
+    foe.x = 5;
+    foe.z = 0;
+    foe.y = surfaceHeight(5, 0);
+    p.hp = 1;
+    p.healCd = 99;
+    p.thinkCd = 0;
+    step(m, NO_INPUT);
+    expect(p.goalTag).toBe("retreat");
+  });
+
+  it("bigger teams keep each difficulty closer to Medium", () => {
+    expect(rivalSkill("hard", 8)).toEqual(SKILLS.hard);
+    const big = rivalSkill("hard", 64);
+    expect(big.dodge).toBeLessThan(SKILLS.hard.dodge);
+    expect(big.dodge).toBeGreaterThan(SKILLS.medium.dodge);
+    expect(rivalSkill("medium", 64)).toEqual(SKILLS.medium);
   });
 });

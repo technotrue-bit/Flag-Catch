@@ -8,7 +8,7 @@ import { ANIMALS, ANIMAL_IDS, type AnimalDef } from "./animals";
 import type { Controls } from "./input";
 import { FLAG_ENEMY, FLAG_FREE, PALETTE, TEAMS } from "./palette";
 import { sfx } from "./audio";
-import { HOARD_TARGET, ITEMS, type ItemKind, type Match, type Mode, nearestBase, tune } from "./sim";
+import { type Difficulty, HOARD_TARGET, ITEMS, type ItemKind, type Match, type Mode, nearestBase, tune } from "./sim";
 import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, groundHeight, landOf, onBridge } from "./terrain";
 
 const MAP_W = 156;
@@ -73,7 +73,9 @@ const CSS = `
 .fc-mode small,.fc-size small{display:block;margin-top:1px;font-size:9px;font-weight:800;letter-spacing:.4px;color:rgba(43,35,64,.6)}
 .fc-size.big small{color:#e8455b}
 .fc-mode.on,.fc-size.on{background:#fffaf0;border-color:${PALETTE.ink};box-shadow:0 2px 0 rgba(43,35,64,.2)}
-@media (max-height:380px){.fc-sel{gap:6px}.fc-sel h2{font-size:24px}.fc-sel h2 small{display:none}.fc-mode,.fc-size{min-height:38px}}
+.fc-setup{max-width:min(760px,100%)}
+@media (max-height:420px){.fc-sel{gap:6px}.fc-sel h2{font-size:22px}.fc-sel h2 small{display:none}.fc-mode,.fc-size{min-height:36px;padding:3px 11px;font-size:14px}.fc-setup{padding:4px 10px 6px;gap:4px 12px}}
+@media (max-height:350px){.fc-sel h2{display:none}.fc-tile .perk{display:none}}
 .fc-timer.goal{font-size:13px;line-height:1.1;padding:5px 10px}
 .fc-row{flex:none;margin-top:auto;max-width:100%;display:flex;justify-content:center;align-items:flex-end;gap:8px}
 .fc-tiles{pointer-events:auto;display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;padding:10px 4px 6px;min-width:0;flex:0 1 auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
@@ -106,14 +108,7 @@ export interface Hud {
   update(m: Match, controls: Controls, camYaw: number): void;
   call(text: string, color?: string): void;
   /** Pick your animal, mode and team size. onPick fires on every tap so the 3D preview can swap. */
-  showSelect(
-    current: string,
-    mode: Mode,
-    size: number,
-    medic: boolean,
-    onPick: (id: string) => void,
-    onPlay: (mode: Mode, size: number, medic: boolean) => void,
-  ): void;
+  showSelect(current: string, setup: MatchSetup, onPick: (id: string) => void, onPlay: (setup: MatchSetup) => void): void;
   /** 3, 2, 1, GO! then onDone. */
   countdown(onDone: () => void): void;
   showResults(m: Match, onAgain: () => void, onChange: () => void): void;
@@ -135,6 +130,14 @@ function loadZoom(): number {
 }
 
 const CLASS_COLORS = { land: "#5cb85c", water: "#46b4e8", air: "#9b7be8" } as const;
+
+/** What the start screen sets up besides the animal. */
+export interface MatchSetup {
+  mode: Mode;
+  size: number;
+  medic: boolean;
+  difficulty: Difficulty;
+}
 
 export function createHud(controls: Controls): Hud {
   const style = document.createElement("style");
@@ -407,7 +410,8 @@ export function createHud(controls: Controls): Hud {
       call.classList.add("show");
       callTimer = 0.9;
     },
-    showSelect(current, mode, size, medic, onPick, onPlay) {
+    showSelect(current, chosen, onPick, onPlay) {
+      let { mode, size, medic, difficulty } = chosen;
       root.classList.add("fc-menu");
       const sel = el("div", "fc-sel", root);
       const title = el("h2", "", sel);
@@ -473,6 +477,27 @@ export function createHud(controls: Controls): Hud {
         roleBtns.push([isMedic, b]);
       }
       roleBtns.forEach(([k, n]) => n.classList.toggle("on", k === medic));
+      // How good the rival CPUs are; your teammates always play Medium.
+      const diffGroup = el("div", "fc-group", setup);
+      el("label", "", diffGroup).textContent = "RIVALS";
+      const diffs = el("div", "fc-seg", diffGroup);
+      const diffBtns = new Map<Difficulty, HTMLElement>();
+      for (const [id, name, info] of [
+        ["easy", "EASY", "RELAXED"],
+        ["medium", "MEDIUM", "FAIR FIGHT"],
+        ["hard", "HARD", "SHARP"],
+      ] as const) {
+        const b = el("div", "fc-size", diffs);
+        b.textContent = name;
+        el("small", "", b).textContent = info;
+        b.addEventListener("click", () => {
+          difficulty = id;
+          diffBtns.forEach((n, k) => n.classList.toggle("on", k === difficulty));
+          sfx.pick();
+        });
+        diffBtns.set(id, b);
+      }
+      diffBtns.forEach((n, k) => n.classList.toggle("on", k === difficulty));
       const row = el("div", "fc-row", sel);
       const tiles = new Map<string, HTMLElement>();
       const pick = (id: string) => {
@@ -495,7 +520,7 @@ export function createHud(controls: Controls): Hud {
         e.stopPropagation();
         sel.remove();
         root.classList.remove("fc-menu");
-        onPlay(mode, size, medic);
+        onPlay({ mode, size, medic, difficulty });
       });
       pick(current);
     },
