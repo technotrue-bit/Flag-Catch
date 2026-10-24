@@ -16,6 +16,21 @@ Two modes, picked on the start screen:
 
 Land, water and air animals each rule different ground.
 
+## Look, sound and feel
+
+- The sea shades from pale foam at the shore to deep blue water, with
+  clouds drifting overhead, flower patches on the grass and rocks on the beaches.
+- Wheels kick up dust on land and leave a white wake on the water. The view
+  widens a little at speed and more on Turbo.
+- Score pills pop when a team scores, and the last ten seconds tick out loud.
+- An original looping island tune plays: calm on the menus, with drums in a
+  match, then faster and busier for the last 30 seconds (or near 1,000 in
+  Hoard). Settings has a Music switch.
+- The results card shows both scores, your grabs, scores, knockouts, saves
+  and points, and the match MVP. A win throws confetti.
+- Add it to your home screen (Share, then Add to Home Screen on iPhone) to
+  play full screen with its own icon.
+
 ## Telling teams apart
 
 Your team is blue and the rivals are red. Every animal stands on a ring in its

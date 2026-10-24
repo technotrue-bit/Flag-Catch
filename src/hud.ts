@@ -7,7 +7,7 @@
 import { ANIMALS, ANIMAL_IDS, type AnimalDef } from "./animals";
 import type { Controls } from "./input";
 import { FLAG_FREE, ME_GLOW, PALETTE, TEAMS } from "./palette";
-import { sfx } from "./audio";
+import { music, sfx } from "./audio";
 import { type Difficulty, HOARD_TARGET, ITEMS, type ItemKind, type Match, type Mode, nearestBase, tune } from "./sim";
 import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, groundHeight, landOf, onBridge } from "./terrain";
 
@@ -23,6 +23,9 @@ const CSS = `
 .fc-team.moon .ic{background:transparent;box-shadow:inset -6px -2px 0 0 #fff}
 .fc-timer{min-width:74px;text-align:center;padding:6px 12px;border-radius:14px;background:rgba(255,255,255,.88);font-weight:800;font-size:20px;box-shadow:0 3px 0 rgba(43,35,64,.18)}
 .fc-timer.low{color:#e8455b}
+.fc-team,.fc-timer{transition:transform .2s}
+.bump{animation:fcbump .45s cubic-bezier(.3,1.8,.5,1)}
+@keyframes fcbump{0%{transform:scale(1)}35%{transform:scale(1.28)}100%{transform:scale(1)}}
 .fc-map{position:absolute;top:max(10px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right));width:${MAP_W}px;height:${MAP_H}px;border-radius:14px;background:rgba(255,255,255,.55);box-shadow:0 3px 0 rgba(43,35,64,.18)}
 .fc-zone{position:absolute;top:calc(max(10px,env(safe-area-inset-top)) + 44px);left:50%;transform:translateX(-50%);padding:3px 12px;border-radius:999px;font-weight:800;font-size:12px;letter-spacing:1px;color:#fff;background:rgba(43,35,64,.45);white-space:nowrap}
 .fc-btn{position:absolute;pointer-events:auto;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;letter-spacing:.5px;user-select:none;-webkit-user-select:none;touch-action:none;box-shadow:0 5px 0 rgba(43,35,64,.28);border:3px solid rgba(255,255,255,.75);opacity:.88}
@@ -53,7 +56,7 @@ const CSS = `
 .fc-chip.on{border-color:${PALETTE.ink}}
 .fc-card{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(124,196,242,.55);pointer-events:auto;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
 .fc-card .box{background:#fffaf0;border-radius:24px;padding:20px 28px;text-align:center;box-shadow:0 6px 0 rgba(43,35,64,.25);max-width:min(560px,90vw)}
-.fc-card h1{margin:0 0 4px;font-size:40px;font-weight:900;letter-spacing:1px;color:#ff8a4c;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
+.fc-card h1{margin:0 0 4px;font-size:40px;font-weight:900;letter-spacing:1px;color:#ffd166;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
 .fc-card p{margin:6px 0;font-size:15px;font-weight:700;color:rgba(43,35,64,.75)}
 .fc-card .go{margin-top:12px;display:inline-block;padding:12px 30px;border-radius:999px;background:#46b4e8;color:#fff;font-weight:900;font-size:20px;box-shadow:0 5px 0 rgba(43,35,64,.28)}
 .fc-rotate{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px;background:#7cc4f2;pointer-events:auto;font-weight:800;font-size:20px;color:#fff;text-align:center;padding:24px}
@@ -64,6 +67,16 @@ const CSS = `
 .fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power,.fc-menu .fc-hearts,.fc-menu .fc-out{display:none!important}
 .fc-sel{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:8px;padding:max(10px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
 .fc-sel h2{flex:none;margin:0;text-align:center;font-size:30px;line-height:1.05;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
+.fc-tip{flex:none;pointer-events:auto;padding:4px 12px;border-radius:999px;background:rgba(43,35,64,.55);color:#fff;font-size:11px;font-weight:800}
+@media (max-height:350px){.fc-tip{display:none}}
+.fc-logo{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:0 10px;font-size:38px!important;letter-spacing:2px!important;animation:fclogo 3s ease-in-out infinite}
+.fc-logo .a{color:${TEAMS[0].color}}
+.fc-logo .b{color:${TEAMS[1].color}}
+.fc-logo .flag{position:relative;width:26px;height:34px}
+.fc-logo .flag::before{content:"";position:absolute;left:3px;top:2px;width:5px;height:32px;border-radius:3px;background:#fff;box-shadow:0 0 0 2px ${PALETTE.ink}}
+.fc-logo .flag::after{content:"";position:absolute;left:8px;top:3px;border-top:9px solid transparent;border-bottom:9px solid transparent;border-left:18px solid ${FLAG_FREE};filter:drop-shadow(1px 1px 0 ${PALETTE.ink})}
+.fc-logo small{flex-basis:100%}
+@keyframes fclogo{50%{transform:translateY(-3px) rotate(-1deg)}}
 .fc-sel h2 small{display:block;margin-top:2px;font-size:13px;letter-spacing:0;-webkit-text-stroke:0;color:rgba(43,35,64,.75)}
 .fc-setup{flex:none;pointer-events:auto;display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-end;gap:8px 14px;padding:6px 12px 8px;border-radius:20px;background:rgba(255,250,240,.82);box-shadow:0 4px 0 rgba(43,35,64,.18)}
 .fc-group{display:flex;flex-direction:column;align-items:center;gap:3px}
@@ -74,7 +87,7 @@ const CSS = `
 .fc-size.big small{color:#e8455b}
 .fc-mode.on,.fc-size.on{background:#fffaf0;border-color:${PALETTE.ink};box-shadow:0 2px 0 rgba(43,35,64,.2)}
 .fc-setup{max-width:min(760px,100%)}
-@media (max-height:420px){.fc-sel{gap:6px}.fc-sel h2{font-size:22px}.fc-sel h2 small{display:none}.fc-mode,.fc-size{min-height:36px;padding:3px 11px;font-size:14px}.fc-setup{padding:4px 10px 6px;gap:4px 12px}}
+@media (max-height:420px){.fc-sel{gap:6px}.fc-sel h2{font-size:22px}.fc-logo{font-size:28px!important}.fc-logo .flag{transform:scale(.8)}.fc-sel h2 small{display:none}.fc-mode,.fc-size{min-height:36px;padding:3px 11px;font-size:14px}.fc-setup{padding:4px 10px 6px;gap:4px 12px}}
 @media (max-height:350px){.fc-sel h2{display:none}.fc-tile .perk{display:none}}
 .fc-timer.goal{font-size:13px;line-height:1.1;padding:5px 10px}
 .fc-row{flex:none;margin-top:auto;max-width:100%;display:flex;justify-content:center;align-items:flex-end;gap:8px}
@@ -94,6 +107,18 @@ const CSS = `
 .fc-count.show{animation:fcpop .8s cubic-bezier(.3,1.6,.5,1) forwards}
 @keyframes fcpop{0%{transform:translate(-50%,-50%) scale(.4);opacity:0}25%{transform:translate(-50%,-50%) scale(1.08);opacity:1}70%{transform:translate(-50%,-50%) scale(1);opacity:1}100%{transform:translate(-50%,-50%) scale(1.25);opacity:0}}
 .fc-card .row2{display:flex;gap:10px;justify-content:center}
+.fc-results .box{animation:fcin .45s cubic-bezier(.3,1.5,.5,1)}
+@keyframes fcin{0%{transform:scale(.7) translateY(30px);opacity:0}100%{transform:none;opacity:1}}
+.fc-board{display:flex;align-items:center;justify-content:center;gap:10px;margin:8px 0 6px}
+.fc-pill{min-width:96px;padding:6px 14px 8px;border-radius:18px;color:#fff;box-shadow:0 4px 0 rgba(43,35,64,.25)}
+.fc-pill small{display:block;font-size:10px;font-weight:900;letter-spacing:1px;opacity:.9}
+.fc-pill b{display:block;font-size:34px;font-weight:900;line-height:1}
+.fc-vs{font-size:11px;font-weight:900;letter-spacing:1px;color:rgba(43,35,64,.5)}
+.fc-stats{display:flex;justify-content:center;gap:6px;margin:6px 0 2px}
+.fc-stats div{min-width:58px;padding:5px 6px;border-radius:12px;background:rgba(43,35,64,.07)}
+.fc-stats b{display:block;font-size:20px;font-weight:900;line-height:1.1}
+.fc-stats small{display:block;font-size:9px;font-weight:900;letter-spacing:.6px;color:rgba(43,35,64,.55)}
+@media (max-height:380px){.fc-card .box{padding:10px 18px}.fc-card h1{font-size:30px}.fc-pill b{font-size:26px}.fc-stats b{font-size:16px}.fc-card .go{margin-top:6px;padding:9px 22px;font-size:17px}}
 .fc-card .go.alt{background:#ff8a4c}
 .fc-tune{display:none;margin-top:8px;text-align:left;font-size:11px;font-weight:700;max-height:34vh;overflow:auto}
 .fc-set{display:flex;align-items:center;gap:10px;margin:10px 0 4px;font-weight:800;font-size:15px}
@@ -111,7 +136,7 @@ export interface Hud {
   showSelect(current: string, setup: MatchSetup, onPick: (id: string) => void, onPlay: (setup: MatchSetup) => void): void;
   /** 3, 2, 1, GO! then onDone. */
   countdown(onDone: () => void): void;
-  showResults(m: Match, onAgain: () => void, onChange: () => void): void;
+  showResults(m: Match, stats: MatchStats, onAgain: () => void, onChange: () => void): void;
   /** True while the settings card is open; the match waits. */
   readonly paused: boolean;
   /** Camera distance multiplier from the Zoom setting (smaller is closer). */
@@ -130,6 +155,16 @@ function loadZoom(): number {
 }
 
 const CLASS_COLORS = { land: "#5cb85c", water: "#46b4e8", air: "#9b7be8" } as const;
+
+/** What you did in a match, counted from its events for the results card. */
+export interface MatchStats {
+  steals: number;
+  banks: number;
+  hits: number;
+  knockouts: number;
+  saves: number;
+  items: number;
+}
 
 /** What the start screen sets up besides the animal. */
 export interface MatchSetup {
@@ -257,6 +292,18 @@ export function createHud(controls: Controls): Hud {
     });
     row.appendChild(slider);
     el("span", "", row).textContent = "In";
+    const musicRow = el("div", "fc-set", box);
+    el("b", "", musicRow).textContent = "Music";
+    const musicBtn = el("div", "fc-chip", musicRow);
+    const showMusic = () => {
+      musicBtn.textContent = music.on ? "ON" : "OFF";
+      musicBtn.classList.toggle("on", music.on);
+    };
+    showMusic();
+    musicBtn.addEventListener("pointerdown", () => {
+      music.on = !music.on;
+      showMusic();
+    });
     const feelBtn = el("div", "small", box);
     feelBtn.textContent = "Feel tuning";
     const tunePanel = buildTunePanel(box);
@@ -277,6 +324,13 @@ export function createHud(controls: Controls): Hud {
   el("div", "", rotate).textContent = "Turn your phone sideways to play";
 
   const count = el("div", "fc-count", root);
+  let shownScores: [number, number] = [0, 0];
+  let shownSecond = Infinity;
+  const bump = (node: HTMLElement) => {
+    node.classList.remove("bump");
+    void node.offsetWidth;
+    node.classList.add("bump");
+  };
   let hintTimer = 8;
 
   return {
@@ -290,6 +344,12 @@ export function createHud(controls: Controls): Hud {
     update(m, c, camYaw) {
       scoreA.textContent = String(m.scores[0]);
       scoreB.textContent = String(m.scores[1]);
+      // A score pill pops when it goes up (in Capture; Hoard ticks every second).
+      if (m.mode === "capture") {
+        if (m.scores[0] > shownScores[0]) bump(teamA);
+        if (m.scores[1] > shownScores[1]) bump(teamB);
+      }
+      shownScores = [m.scores[0], m.scores[1]];
       if (m.mode === "hoard") {
         timer.textContent = `FIRST TO ${HOARD_TARGET}`;
         timer.classList.add("goal");
@@ -299,6 +359,12 @@ export function createHud(controls: Controls): Hud {
         timer.textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
         timer.classList.remove("goal");
         timer.classList.toggle("low", t <= 15);
+        // The last ten seconds tick out loud.
+        if (t !== shownSecond && t <= 10 && t > 0 && t < shownSecond && !m.over) {
+          sfx.tick(t <= 3);
+          bump(timer);
+        }
+        shownSecond = t;
       }
 
       stick.style.display = knob.style.display = c.stick.active ? "block" : "none";
@@ -414,9 +480,26 @@ export function createHud(controls: Controls): Hud {
       let { mode, size, medic, difficulty } = chosen;
       root.classList.add("fc-menu");
       const sel = el("div", "fc-sel", root);
-      const title = el("h2", "", sel);
-      title.textContent = "PICK YOUR ANIMAL";
-      el("small", "", title).textContent = "Steal flags from the enemy base and bring them home. Guard yours!";
+      const title = el("h2", "fc-logo", sel);
+      el("span", "a", title).textContent = "FLAG";
+      el("span", "flag", title);
+      el("span", "b", title).textContent = "CATCH";
+      el("small", "", title).textContent = "Pick your animal, steal their flags and bring them home!";
+      // On an iPhone in Safari, point the way to full screen play.
+      const nav = navigator as Navigator & { standalone?: boolean };
+      if (/iPhone|iPad|iPod/.test(navigator.userAgent) && nav.standalone === false && !tipSeen()) {
+        const tip = el("div", "fc-tip", sel);
+        tip.textContent = "Tip: tap Share, then Add to Home Screen, to play full screen";
+        tip.addEventListener("pointerdown", (e) => {
+          e.stopPropagation();
+          tip.remove();
+          try {
+            localStorage.setItem(TIP_KEY, "1");
+          } catch {
+            // Private mode: the tip shows again next visit.
+          }
+        });
+      }
       // Mode and team size share one panel above the animals, so nothing overlaps.
       const setup = el("div", "fc-setup", sel);
       setup.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -547,18 +630,43 @@ export function createHud(controls: Controls): Hud {
       };
       next();
     },
-    showResults(m, onAgain, onChange) {
-      const card = el("div", "fc-card", root);
+    showResults(m, stats, onAgain, onChange) {
+      const card = el("div", "fc-card fc-results", root);
       const box = el("div", "box", card);
       const [a, b] = m.scores;
-      el("h1", "", box).textContent = a === b ? "DRAW!" : a > b ? "YOU WIN!" : "SO CLOSE!";
-      el("p", "", box).textContent = `${TEAMS[0].name} ${a}  :  ${b} ${TEAMS[1].name}${m.mode === "hoard" ? " points" : ""}`;
-      el("p", "", box).textContent = `Your points: ${m.players[0].score}`;
-      const row = el("div", "row2", box);
-      const again = el("div", "go", row);
-      again.textContent = "AGAIN";
-      const change = el("div", "go alt", row);
-      change.textContent = "NEW ANIMAL";
+      const head = el("h1", "", box);
+      head.textContent = a === b ? "DRAW!" : a > b ? "YOU WIN!" : "SO CLOSE!";
+      head.style.color = a === b ? "#ffd166" : a > b ? TEAMS[0].color : TEAMS[1].color;
+      const board = el("div", "fc-board", box);
+      const pill = (team: 0 | 1, score: number) => {
+        const p = el("div", "fc-pill", board);
+        p.style.background = TEAMS[team].color;
+        el("small", "", p).textContent = TEAMS[team].name.toUpperCase();
+        el("b", "", p).textContent = String(score);
+      };
+      pill(0, a);
+      el("div", "fc-vs", board).textContent = m.mode === "hoard" ? "POINTS" : "FLAGS";
+      pill(1, b);
+      // Your match in five numbers, then the best player on the island.
+      const row = el("div", "fc-stats", box);
+      const stat = (n: number, label: string) => {
+        const c = el("div", "", row);
+        el("b", "", c).textContent = String(n);
+        el("small", "", c).textContent = label;
+      };
+      stat(stats.banks, m.mode === "hoard" ? "BANKED" : "SCORED");
+      stat(stats.steals, "GRABS");
+      stat(stats.knockouts, "KOS");
+      stat(stats.saves, "SAVES");
+      stat(m.players[0].score, "POINTS");
+      const mvp = m.players.reduce((best, p) => (p.score > best.score ? p : best), m.players[0]);
+      el("p", "", box).textContent =
+        mvp.id === 0 ? "You were the MVP!" : `MVP: ${mvp.def.name} on ${TEAMS[mvp.team].name}, ${mvp.score} points`;
+      const btns = el("div", "row2", box);
+      const again = el("div", "go", btns);
+      again.textContent = "PLAY AGAIN";
+      const change = el("div", "go alt", btns);
+      change.textContent = "CHANGE SETUP";
       card.addEventListener("pointerdown", (e) => e.stopPropagation());
       again.addEventListener("pointerdown", (e) => {
         e.stopPropagation();
@@ -572,6 +680,16 @@ export function createHud(controls: Controls): Hud {
       });
     },
   };
+}
+
+const TIP_KEY = "flagcatch.tip";
+
+function tipSeen(): boolean {
+  try {
+    return localStorage.getItem(TIP_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 function el(tag: string, cls: string, parent?: HTMLElement): HTMLElement {

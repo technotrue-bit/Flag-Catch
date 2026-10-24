@@ -19,10 +19,169 @@ export function unlockAudio(): void {
     noise = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
     const d = noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    musicBus = ctx.createGain();
+    musicBus.gain.value = musicOn ? MUSIC_VOLUME : 0;
+    musicBus.connect(master);
+    if (wantLevel >= 0) startClock();
   } catch {
     ctx = null;
   }
 }
+
+/*
+ * Music: a sunny island loop in F major, written for this game. Bass,
+ * a marimba style arpeggio and a little whistled tune over I V vi IV.
+ * Level 0 is the calm menu loop, 1 adds drums and the tune, 2 is the
+ * frantic finish: faster, busier hats, the tune an octave up.
+ */
+const MUSIC_KEY = "flagcatch.music";
+const MUSIC_VOLUME = 0.34;
+let musicBus: GainNode | null = null;
+let musicOn = loadMusicOn();
+let wantLevel = -1;
+let level: 0 | 1 | 2 = 0;
+let clock: number | undefined;
+let nextTime = 0;
+let stepIndex = 0;
+
+// Chord roots as MIDI notes, one bar each: F, C, Dm, Bb.
+const ROOTS = [53, 48, 50, 46];
+const CHORDS = [
+  [0, 4, 7],
+  [0, 4, 7],
+  [0, 3, 7],
+  [0, 4, 7],
+];
+// Two bars of tune per pair of chords, 16 steps a bar, as MIDI notes (0 = rest).
+const TUNE = [
+  [77, 0, 0, 79, 81, 0, 79, 0, 77, 0, 74, 0, 72, 0, 0, 0, 72, 0, 74, 0, 76, 0, 79, 0, 79, 0, 0, 0, 76, 0, 74, 0],
+  [74, 0, 0, 72, 74, 0, 77, 0, 81, 0, 79, 0, 77, 0, 0, 0, 74, 0, 72, 0, 70, 0, 72, 0, 74, 0, 0, 0, 77, 0, 0, 0],
+];
+
+function loadMusicOn(): boolean {
+  try {
+    return localStorage.getItem(MUSIC_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function hz(midi: number): number {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+function note(type: OscillatorType, midi: number, when: number, dur: number, gain: number): void {
+  if (!ctx || !musicBus) return;
+  const o = ctx.createOscillator();
+  const env = ctx.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(hz(midi), when);
+  env.gain.setValueAtTime(0.0001, when);
+  env.gain.exponentialRampToValueAtTime(gain, when + 0.008);
+  env.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  o.connect(env).connect(musicBus);
+  o.start(when);
+  o.stop(when + dur + 0.02);
+}
+
+function drum(kind: "kick" | "snare" | "hat", when: number): void {
+  if (!ctx || !musicBus || !noise) return;
+  if (kind === "kick") {
+    const o = ctx.createOscillator();
+    const env = ctx.createGain();
+    o.frequency.setValueAtTime(140, when);
+    o.frequency.exponentialRampToValueAtTime(45, when + 0.12);
+    env.gain.setValueAtTime(0.5, when);
+    env.gain.exponentialRampToValueAtTime(0.0001, when + 0.18);
+    o.connect(env).connect(musicBus);
+    o.start(when);
+    o.stop(when + 0.2);
+    return;
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = noise;
+  const f = ctx.createBiquadFilter();
+  f.type = kind === "hat" ? "highpass" : "bandpass";
+  f.frequency.value = kind === "hat" ? 7000 : 1800;
+  const env = ctx.createGain();
+  const dur = kind === "hat" ? 0.04 : 0.14;
+  env.gain.setValueAtTime(kind === "hat" ? 0.08 : 0.22, when);
+  env.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  src.connect(f).connect(env).connect(musicBus);
+  src.start(when);
+  src.stop(when + dur + 0.01);
+}
+
+function scheduleStep(i: number, when: number): void {
+  const bar = Math.floor(i / 16) % 4;
+  const s = i % 16;
+  const root = ROOTS[bar];
+  const chord = CHORDS[bar];
+  const sixteenth = 60 / [104, 124, 134][level] / 4;
+  // Bass: root and fifth on a skipping beat.
+  if (s === 0 || s === 6 || s === 8 || s === 14) note("triangle", root - 12 + (s === 6 || s === 14 ? 7 : 0), when, sixteenth * 2.2, 0.32);
+  // Marimba arpeggio on the eighths.
+  if (s % 2 === 0) {
+    const tone = chord[(s / 2) % 3] + 12 * (1 + Math.floor(s / 6) % 2);
+    note("triangle", root + tone, when, 0.22, level === 0 ? 0.1 : 0.13);
+    note("sine", root + tone + 12, when, 0.12, 0.04);
+  }
+  if (level >= 1) {
+    if (s === 0 || s === 8 || (level === 2 && (s === 4 || s === 12)) || (level === 1 && s === 10)) drum("kick", when);
+    if (s === 4 || s === 12) drum("snare", when);
+    if (level === 2 || s % 2 === 0) drum("hat", when);
+    const phrase = TUNE[Math.floor(i / 32) % 2];
+    const m = phrase[i % 32];
+    if (m) note("square", m + (level === 2 ? 12 : 0) - 12, when, sixteenth * 2.6, 0.055);
+  }
+}
+
+function startClock(): void {
+  if (!ctx || clock !== undefined) return;
+  nextTime = ctx.currentTime + 0.08;
+  stepIndex = 0;
+  clock = window.setInterval(() => {
+    if (!ctx) return;
+    // After the tab sleeps, pick up from now instead of rushing to catch up.
+    if (nextTime < ctx.currentTime - 0.2) nextTime = ctx.currentTime + 0.05;
+    while (nextTime < ctx.currentTime + 0.2) {
+      if (stepIndex % 16 === 0 && wantLevel >= 0) level = wantLevel as 0 | 1 | 2;
+      scheduleStep(stepIndex, nextTime);
+      nextTime += 60 / [104, 124, 134][level] / 4;
+      stepIndex++;
+    }
+  }, 50);
+}
+
+export const music = {
+  /** Start or change the loop: 0 menu, 1 match, 2 the frantic finish. */
+  play(l: 0 | 1 | 2) {
+    // A change of level waits for the next bar so the groove holds.
+    if (clock === undefined) level = l;
+    wantLevel = l;
+    startClock();
+  },
+  stop() {
+    wantLevel = -1;
+    if (clock !== undefined) window.clearInterval(clock);
+    clock = undefined;
+  },
+  get level(): number {
+    return wantLevel;
+  },
+  get on(): boolean {
+    return musicOn;
+  },
+  set on(v: boolean) {
+    musicOn = v;
+    try {
+      localStorage.setItem(MUSIC_KEY, v ? "1" : "0");
+    } catch {
+      // Private mode: the switch lasts until the page closes.
+    }
+    if (ctx && musicBus) musicBus.gain.setTargetAtTime(v ? MUSIC_VOLUME : 0, ctx.currentTime, 0.1);
+  },
+};
 
 function out(pan: number, gain: number): AudioNode | null {
   if (!ctx || !master) return null;
@@ -98,6 +257,10 @@ export const sfx = {
   },
   splash(pan: number, near: number) {
     hiss(0.4, 700, pan, 0.3 * near);
+  },
+  /** The last seconds of the clock; the final three ring higher. */
+  tick(urgent: boolean) {
+    tone("square", urgent ? 1175 : 880, urgent ? 1175 : 880, 0.07, 0, 0.09);
   },
   count() {
     tone("square", 660, 660, 0.14, 0, 0.12);

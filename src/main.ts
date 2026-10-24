@@ -7,14 +7,14 @@
  */
 import * as THREE from "three";
 import { ANIMALS } from "./animals";
-import { sfx, unlockAudio } from "./audio";
+import { music, sfx, unlockAudio } from "./audio";
 import { Fx } from "./fx";
-import { createHud } from "./hud";
+import { type MatchStats, createHud } from "./hud";
 import { createControls } from "./input";
 import { type AnimalRig, type FlagRig, buildAnimal, buildFlag, buildMedicBadge, buildRespawnFlag, toon } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, ME_GLOW, TEAMS } from "./palette";
-import { type Difficulty, ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
-import { MAPS, landOf, mapFor, surfaceHeight } from "./terrain";
+import { type Difficulty, HOARD_TARGET, ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
+import { MAPS, WATER_Y, groundHeight, landOf, mapFor, surfaceHeight } from "./terrain";
 import { type World, buildWorld } from "./world";
 
 const params = new URLSearchParams(location.search);
@@ -89,6 +89,11 @@ boltGeo.translate(0, 0.5, 0);
 const boltMat = new THREE.MeshBasicMaterial({ color: "#fff27a", transparent: true, opacity: 0.95 });
 /** Lightning bolts and blast rings that fade out on their own. */
 const flashes: Array<{ mesh: THREE.Mesh; life: number; max: number; grow: number }> = [];
+const UP = new THREE.Vector3(0, 1, 0);
+const slope = new THREE.Vector3();
+const WAKE = ["#ffffff", "#d8f6f7"];
+const SAND_DUST = ["#f6e7bf", "#e9d6a4"];
+const GRASS_DUST = ["#d9f0b4", "#eef7d8"];
 // Animals beyond the fog are hidden, which matters with 128 of them.
 const DRAW_RANGE = 230;
 
@@ -221,7 +226,25 @@ function humanInput(): Input {
   return input;
 }
 
+let stats: MatchStats = freshStats();
+function freshStats(): MatchStats {
+  return { steals: 0, banks: 0, hits: 0, knockouts: 0, saves: 0, items: 0 };
+}
+
+/** Counts what you did, for the results card. */
+function countStats(): void {
+  for (const e of match.events) {
+    if (e.kind === "grab" && e.player === 0) stats.steals++;
+    else if (e.kind === "bank" && e.player === 0) stats.banks++;
+    else if (e.kind === "hit" && e.by === 0) stats.hits++;
+    else if (e.kind === "pop" && e.by === 0) stats.knockouts++;
+    else if (e.kind === "return" && e.player === 0) stats.saves++;
+    else if (e.kind === "item" && e.player === 0) stats.items++;
+  }
+}
+
 function handleEvents(): void {
+  countStats();
   const right = new THREE.Vector3(-Math.cos(camYaw), 0, Math.sin(camYaw));
   for (const e of match.events) {
     if (e.kind === "end") {
@@ -440,7 +463,19 @@ function syncViews(t: number, dt: number): void {
     const flap = p.onSurface ? Math.sin(t * 6 + p.id) * 0.15 : Math.sin(t * 16 + p.id) * 0.7;
     r.wings.forEach((w, i) => (w.rotation.z = (i === 0 ? 1 : -1) * flap));
     const surf = surfaceHeight(p.x, p.z);
-    v.ring.position.set(p.x, surf + 0.05, p.z);
+    // Tilt the ring to the slope so it never sinks into a hillside.
+    slope.set(surfaceHeight(p.x - 0.8, p.z) - surfaceHeight(p.x + 0.8, p.z), 1.6, surfaceHeight(p.x, p.z - 0.8) - surfaceHeight(p.x, p.z + 0.8)).normalize();
+    v.ring.quaternion.setFromUnitVectors(UP, slope);
+    v.ring.position.set(p.x, surf + 0.1, p.z);
+    // Dust behind wheels on land and a white wake on the water.
+    const near = Math.hypot(p.x - cx, p.z - cz) < 45;
+    if (near && p.onSurface && p.speed > 6 && p.y > WATER_Y - 0.3 && Math.random() < dt * p.speed * 1.4) {
+      const bx = p.x - Math.sin(p.heading) * 1.1 + (Math.random() - 0.5) * 0.8;
+      const bz = p.z - Math.cos(p.heading) * 1.1 + (Math.random() - 0.5) * 0.8;
+      const ground = groundHeight(bx, bz);
+      const colors = ground <= WATER_Y ? WAKE : ground < 0.9 ? SAND_DUST : GRASS_DUST;
+      fx.burst(bx, surf + 0.15, bz, colors, 1, 1.6, 3, 0.24);
+    }
     const air = p.y - surf;
     v.ring.scale.setScalar(Math.max(0.4, 1 - air * 0.06));
     if (v.me) {
@@ -549,13 +584,15 @@ function watchLands(): void {
   }
 }
 
+let baseFov = 60;
 function resize(): void {
   const w = window.innerWidth;
   const h = window.innerHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   // Wider view on short landscape phones so the sides don't feel cramped.
-  camera.fov = w / h > 1.9 ? 58 : 62;
+  baseFov = w / h > 1.9 ? 58 : 62;
+  camera.fov = baseFov;
   camera.updateProjectionMatrix();
 }
 window.addEventListener("resize", resize);
@@ -586,14 +623,35 @@ function frame(now: number): void {
   fx.update(dt);
   if (phase === "select") placeSelectCamera(t);
   else placeCamera(Math.min(1, dt * 7));
+  // The view widens a little with speed and more on Turbo, for a rush.
+  const wantFov = phase === "play" ? baseFov + Math.min(6, me.speed * 0.3) + (me.turboT > 0 ? 5 : 0) : baseFov;
+  if (Math.abs(wantFov - camera.fov) > 0.05) {
+    camera.fov += (wantFov - camera.fov) * Math.min(1, dt * 4);
+    camera.updateProjectionMatrix();
+  }
   if (phase === "play") watchLands();
   hud.update(match, controls, camYaw);
   renderer.render(scene, camera);
 
+  if (phase === "play" && !match.over) {
+    // The music turns frantic for the finish.
+    const close = match.mode === "hoard" ? Math.max(...match.scores) >= HOARD_TARGET * 0.85 : match.timeLeft <= 30;
+    if (close && music.level !== 2) music.play(2);
+  }
   if (phase === "play" && match.over) {
     phase = "results";
+    music.stop();
+    window.setTimeout(() => {
+      if (phase === "results") music.play(0);
+    }, 2600);
+    // A win throws confetti over the island.
+    if (match.scores[0] > match.scores[1]) {
+      const me = match.players[0];
+      for (let k = 0; k < 4; k++) fx.burst(me.x + (k - 1.5) * 2, me.y + 3, me.z, ["#ffd166", "#ff6b9a", TEAMS[0].color, "#7ee36b", "#ffffff"], 40, 10, 9, 0.3);
+    }
     hud.showResults(
       match,
+      stats,
       () => {
         freshMatch();
         startCountdown(true);
@@ -617,12 +675,14 @@ function freshMatch(): void {
     world = buildWorld(scene, match);
   }
   rebuildViews();
+  stats = freshStats();
   camYaw = match.players[0].heading;
   lastLand = landOf(match.players[0].z);
 }
 
 function showSelect(): void {
   phase = "select";
+  music.play(0);
   hud.showSelect(
     humanAnimal,
     { mode, size: mapFor(perTeam).size, medic: humanMedic, difficulty },
@@ -661,6 +721,7 @@ function startCountdown(snap: boolean): void {
   if (snap) placeCamera(1);
   hud.countdown(() => {
     phase = "play";
+    music.play(1);
     acc = 0;
     controls.throwQueued = false;
     sfx.whistle();

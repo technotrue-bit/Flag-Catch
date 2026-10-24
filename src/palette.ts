@@ -12,6 +12,8 @@ export const PALETTE = {
   rock: "#b7a99a",
   waterShallow: "#5fd3d6",
   waterDeep: "#3aa6c9",
+  seabed: "#2f8fa8",
+  foam: "#fffbea",
   trunk: "#a8754f",
   leaf: "#4fb36a",
   leafLight: "#7fd47a",
