@@ -432,10 +432,12 @@ export function createMatch(opts: MatchOptions): Match {
       const def = human ? ANIMALS[opts.humanAnimal] ?? ANIMALS.lion : ANIMALS[ids[Math.floor(rng() * ids.length)]];
       const b = bases[team];
       // A sunflower spiral around the base, so a big team starts spread out.
-      const a = i * 2.39996 + team;
+      const a = i * 2.39996;
       const r = 3 + 1.7 * Math.sqrt(i);
-      const x = b.x + Math.cos(a) * r;
-      const z = b.z + Math.sin(a) * r * 0.8 * (team === 0 ? 1 : -1);
+      // Mirrored through the island's center for the north team, like the map.
+      const flip = team === 0 ? 1 : -1;
+      const x = b.x + Math.cos(a) * r * flip;
+      const z = b.z + Math.sin(a) * r * 0.8 * flip;
       const p = makePlayer(players.length, team, def, !human, x, z, Math.atan2(-b.x, -b.z));
       // A quarter defend; one in eight is a medic (the human only if picked).
       p.role = i % 4 === 1 ? "defend" : i % 8 === 3 ? "medic" : "attack";
@@ -1140,7 +1142,8 @@ export function baseSlot(b: Base, slot: number, padRadius = 4.2): [number, numbe
   for (const [r0, count] of SLOT_RINGS) {
     if (k < count) {
       const r = Math.min(r0, padRadius - 0.5);
-      const a = (k / count) * Math.PI * 2 + Math.PI / count;
+      // The north team's slots turn half a circle, so both bases mirror.
+      const a = (k / count) * Math.PI * 2 + Math.PI / count + (b.team === 1 ? Math.PI : 0);
       return [b.x + Math.cos(a) * r, b.z + Math.sin(a) * r];
     }
     k -= count;
@@ -1343,7 +1346,7 @@ function cpuInput(m: Match, p: Player): Input {
   }
   // Swimmers duck under incoming firecrackers, or to sneak a flag home.
   const dive = p.def.dive && ((threatened(m, p) && m.rng() < sk.dodge + 0.2) || (p.carrying >= 0 && p.breath > 2.5));
-  const useItem = p.item !== null && (sk.itemSmart ? cpuWantsItem(m, p, d) : p.itemHeld > 2 + (p.id % 5));
+  const useItem = p.item !== null && (sk.itemSmart ? cpuWantsItem(m, p, d) : p.itemHeld > 2 + ((p.id % (m.players.length / 2)) % 5));
   const plant = p.medic && cpuWantsPlant(m, p);
   return { dirX: dx * throttle, dirZ: dz * throttle, jump: jump && !dive, throwPressed, dive, useItem, plant };
 }
@@ -1553,8 +1556,10 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
 
   // Each defender minds one base: stand guard in a line in front of it.
   const ownBases = m.bases.filter((b) => b.team === p.team);
-  const post = ownBases[p.id % ownBases.length];
-  const slot = (Math.floor(p.id / ownBases.length) % 5) - 2;
+  // Counted within the team and mirrored in x, so both sides post the same way.
+  const idx = p.id % (m.players.length / 2);
+  const post = ownBases[idx % ownBases.length];
+  const slot = ((Math.floor(idx / ownBases.length) % 5) - 2) * (p.team === 0 ? 1 : -1);
   add("guard", (defend ? 52 : 12) * (1 - 0.4 * push), post.x + slot * 5 * s, post.z - Math.sign(post.z) * 14 * s);
 
   let best: Option | undefined;
@@ -1604,7 +1609,11 @@ function viaBridge(p: Player, gx: number, gz: number): [number, number] {
     const t = (g - p.z) / (gz - p.z || 1);
     const crossX = p.x + (gx - p.x) * Math.max(0, Math.min(1, t));
     let bx = BRIDGES[0];
-    for (const b of BRIDGES) if (Math.abs(b - crossX) < Math.abs(bx - crossX)) bx = b;
+    for (const b of BRIDGES) {
+      // On a tie each team takes its own side, so the map stays mirrored.
+      const gap = Math.abs(b - crossX) - Math.abs(bx - crossX);
+      if (gap < -1e-6 || (gap < 1e-6 && (p.team === 0 ? b < bx : b > bx))) bx = b;
+    }
     // Line up with the bridge first, then drive across it.
     best = away > 11 * s ? [bx, g + Math.sign(p.z - g) * 9 * s] : [bx, g];
     bestGap = away;
