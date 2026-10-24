@@ -5,7 +5,7 @@
  * Settings, How to play and the results card.
  * Big, soft and tucked into the corners so the middle stays clear.
  */
-import { ANIMALS, ANIMAL_IDS, type AnimalDef } from "./animals";
+import { ANIMALS, ANIMAL_IDS, type AnimalDef, STYLE_NAMES } from "./animals";
 import type { Controls } from "./input";
 import { FLAG_FREE, ME_GLOW, PALETTE, TEAMS } from "./palette";
 import { music, sfx } from "./audio";
@@ -106,6 +106,7 @@ const CSS = `
 .fc-tile .bar i{flex:1;height:6px;border-radius:3px;background:rgba(43,35,64,.12);overflow:hidden}
 .fc-tile .bar i u{display:block;height:100%;border-radius:3px}
 .fc-tile .perk{margin-top:5px;font-size:10px;font-weight:700;line-height:1.2;color:rgba(43,35,64,.75)}
+.fc-tile .perk strong{font-weight:900;color:${PALETTE.ink}}
 .fc-play{pointer-events:auto;flex:0 0 auto;align-self:center;margin-left:6px;padding:16px 24px;border-radius:999px;background:#46b4e8;color:#fff;font-weight:900;font-size:22px;box-shadow:0 5px 0 rgba(43,35,64,.28);border:3px solid rgba(255,255,255,.8)}
 .fc-count{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%) scale(.4);font-weight:900;font-size:120px;color:#fff;-webkit-text-stroke:4px ${PALETTE.ink};paint-order:stroke fill;opacity:0;pointer-events:none}
 .fc-count.show{animation:fcpop .8s cubic-bezier(.3,1.6,.5,1) forwards}
@@ -624,6 +625,7 @@ export function createHud(controls: Controls): Hud {
       el("div", "", d).textContent = text;
     }
     el("p", "", box).textContent = "Carrying a flag? A hit drops it. Touch your own dropped flag to send it home.";
+    el("p", "", box).textContent = "Tied when the clock runs out? Overtime: the next catch wins.";
     button(box, "GOT IT", "go", () => {
       c.remove();
       paused = wasPaused;
@@ -761,7 +763,7 @@ export function createHud(controls: Controls): Hud {
         timer.classList.toggle("low", Math.max(...m.scores) >= HOARD_TARGET * 0.9);
       } else {
         const t = Math.ceil(m.timeLeft);
-        timer.textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+        timer.textContent = `${m.overtime ? "OT " : ""}${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
         timer.classList.remove("goal");
         timer.classList.toggle("low", t <= 15);
         // The last ten seconds tick out loud.
@@ -1234,7 +1236,10 @@ function animalTile(a: AnimalDef, parent: HTMLElement): HTMLElement {
     fill.style.width = `${Math.round(Math.max(0.08, Math.min(1, v)) * 100)}%`;
     fill.style.background = color;
   }
-  el("div", "perk", tile).textContent = a.perk;
+  // How its CPU plays, then its perk.
+  const perk = el("div", "perk", tile);
+  el("strong", "", perk).textContent = `${STYLE_NAMES[a.style]}. `;
+  perk.append(a.perk);
   return tile;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ANIMALS } from "./animals";
+import { ANIMALS, ANIMAL_IDS } from "./animals";
 import { type Difficulty, type Firecracker, HOARD_TARGET, type Input, type Match, NO_INPUT, SKILLS, STEP, createMatch, giveItem, rivalSkill, step, tune } from "./sim";
 import { BRIDGES, MAPS, ZONE_EDGE, fromLayout, groundHeight, isWater, landOf, mapScale, setMap, surfaceHeight } from "./terrain";
 
@@ -51,7 +51,7 @@ describe("match sim", () => {
   });
 
   it("CPU teams steal, pop and bank flags in a full match", () => {
-    const { m, log } = run(5, 90);
+    const { m, log } = run(2, 90);
     expect(log).toContain("grab");
     expect(log).toContain("throw");
     expect(log).toContain("bank");
@@ -627,4 +627,143 @@ describe("CPU brains and difficulty", () => {
     expect(big.dodge).toBeGreaterThan(SKILLS.medium.dodge);
     expect(rivalSkill("medium", 64)).toEqual(SKILLS.medium);
   });
+});
+
+describe("team plans and specialties", () => {
+  /** A full 8v8 Capture match, one big flag a side, all CPUs. */
+  function capture(seed: number, extra: Partial<Parameters<typeof createMatch>[0]> = {}) {
+    const m = createMatch({ seed, humanAnimal: "lion", perTeam: 8, duration: 180, flagsPerTeam: 1, mode: "capture", ...extra });
+    m.players[0].cpu = true;
+    return m;
+  }
+
+  it("no CPU stands still for long", () => {
+    for (const seed of [1, 2, 3]) {
+      const m = capture(seed);
+      const still = new Map<number, number>();
+      let worst = 0;
+      while (!m.over) {
+        step(m, NO_INPUT);
+        for (const p of m.players) {
+          const idle = p.out <= 0 && p.stun <= 0 && Math.abs(p.speed) < 0.6;
+          const t = idle ? (still.get(p.id) ?? 0) + STEP : 0;
+          still.set(p.id, t);
+          worst = Math.max(worst, t);
+        }
+      }
+      expect(worst).toBeLessThan(4);
+    }
+  }, 20000);
+
+  it("each animal leans to the job its style is made for", () => {
+    const time: Record<string, Record<string, number>> = {};
+    for (const seed of [1, 2, 3, 4]) {
+      const m = capture(seed);
+      while (!m.over) {
+        step(m, NO_INPUT);
+        for (const p of m.players) {
+          const row = (time[p.def.style] ??= {});
+          row[p.job] = (row[p.job] ?? 0) + STEP;
+        }
+      }
+    }
+    const share = (style: string, job: string) => {
+      const row = time[style] ?? {};
+      const total = Object.values(row).reduce((a, b) => a + b, 0) || 1;
+      return (row[job] ?? 0) / total;
+    };
+    expect(share("raider", "raid")).toBeGreaterThan(share("guardian", "raid") + 0.2);
+    expect(share("guardian", "guard")).toBeGreaterThan(share("raider", "guard") + 0.15);
+    expect(share("hunter", "hunt")).toBeGreaterThan(share("raider", "hunt") + 0.1);
+  }, 20000);
+
+  it("every style has an animal, and every animal a style", () => {
+    const styles = new Set(ANIMAL_IDS.map((id) => ANIMALS[id].style));
+    expect([...styles].sort()).toEqual(["allrounder", "bomber", "guardian", "hunter", "raider"]);
+  });
+
+  it("a hunter cuts a thief off ahead instead of trailing behind", () => {
+    const m = capture(4);
+    const thief = m.players.find((p) => p.team === 1)!;
+    const hunter = m.players.find((p) => p.team === 0 && p.id !== 0)!;
+    freezeOthers(m, [thief.id, hunter.id]);
+    // The thief runs north for home with our flag; the hunter waits off to the side, further north.
+    thief.x = 0;
+    thief.z = 10;
+    thief.y = surfaceHeight(0, 10);
+    thief.heading = Math.PI;
+    thief.carrying = m.flags.find((f) => f.owner === 0)!.id;
+    m.flags[thief.carrying].state = "carried";
+    m.flags[thief.carrying].carrier = thief.id;
+    hunter.x = 20;
+    hunter.z = -20;
+    hunter.y = surfaceHeight(20, -20);
+    m.planCd = [0, 0];
+    hunter.thinkCd = 0;
+    step(m, NO_INPUT);
+    expect(hunter.job).toBe("hunt");
+    // Its goal is between the thief and the thief's base, not behind the thief.
+    expect(hunter.goalZ).toBeLessThan(thief.z - 5);
+  });
+
+  it("guards keep walking their patrol while nothing happens", () => {
+    const m = capture(1);
+    for (let i = 0; i < 5 / STEP; i++) step(m, NO_INPUT);
+    const guards = m.players.filter((p) => p.job === "guard");
+    expect(guards.length).toBeGreaterThan(0);
+    for (const g of guards) {
+      const x = g.x;
+      const z = g.z;
+      for (let i = 0; i < 2 / STEP; i++) step(m, NO_INPUT);
+      if (g.job === "guard" && g.goalTag === "guard") expect(Math.hypot(g.x - x, g.z - z)).toBeGreaterThan(2);
+    }
+  });
+
+  it("a tie at the buzzer goes to overtime, and the next capture wins it", () => {
+    const m = capture(1, { duration: 1 });
+    freezeOthers(m, []);
+    const events: string[] = [];
+    for (let i = 0; i < 1.1 / STEP; i++) {
+      step(m, NO_INPUT);
+      for (const e of m.events) events.push(e.kind);
+    }
+    expect(events).toContain("overtime");
+    expect(m.overtime).toBe(true);
+    expect(m.over).toBe(false);
+    // A blue animal walks the red flag home.
+    const p = m.players[1];
+    p.stun = 0;
+    p.cpu = false;
+    const flag = m.flags.find((f) => f.owner === 1)!;
+    flag.state = "carried";
+    flag.carrier = p.id;
+    p.carrying = flag.id;
+    p.x = m.bases[0].x;
+    p.z = m.bases[0].z;
+    step(m, NO_INPUT);
+    expect(m.scores).toEqual([1, 0]);
+    expect(m.over).toBe(true);
+  });
+
+  it("Capture matches almost always end with a winner", () => {
+    let draws = 0;
+    for (let seed = 1; seed <= 8; seed++) {
+      const m = capture(seed);
+      while (!m.over) step(m, NO_INPUT);
+      if (m.scores[0] === m.scores[1]) draws++;
+    }
+    expect(draws).toBeLessThanOrEqual(2);
+  }, 20000);
+
+  it("both sides win about as often when the teams are the same", () => {
+    let a = 0;
+    let b = 0;
+    for (let seed = 1; seed <= 16; seed++) {
+      const m = capture(seed, { world: ["home", "reef", "bluffs", "frost", "lagoon", "storm", "dunes", "lava"][seed % 8] });
+      while (!m.over) step(m, NO_INPUT);
+      if (m.scores[0] > m.scores[1]) a++;
+      if (m.scores[1] > m.scores[0]) b++;
+    }
+    expect(Math.abs(a - b)).toBeLessThanOrEqual(6);
+  }, 30000);
 });

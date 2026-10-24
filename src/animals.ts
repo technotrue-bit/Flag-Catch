@@ -6,6 +6,22 @@
  */
 export type AnimalClass = "land" | "water" | "air";
 
+/**
+ * How a CPU animal likes to play, the way a real player picks a job that
+ * suits their animal. Raiders steal and run flags home, hunters run down
+ * thieves, guardians hold home and bodyguard carriers, bombers clear the
+ * way from the air, and all rounders fill whatever the team is short of.
+ */
+export type Style = "raider" | "hunter" | "guardian" | "bomber" | "allrounder";
+
+export const STYLE_NAMES: Record<Style, string> = {
+  raider: "Raider",
+  hunter: "Hunter",
+  guardian: "Guardian",
+  bomber: "Bomber",
+  allrounder: "All rounder",
+};
+
 export interface AnimalDef {
   id: string;
   name: string;
@@ -32,6 +48,8 @@ export interface AnimalDef {
   toughness: number;
   /** One line for the pick screen. */
   perk: string;
+  /** The job its CPU plays best. */
+  style: Style;
   /** How well it holds the road on ice; the default slides. */
   iceGrip?: number;
 }
@@ -50,14 +68,15 @@ const BASE = {
   toughness: 1,
 };
 
-function animal(def: Pick<AnimalDef, "id" | "name" | "cls" | "landSpeed" | "waterSpeed" | "perk"> & Partial<AnimalDef>): AnimalDef {
+function animal(def: Pick<AnimalDef, "id" | "name" | "cls" | "landSpeed" | "waterSpeed" | "perk" | "style"> & Partial<AnimalDef>): AnimalDef {
   return { ...BASE, ...def };
 }
 
 export const ANIMALS: Record<string, AnimalDef> = {
-  lion: animal({ id: "lion", name: "Rally Lion", cls: "land", landSpeed: 15, waterSpeed: 5, perk: "All rounder, quick on land" }),
+  lion: animal({ id: "lion", style: "allrounder", name: "Rally Lion", cls: "land", landSpeed: 15, waterSpeed: 5, perk: "All rounder, quick on land" }),
   penguin: animal({
     id: "penguin",
+    style: "raider",
     name: "Surf Penguin",
     cls: "water",
     landSpeed: 6.5,
@@ -71,6 +90,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   croc: animal({
     id: "croc",
+    style: "guardian",
     name: "Ski Croc",
     cls: "water",
     landSpeed: 8,
@@ -84,6 +104,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   bird: animal({
     id: "bird",
+    style: "hunter",
     name: "Moto Bird",
     cls: "land",
     landSpeed: 14,
@@ -96,6 +117,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   eagle: animal({
     id: "eagle",
+    style: "bomber",
     name: "Sky Eagle",
     cls: "air",
     landSpeed: 10.5,
@@ -110,6 +132,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   mammoth: animal({
     id: "mammoth",
+    style: "guardian",
     name: "Skate Mammoth",
     cls: "land",
     landSpeed: 13,
@@ -123,6 +146,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   wolf: animal({
     id: "wolf",
+    style: "hunter",
     name: "Turbo Wolf",
     cls: "land",
     landSpeed: 17,
@@ -138,6 +162,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   shark: animal({
     id: "shark",
+    style: "raider",
     name: "Jet Shark",
     cls: "water",
     landSpeed: 5.5,
@@ -151,6 +176,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   goldfish: animal({
     id: "goldfish",
+    style: "allrounder",
     name: "Bowl Goldfish",
     cls: "water",
     landSpeed: 12,
@@ -163,6 +189,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   panther: animal({
     id: "panther",
+    style: "raider",
     name: "Dash Panther",
     cls: "land",
     landSpeed: 16,
@@ -173,6 +200,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   flyfish: animal({
     id: "flyfish",
+    style: "raider",
     name: "Glide Fish",
     cls: "air",
     landSpeed: 7,
@@ -187,6 +215,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   bat: animal({
     id: "bat",
+    style: "raider",
     name: "Night Bat",
     cls: "air",
     landSpeed: 9,
@@ -202,6 +231,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   }),
   frog: animal({
     id: "frog",
+    style: "hunter",
     name: "Pogo Frog",
     cls: "water",
     landSpeed: 11.5,

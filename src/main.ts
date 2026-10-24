@@ -333,6 +333,11 @@ function handleEvents(): void {
       sfx.end();
       continue;
     }
+    if (e.kind === "overtime") {
+      cue("overtime");
+      hud.call("OVERTIME!", "#ffd166");
+      continue;
+    }
     if (e.kind === "jump") {
       if (e.player === 0) sfx.jump(0, 1);
       continue;

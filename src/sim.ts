@@ -2,7 +2,7 @@
  * The match simulation. No Three.js here: plain numbers stepped at a fixed
  * 60 Hz, so a seed replays the same match and the tests can run it headless.
  */
-import { ANIMALS, type AnimalDef } from "./animals";
+import { ANIMALS, type AnimalDef, type Style } from "./animals";
 import { mulberry32, type RNG } from "./rng";
 import {
   BASE_Z,
@@ -93,6 +93,8 @@ export const tune = {
   windSpeed: 4.5,
   strikeWarn: 1.2,
   strikeRadius: 3.5,
+  /** Capture and Playful: a tie at the buzzer plays on this long for a winning capture. */
+  overtime: 120,
 };
 
 /**
@@ -265,8 +267,22 @@ export interface Player {
   /** Medics plant respawn flags; medicCd counts down to the next one. */
   medic: boolean;
   medicCd: number;
-  /** CPU state. Defenders hold their homeland, attackers raid, medics follow. */
+  /** Medics plant respawn flags; guardians start out as defenders. Day to day jobs come from the team plan (job). */
   role: "attack" | "defend" | "medic";
+  /** The job the team plan gave this CPU, and who or what it's for (a player or flag id, or -1). */
+  job: Job;
+  jobTarget: number;
+  /** Raiders: which side they come in from (-1 left, 0 middle, 1 right, as seen from home). Guards: their spot on the patrol ring. */
+  lane: number;
+  /** Seconds spent pushing on the stick without getting anywhere, and the escape run once stuck. */
+  stuckT: number;
+  lastX: number;
+  lastZ: number;
+  unstickT: number;
+  unstickX: number;
+  unstickZ: number;
+  /** Plays at this skill instead of its team's (tests and sims). */
+  skill?: Skill;
   /** What the CPU decided to do last, so it sticks with a plan. */
   goalTag: string;
   /** Dodging: a sidestep direction and how long it lasts, a hop, and a pause before the next look. */
@@ -366,6 +382,7 @@ export type SimEvent =
   | { kind: "strike_warn"; x: number; z: number; t: number }
   | { kind: "strike"; x: number; y: number; z: number }
   | { kind: "burn"; x: number; y: number; z: number; player: number }
+  | { kind: "overtime" }
   | { kind: "end"; winner: Team | -1 };
 
 export interface Base {
@@ -438,6 +455,10 @@ export interface Match {
   scores: [number, number];
   events: SimEvent[];
   nextFireId: number;
+  /** Seconds until each team's CPUs share out jobs again. */
+  planCd: [number, number];
+  /** Tied at the buzzer: play on until the next capture, or until overtime runs out. */
+  overtime: boolean;
 }
 
 export interface MatchOptions {
@@ -488,8 +509,8 @@ export function createMatch(opts: MatchOptions): Match {
       const x = b.x + Math.cos(a) * r * flip;
       const z = b.z + Math.sin(a) * r * 0.8 * flip;
       const p = makePlayer(players.length, team, def, !human, x, z, Math.atan2(-b.x, -b.z));
-      // A quarter defend; one in eight is a medic (the human only if picked).
-      p.role = i % 4 === 1 ? "defend" : i % 8 === 3 ? "medic" : "attack";
+      // One in eight is a medic (the human only if picked); guardians lean to defending.
+      p.role = i % 8 === 3 ? "medic" : def.style === "guardian" ? "defend" : "attack";
       p.medic = human ? !!opts.humanMedic : p.role === "medic";
       players.push(p);
     }
@@ -545,6 +566,8 @@ export function createMatch(opts: MatchOptions): Match {
     scores: [0, 0],
     events: [],
     nextFireId: 0,
+    planCd: [0, 0],
+    overtime: false,
   };
 }
 
@@ -585,6 +608,15 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     medic: false,
     medicCd: 0,
     role: "attack",
+    job: "raid",
+    jobTarget: -1,
+    lane: 0,
+    stuckT: 0,
+    lastX: x,
+    lastZ: z,
+    unstickT: 0,
+    unstickX: 0,
+    unstickZ: 0,
     goalTag: "",
     dodgeT: 0,
     dodgeX: 0,
@@ -620,6 +652,13 @@ export function step(m: Match, human: Input): void {
   // neither team wins every tie.
   if (m.turn.length !== m.players.length) m.turnBack = [...m.players].reverse();
   m.turn = Math.round(m.time / STEP) % 2 === 1 ? m.turnBack : m.players;
+  for (const team of [0, 1] as const) {
+    m.planCd[team] -= STEP;
+    if (m.planCd[team] <= 0) {
+      m.planCd[team] = planEvery(m.skill[team]);
+      planTeam(m, team);
+    }
+  }
   for (const p of m.turn) {
     const input = p.cpu ? cpuInput(m, p) : human;
     movePlayer(m, p, input);
@@ -640,6 +679,13 @@ export function step(m: Match, human: Input): void {
     if (m.scores[0] >= HOARD_TARGET || m.scores[1] >= HOARD_TARGET) m.timeLeft = 0;
   }
 
+  // Overtime: the first capture wins it.
+  if (m.overtime && m.scores[0] !== m.scores[1]) m.timeLeft = 0;
+  if (m.timeLeft <= 0 && !m.overtime && m.mode !== "hoard" && m.scores[0] === m.scores[1] && tune.overtime > 0) {
+    m.overtime = true;
+    m.timeLeft = tune.overtime;
+    m.events.push({ kind: "overtime" });
+  }
   if (m.timeLeft <= 0) {
     m.timeLeft = 0;
     m.over = true;
@@ -1402,13 +1448,15 @@ export function nearestBase(m: Match, team: Team, x: number, z: number): Base {
  * its team's Skill, so Easy CPUs react late, choose loosely and miss more.
  */
 function cpuInput(m: Match, p: Player): Input {
-  const sk = m.skill[p.team];
+  const sk = p.skill ?? m.skill[p.team];
   p.thinkCd -= STEP;
   if (p.thinkCd <= 0) {
     p.thinkCd = sk.react * (0.8 + m.rng() * 0.4);
     const [gx, gz] = cpuGoal(m, p, sk);
     const bridges = p.def.cls === "land" || (m.world.liquid === "lava" && p.def.cls !== "air");
-    [p.goalX, p.goalZ] = bridges ? viaBridge(p, gx, gz) : [gx, gz];
+    // Never aim past the edge of the world.
+    const [cx, cz] = [clamp(gx, 3 - WORLD_HALF_X, WORLD_HALF_X - 3), clamp(gz, 3 - WORLD_HALF_Z, WORLD_HALF_Z - 3)];
+    [p.goalX, p.goalZ] = bridges ? viaBridge(p, cx, cz) : [cx, cz];
   }
   let dx = p.goalX - p.x;
   let dz = p.goalZ - p.z;
@@ -1470,6 +1518,28 @@ function cpuInput(m: Match, p: Player): Input {
     p.dodgeJump -= STEP;
     jump = true;
   }
+  // Stuck on a slope, a shore or a crowd: back out at an angle and hop.
+  if (p.unstickT > 0) {
+    p.unstickT -= STEP;
+    dx = p.unstickX;
+    dz = p.unstickZ;
+    throttle = sk.pace;
+    jump = jump || (p.onSurface && p.unstickT > 0.6);
+  } else if (p.stun <= 0 && p.out <= 0 && Math.hypot(p.x - p.lastX, p.z - p.lastZ) < STEP) {
+    // Pushing and getting nowhere, or just standing about: either way, get moving.
+    p.stuckT += STEP;
+    if (p.stuckT > (throttle > 0.4 ? 1.2 : 2.5)) {
+      p.thinkCd = 0;
+      p.stuckT = 0;
+      p.unstickT = 0.8;
+      const turn = (m.rng() < 0.5 ? -1 : 1) * (1.6 + m.rng());
+      const a = Math.atan2(dx, dz) + turn;
+      p.unstickX = Math.sin(a);
+      p.unstickZ = Math.cos(a);
+    }
+  } else p.stuckT = 0;
+  p.lastX = p.x;
+  p.lastZ = p.z;
   // Lava Loop: steer round the lava rather than into it.
   if (m.world.liquid === "lava" && p.medium !== "air") [dx, dz] = avoidLava(p, dx, dz);
 
@@ -1497,7 +1567,7 @@ function cpuInput(m: Match, p: Player): Input {
       break;
     }
   }
-  if (p.def.cls === "air" && d > 18) {
+  if (p.def.cls === "air" && (d > 18 || p.goalTag === "bomb")) {
     // Flyers take to the air for long trips: tap off the ground, then hold.
     jump = p.onSurface ? !p.jumpWasHeld : true;
     if (p.def.bomber && !p.onSurface) throwPressed = enemyBelow(m, p);
@@ -1591,6 +1661,211 @@ function enemyBelow(m: Match, p: Player): boolean {
   return m.players.some((o) => o.team !== p.team && o.stun <= 0 && !o.diving && Math.hypot(o.x - p.x, o.z - p.z) < 3.5);
 }
 
+/**
+ * Team plans. Every second or so each team shares out jobs the way a real
+ * team talks it over: someone runs down each thief, someone saves each
+ * dropped flag, bodyguards go with each carrier, a few guard home while it
+ * still has a flag to guard, and the rest raid (or hold the middle once
+ * there are plenty of raiders). Who gets which job comes from what their
+ * animal is good at (its style) and who's closest, so a wolf hunts, a
+ * mammoth guards and a panther raids. Both teams plan with the same rules;
+ * only their skill differs.
+ */
+export type Job = "raid" | "hunt" | "save" | "escort" | "guard" | "support";
+
+/** How well each style suits each job, out of 10. */
+const FIT: Record<Style, Record<Job, number>> = {
+  raider: { raid: 10, hunt: 4, save: 5, escort: 5, guard: 1, support: 4 },
+  hunter: { raid: 4, hunt: 10, save: 8, escort: 6, guard: 5, support: 7 },
+  guardian: { raid: 2, hunt: 6, save: 8, escort: 9, guard: 10, support: 5 },
+  bomber: { raid: 8, hunt: 7, save: 5, escort: 6, guard: 2, support: 8 },
+  allrounder: { raid: 7, hunt: 7, save: 7, escort: 7, guard: 6, support: 7 },
+};
+
+interface Slot {
+  job: Job;
+  target: number;
+  x: number;
+  z: number;
+}
+
+/** Trailing late means push (up to 1), leading late means hold (down to -1). */
+function pushFor(m: Match, team: Team, sk: Skill): number {
+  const enemy: Team = team === 0 ? 1 : 0;
+  const own = m.mode === "hoard" ? m.points[team] : m.scores[team];
+  const theirs = m.mode === "hoard" ? m.points[enemy] : m.scores[enemy];
+  const gap = m.mode === "hoard" ? (theirs - own) / 150 : (theirs - own) / 2;
+  const late = m.mode === "hoard" ? Math.max(own, theirs) / HOARD_TARGET : m.overtime ? 1 : 1 - Math.min(1, m.timeLeft / 90);
+  return clamp(gap, -1, 1) * (0.4 + 0.6 * late) * sk.tactics;
+}
+
+/** Seconds between team plans: good teams talk it over more often. */
+function planEvery(sk: Skill): number {
+  return 0.6 + (3 - sk.coord) * 0.5;
+}
+
+function planTeam(m: Match, team: Team): void {
+  const sk = m.skill[team];
+  const s = mapScale();
+  const enemy: Team = team === 0 ? 1 : 0;
+  const side = m.players.filter((p) => p.team === team);
+  const n = side.length;
+  const free = side.filter((p) => p.cpu && p.carrying < 0);
+  const human = side.some((p) => !p.cpu && p.carrying < 0);
+  const push = pushFor(m, team, sk);
+  const slots: Slot[] = [];
+
+  // Thieves with our flags, closest to scoring first: cut them off.
+  const thieves = m.players.filter((o) => o.team === enemy && o.carrying >= 0 && m.flags[o.carrying].team === team);
+  const toHome = (o: Player) => {
+    const b = nearestBase(m, enemy, o.x, o.z);
+    return Math.hypot(b.x - o.x, b.z - o.z);
+  };
+  thieves.sort((a, b) => toHome(a) - toHome(b));
+  for (const o of thieves) {
+    const urgent = toHome(o) < 45 * s && sk.tactics > 0.5;
+    const k = n <= 3 ? 1 : n <= 5 ? 2 : urgent ? 3 : 2;
+    for (let i = 0; i < k; i++) slots.push({ job: "hunt", target: o.id, x: o.x, z: o.z });
+  }
+  // Our dropped flags: someone runs over and touches them home.
+  for (const f of m.flags) if (f.state === "dropped" && f.team === team) slots.push({ job: "save", target: f.id, x: f.x, z: f.z });
+  // Our carriers get bodyguards.
+  const carriers = side.filter((p) => p.carrying >= 0);
+  const escorts = n <= 3 ? 0 : n <= 6 ? 1 : 2;
+  for (const c of carriers) for (let i = 0; i < escorts; i++) slots.push({ job: "escort", target: c.id, x: c.x, z: c.z });
+  // Guards, only for bases with a flag at home to guard.
+  const held = m.bases.filter((b) => b.team === team && m.flags.some((f) => f.state === "home" && f.base === b.id));
+  if (held.length && n > 2) {
+    const g = Math.max(1, Math.round(n * 0.22 * (1 - 0.6 * push) * (m.mode === "hoard" ? 1.4 : 1)));
+    for (let i = 0; i < g; i++) {
+      const b = held[i % held.length];
+      slots.push({ job: "guard", target: b.id, x: b.x, z: b.z });
+    }
+  }
+  // Everyone else raids while there's a flag to take; past a cap the rest hold the middle.
+  const prize = m.flags.find((f) => f.team === enemy && f.state !== "carried");
+  const rest = free.length - slots.length;
+  if (prize) {
+    const cap = Math.max(2, Math.ceil(n * 0.5)) - (human ? 1 : 0);
+    for (let i = 0; i < Math.min(rest, cap); i++) slots.push({ job: "raid", target: -1, x: prize.x, z: prize.z });
+  } else if (carriers.length) {
+    for (let i = 0; i < Math.min(rest, 1); i++) slots.push({ job: "escort", target: carriers[0].id, x: carriers[0].x, z: carriers[0].z });
+  }
+  while (slots.length < free.length) slots.push({ job: "support", target: -1, x: 0, z: 0 });
+
+  const taken = new Set<Player>();
+  for (const slot of slots) {
+    const urgency = slot.job === "hunt" || slot.job === "save" ? 2.5 : slot.job === "escort" ? 1.5 : slot.job === "support" ? 0 : 0.6;
+    let best: Player | undefined;
+    let bestFit = -Infinity;
+    for (const p of free) {
+      if (taken.has(p)) continue;
+      let fit = FIT[p.def.style][slot.job] - urgency * (Math.hypot(p.x - slot.x, p.z - slot.z) / (10 * s));
+      if (p.job === slot.job && p.jobTarget === slot.target) fit += 3;
+      if (p.medic && slot.job === "guard") fit -= 6;
+      if (p.out > 0) fit -= 4;
+      // Loose teams don't share out jobs so well.
+      fit += m.rng() * (3 - sk.coord) * 2;
+      if (fit > bestFit) {
+        bestFit = fit;
+        best = p;
+      }
+    }
+    if (!best) break;
+    taken.add(best);
+    best.job = slot.job;
+    best.jobTarget = slot.target;
+  }
+
+  // Lanes: raiders and the middle fan out across the map, guards round the ring.
+  const flip = team === 0 ? 1 : -1;
+  const spread = (job: Job) => {
+    const list = free.filter((p) => p.job === job).sort((a, b) => a.x * flip - b.x * flip || a.id - b.id);
+    list.forEach((p, i) => (p.lane = list.length === 1 ? 0 : Math.round(-1 + (2 * i) / (list.length - 1))));
+  };
+  spread("raid");
+  spread("support");
+  for (const b of held) {
+    const guards = free.filter((p) => p.job === "guard" && p.jobTarget === b.id).sort((a, c) => a.id - c.id);
+    guards.forEach((p, i) => (p.lane = i / guards.length));
+  }
+  for (const c of carriers) {
+    free.filter((p) => p.job === "escort" && p.jobTarget === c.id).forEach((p, i) => (p.lane = i));
+  }
+}
+
+/** Where a hunter heads to cut a thief off: the first spot on their run home it can reach first. */
+function intercept(m: Match, p: Player, o: Player, sk: Skill): [number, number] {
+  const s = mapScale();
+  if (sk.tactics <= 0 || Math.hypot(o.x - p.x, o.z - p.z) < 9) return lead(o);
+  const home = nearestBase(m, o.team, o.x, o.z);
+  const hx = home.x - o.x;
+  const hz = home.z - o.z;
+  const len = Math.hypot(hx, hz) || 1;
+  const ov = Math.max(4, speedFor(o));
+  const pv = Math.max(4, speedFor(p) * sk.pace);
+  for (let t = 0.1; t <= 1.001; t += 0.1) {
+    const x = o.x + hx * t;
+    const z = o.z + hz * t;
+    if (Math.hypot(x - p.x, z - p.z) / pv <= (len * t) / ov) return [x, z];
+  }
+  // Too far behind to get ahead: block the mouth of their base, swaying side to side.
+  const sway = Math.sin(m.time * 1.3 + p.id) * 3 * s;
+  return [home.x - (hx / len) * 7 * s + (hz / len) * sway, home.z - (hz / len) * 7 * s - (hx / len) * sway];
+}
+
+/** A bodyguard stands between its carrier and the nearest chaser, or runs just ahead. */
+function escortSpot(m: Match, p: Player, c: Player): [number, number] {
+  const home = nearestBase(m, c.team, c.x, c.z);
+  const hx = home.x - c.x;
+  const hz = home.z - c.z;
+  const len = Math.hypot(hx, hz) || 1;
+  const threats = m.players
+    .filter((o) => o.team !== c.team && o.stun <= 0 && o.out <= 0 && Math.hypot(o.x - c.x, o.z - c.z) < 22)
+    .sort((a, b) => Math.hypot(a.x - c.x, a.z - c.z) - Math.hypot(b.x - c.x, b.z - c.z));
+  const t = threats[p.lane] ?? threats[0];
+  if (t) return [c.x + (t.x - c.x) * 0.5, c.z + (t.z - c.z) * 0.5];
+  const side = p.lane % 2 === 0 ? 1 : -1;
+  return [c.x + (hx / len) * 7 + (hz / len) * 3 * side, c.z + (hz / len) * 7 - (hx / len) * 3 * side];
+}
+
+/** A guard walks a ring in front of its base, so it's always on the move and covers every side. */
+function patrolSpot(m: Match, p: Player, b: Base): [number, number] {
+  const s = mapScale();
+  const flip = b.team === 0 ? 1 : -1;
+  // Turned round the middle for the north team, so both sides patrol alike.
+  const cx = b.x;
+  const cz = b.z - flip * 5 * s;
+  const r = 9 * s;
+  const a = m.time * 0.35 + p.lane * Math.PI * 2 + 0.7;
+  let x = cx + flip * Math.cos(a) * r;
+  let z = cz + flip * Math.sin(a) * r * 0.7;
+  if (p.def.cls !== "air" && (isWater(x, z) || isLava(x, z))) {
+    x = cx + (x - cx) * 0.5;
+    z = cz + (z - cz) * 0.5;
+  }
+  return [x, z];
+}
+
+/** The middle: each on its own lane, sweeping forward and back. */
+function sweepSpot(m: Match, p: Player): [number, number] {
+  const flip = p.team === 0 ? 1 : -1;
+  const x = p.lane * WORLD_HALF_X * 0.35;
+  const z = (-0.15 + Math.sin(m.time * 0.22 + p.lane * 1.7) * 0.55) * ZONE_EDGE;
+  return [flip * x, flip * z];
+}
+
+/** Raiders on a side lane swing out wide and come at the flag from their flank. */
+function raidSpot(p: Player, f: Flag): [number, number] {
+  const s = mapScale();
+  if (p.lane === 0 || Math.hypot(f.x - p.x, f.z - p.z) < 24 * s) return [f.x, f.z];
+  const flip = p.team === 0 ? 1 : -1;
+  const x = f.x + flip * p.lane * 14 * s;
+  const z = f.z + flip * 12 * s;
+  if (p.def.cls !== "air" && (isWater(x, z) || isLava(x, z) || !inWorld(x, z))) return [f.x, f.z];
+  return [x, z];
+}
+
 interface Option {
   tag: string;
   score: number;
@@ -1599,9 +1874,11 @@ interface Option {
 }
 
 /**
- * Pick the best thing to do now. Each option gets a score from how much it
- * matters, minus how far away it is, plus a little randomness (more for
- * weaker CPUs) and a bonus for sticking with the current plan.
+ * Pick the best thing to do now. The job from the team plan comes first,
+ * and anything urgent close by (a thief running past, a flag on the ground,
+ * a raider at home) can still pull a CPU off it. Each option gets a score
+ * from how much it matters, minus how far away it is, plus a little
+ * randomness (more for weaker CPUs) and a bonus for sticking with the plan.
  */
 function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
   const s = mapScale();
@@ -1609,7 +1886,7 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
   const near = (o: { x: number; z: number }) => Math.hypot(o.x - p.x, o.z - p.z);
   // In tens of meters at this map's size, so scores read the same on every map.
   const far = (o: { x: number; z: number }) => near(o) / (10 * s);
-  const shared = (o: { x: number; z: number }, max: number) => sk.coord === 0 || fewCloser(m, p, o, Math.max(1, Math.round(max * sk.coord / 3)));
+  const shared = (o: { x: number; z: number }, max: number) => sk.coord === 0 || fewCloser(m, p, o, Math.max(1, Math.round((max * sk.coord) / 3)));
   const opts: Option[] = [];
   const add = (tag: string, score: number, x: number, z: number) => opts.push({ tag, score, x, z });
 
@@ -1631,39 +1908,10 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
     return [best.x, best.z];
   }
 
-  // Reading the game: trailing late means push, leading late means hold.
-  const own = m.mode === "hoard" ? m.points[p.team] : m.scores[p.team];
-  const theirs = m.mode === "hoard" ? m.points[enemyTeam] : m.scores[enemyTeam];
-  const gap = m.mode === "hoard" ? (theirs - own) / 150 : (theirs - own) / 2;
-  const late = m.mode === "hoard" ? Math.max(own, theirs) / HOARD_TARGET : 1 - Math.min(1, m.timeLeft / 90);
-  const push = clamp(gap, -1, 1) * (0.4 + 0.6 * late) * sk.tactics;
-  const attack = p.role === "attack" || p.role === "medic";
-  const defend = p.role === "defend";
+  const job = p.job;
+  const enemies = m.players.filter((o) => o.team !== p.team && o.stun <= 0 && o.out <= 0);
 
-  const enemies = m.players.filter((o) => o.team !== p.team && o.stun <= 0);
-  const thieves = enemies.filter((o) => o.carrying >= 0 && m.flags[o.carrying].team === p.team);
-  for (const o of thieves) {
-    if (!shared(o, 3)) continue;
-    const [lx, lz] = lead(o);
-    add("chase", (defend ? 100 : 88) + (m.mode === "hoard" ? 8 : 0) - 5 * far(o), lx, lz);
-  }
-  for (const f of m.flags) {
-    if (f.state !== "dropped") continue;
-    if (f.team === p.team) {
-      if (shared(f, 2)) add("save", (defend ? 92 : 82) - 6 * far(f), f.x, f.z);
-    } else add("prize", 95 - 6 * far(f), f.x, f.z);
-  }
-
-  // Back off at one hit left and let it heal, near friends or a station.
-  if (sk.cautious && p.hp === 1 && countNear(m, enemyTeam, p.x, p.z, 12) > 0) {
-    let spot = { x: m.bases[p.team].x, z: m.bases[p.team].z };
-    let bestD = Infinity;
-    for (const b of m.bases) if (b.team === p.team && near(b) < bestD) [spot, bestD] = [b, near(b)];
-    for (const f of m.respawns) if (f.team === p.team && near(f) < bestD) [spot, bestD] = [f, near(f)];
-    add("retreat", 78, spot.x, spot.z);
-  }
-
-  // Steal: the nearest prize, or with tactics the base fewest guard.
+  // The steal target: the nearest prize, or with tactics the one fewest guard.
   let stealBest: Flag | undefined;
   let stealCost = Infinity;
   for (const f of m.flags) {
@@ -1677,62 +1925,100 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
       stealBest = f;
     }
   }
-  if (stealBest) add("steal", (attack ? 62 : 22) * (1 + 0.35 * push) - 2 * (stealCost / (10 * s)), stealBest.x, stealBest.z);
 
-  // Fight anyone close, especially a hurt one; defenders hunt raiders at home.
-  for (const o of enemies) {
-    const d = near(o);
-    if (o.carrying >= 0 || d > 22) continue;
-    const raider = defend && landOf(o.z) === p.team;
-    if (!shared(o, raider ? 1 : 2)) continue;
-    const [lx, lz] = lead(o);
-    add("fight", (raider ? 72 : 44) + (o.hp === 1 ? 10 : 0) - d * 1.2, lx, lz);
-  }
-  if (defend) {
-    for (const o of enemies) {
-      if (o.carrying >= 0 || landOf(o.z) !== p.team || near(o) > 30 * s || !shared(o, 1)) continue;
-      const [lx, lz] = lead(o);
-      add("raider", 66 - 3 * far(o), lx, lz);
+  // The job first.
+  if (job === "hunt") {
+    const o = m.players[p.jobTarget];
+    if (o && o.team !== p.team && o.carrying >= 0) {
+      const [x, z] = intercept(m, p, o, sk);
+      add("hunt", 84, x, z);
     }
+  } else if (job === "save") {
+    const f = m.flags[p.jobTarget];
+    if (f && f.team === p.team && f.state === "dropped") add("save", 86, f.x, f.z);
+  } else if (job === "escort") {
+    const c = m.players[p.jobTarget];
+    if (c && c.team === p.team && c.carrying >= 0) {
+      const [x, z] = escortSpot(m, p, c);
+      add("escort", 74, x, z);
+    }
+  } else if (job === "guard") {
+    const b = m.bases[p.jobTarget] ?? m.bases[p.team];
+    const [x, z] = patrolSpot(m, p, b);
+    add("guard", 64, x, z);
+  } else if (job === "raid") {
+    if (stealBest) {
+      const [x, z] = raidSpot(p, stealBest);
+      add("steal", 76 * (1 + 0.2 * push(m, p, sk)), x, z);
+      // Bombers clear the guards off a flag from above before anyone grabs it.
+      if (p.def.bomber) {
+        const guard = nearest(p, enemies.filter((o) => Math.hypot(o.x - stealBest!.x, o.z - stealBest!.z) < 10 * s), Infinity);
+        if (guard && near(stealBest) < 40 * s) add("bomb", 80, guard.x, guard.z);
+      }
+    }
+  }
+  if (job === "support" || opts.length === 0) {
+    const [x, z] = sweepSpot(m, p);
+    add("support", 56, x, z);
+  }
+
+  // A flag on the ground nearby: theirs to grab, ours to save.
+  for (const f of m.flags) {
+    if (f.state !== "dropped") continue;
+    if (f.team === p.team) {
+      if (near(f) < 18 * s && shared(f, 2)) add("save", 88 - 6 * far(f), f.x, f.z);
+    } else if (job === "raid" || near(f) < 25 * s) add("prize", 95 - 5 * far(f), f.x, f.z);
+  }
+  // A thief running past: anyone close gives chase.
+  for (const o of enemies) {
+    if (o.carrying < 0 || m.flags[o.carrying].team !== p.team || near(o) > 16 * s || !shared(o, 2)) continue;
+    const [lx, lz] = lead(o);
+    add("chase", (job === "guard" ? 94 : 86) - 5 * far(o), lx, lz);
+  }
+  // Anyone else close by: guards see off raiders, bodyguards stop chasers, the middle fights for ground.
+  const carrier = job === "escort" ? m.players[p.jobTarget] : undefined;
+  const post = job === "guard" ? (m.bases[p.jobTarget] ?? m.bases[p.team]) : undefined;
+  for (const o of enemies) {
+    if (o.carrying >= 0) continue;
+    const d = near(o);
+    let score = -Infinity;
+    if (post && Math.hypot(o.x - post.x, o.z - post.z) < 30 * s) score = 76 - 2 * far(o);
+    else if (carrier && carrier.carrying >= 0 && Math.hypot(o.x - carrier.x, o.z - carrier.z) < 14) score = 80 - d;
+    else if (d < 22) score = (job === "support" ? 62 : job === "raid" ? 40 : 34) + (o.hp === 1 ? 10 : 0) - d * 1.2;
+    if (score === -Infinity || !shared(o, 2)) continue;
+    // Too close to throw: step back to get a clear shot.
+    const [lx, lz] = d < 2.5 ? [p.x + ((p.x - o.x) / (d || 1)) * 6, p.z + ((p.z - o.z) / (d || 1)) * 6] : lead(o);
+    add("fight", score, lx, lz);
+  }
+  // Anyone close to the enemy flag may as well take it.
+  if (stealBest && job !== "raid" && job !== "hunt" && near(stealBest) < 15 * s) add("steal", 70 - 2 * far(stealBest), stealBest.x, stealBest.z);
+
+  // Back off at one hit left and let it heal, near friends or a station.
+  if (sk.cautious && p.hp === 1 && countNear(m, enemyTeam, p.x, p.z, 12) > 0) {
+    let spot = { x: m.bases[p.team].x, z: m.bases[p.team].z };
+    let bestD = Infinity;
+    for (const b of m.bases) if (b.team === p.team && near(b) < bestD) [spot, bestD] = [b, near(b)];
+    for (const f of m.respawns) if (f.team === p.team && near(f) < bestD) [spot, bestD] = [f, near(f)];
+    add("retreat", job === "hunt" || job === "save" ? 76 : 90, spot.x, spot.z);
   }
 
   if (!p.item) {
-    for (const st of m.stations) if (st.cd <= 0 && near(st) < 25 * s) add("station", 46 - 1.5 * (near(st) / s), st.x, st.z);
+    for (const st of m.stations) if (st.cd <= 0 && near(st) < 25 * s) add("station", (job === "support" ? 58 : 46) - 1.5 * (near(st) / s), st.x, st.z);
   }
   for (const f of m.respawns) {
-    if (f.team !== p.team && near(f) < 20 * s) add("unplant", 56 - 1.5 * (near(f) / s), f.x, f.z);
+    if (f.team !== p.team && near(f) < 20 * s) add("unplant", (job === "support" || job === "guard" ? 64 : 56) - 1.5 * (near(f) / s), f.x, f.z);
   }
 
-  // Escort a teammate carrying a flag home: run just ahead and clear the way.
-  if (!defend) {
-    for (const o of m.players) {
-      if (o.team !== p.team || o.carrying < 0 || o.stun > 0 || near(o) > 30 * s || !shared(o, 2)) continue;
-      const goal = nearestBase(m, p.team, o.x, o.z);
-      const hx = goal.x - o.x;
-      const hz = goal.z - o.z;
-      const hd = Math.hypot(hx, hz) || 1;
-      add("escort", 56 - 4 * far(o), o.x + (hx / hd) * 6, o.z + (hz / hd) * 6);
-    }
-  }
-
-  if (p.role === "medic") {
+  if (p.role === "medic" && (job === "raid" || job === "support")) {
     // Follow the teammate furthest into enemy ground, a little behind them.
     const enemyZ = m.bases[enemyTeam].z;
     let front: Player | undefined;
     for (const t of m.players) {
-      if (t.team !== p.team || t === p || t.out > 0 || t.role === "defend" || t.medic) continue;
+      if (t.team !== p.team || t === p || t.out > 0 || t.job === "guard" || t.medic) continue;
       if (!front || Math.abs(t.z - enemyZ) < Math.abs(front.z - enemyZ)) front = t;
     }
-    if (front) add("follow", 64, front.x, front.z - Math.sign(enemyZ) * 8 * s);
+    if (front) add("follow", 72, front.x, front.z - Math.sign(enemyZ) * 8 * s);
   }
-
-  // Each defender minds one base: stand guard in a line in front of it.
-  const ownBases = m.bases.filter((b) => b.team === p.team);
-  // Counted within the team and mirrored in x, so both sides post the same way.
-  const idx = p.id % (m.players.length / 2);
-  const post = ownBases[idx % ownBases.length];
-  const slot = ((Math.floor(idx / ownBases.length) % 5) - 2) * (p.team === 0 ? 1 : -1);
-  add("guard", (defend ? 52 : 12) * (1 - 0.4 * push), post.x + slot * 5 * s, post.z - Math.sign(post.z) * 14 * s);
 
   let best: Option | undefined;
   let bestScore = -Infinity;
@@ -1746,6 +2032,10 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
   if (!best) return [0, m.bases[enemyTeam].z * 0.6];
   p.goalTag = best.tag;
   return [best.x, best.z];
+}
+
+function push(m: Match, p: Player, sk: Skill): number {
+  return pushFor(m, p.team, sk);
 }
 
 function countNear(m: Match, team: Team, x: number, z: number, r: number): number {

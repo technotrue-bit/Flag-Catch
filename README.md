@@ -27,6 +27,31 @@ pins.
 
 Land, water and air animals each rule different ground.
 
+## Rival and teammate animals
+
+Every CPU animal plays like a real player with a job that suits it, shown on
+its pick tile:
+
+- Raiders (Dash Panther, Surf Penguin, Jet Shark, Glide Fish, Night Bat)
+  steal flags and run them home, fanning out to come at a base from the
+  left, the middle and the right.
+- Hunters (Turbo Wolf, Moto Bird, Pogo Frog) run down thieves, cutting them
+  off on their way home instead of trailing behind.
+- Guardians (Skate Mammoth, Ski Croc) walk a patrol ring round their base
+  and bodyguard their own carriers.
+- The Sky Eagle bombs the guards off a flag from above.
+- All rounders (Rally Lion, Bowl Goldfish) fill whatever the team is short of.
+
+Every second or so each team shares out the jobs: two or three hunters per
+thief, someone to touch a dropped flag home, bodyguards for each carrier,
+guards while the base still has a flag, and raiders for the rest. A team
+that's behind late sends more forward; one that's ahead pulls back to guard.
+Both teams plan by the same rules, so only skill (Easy, Medium, Hard) tells
+them apart.
+
+In Capture and Playful a tie when the clock runs out goes to overtime (up to
+two minutes), and the next catch wins.
+
 ## Worlds
 
 Eight worlds, picked with the arrows on the start screen. Each one reshapes

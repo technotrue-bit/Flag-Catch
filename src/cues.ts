@@ -23,6 +23,7 @@ export type Cue =
   | "win"
   | "lose"
   | "draw"
+  | "overtime"
   | "best"
   | "unlock";
 
@@ -55,6 +56,8 @@ export const TUNES: Record<Cue, readonly ChimeNote[]> = {
   // A loss still ends on a warm note.
   lose: [n(84, 0, 0.3), n(81, 0.2, 0.3), n(77, 0.4, 0.8)],
   draw: [n(81, 0, 0.25), n(84, 0.16, 0.25), n(81, 0.32, 0.6)],
+  // Overtime: the ding dong again, then a bright call to go.
+  overtime: [n(84, 0, 0.4), n(77, 0.22, 0.4), n(84, 0.5, 0.16), n(89, 0.62, 0.5)],
   best: [n(89, 0, 0.2, "pluck"), n(93, 0.07, 0.2, "pluck"), n(96, 0.14, 0.2, "pluck"), n(101, 0.21, 0.6)],
   unlock: [n(84, 0, 0.18), n(88, 0.06, 0.18), n(91, 0.12, 0.18), n(96, 0.18, 0.5), n(100, 0.3, 0.6, "pluck")],
 };
@@ -76,6 +79,7 @@ export const PRIORITY: Record<Cue, number> = {
   win: 5,
   lose: 5,
   draw: 5,
+  overtime: 4,
   best: 4,
   unlock: 4,
 };
