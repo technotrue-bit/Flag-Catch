@@ -9,7 +9,9 @@ import type { Controls } from "./input";
 import { FLAG_FREE, ME_GLOW, PALETTE, TEAMS } from "./palette";
 import { music, sfx } from "./audio";
 import { type Difficulty, HOARD_TARGET, ITEMS, type ItemKind, type Match, type Mode, nearestBase, tune } from "./sim";
-import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, groundHeight, landOf, onBridge } from "./terrain";
+import { type Award, type Progress, costOf, nextUnlock } from "./progress";
+import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, currentWorld, groundHeight, landOf, onBridge } from "./terrain";
+import { WORLDS, type WorldDef, worldById } from "./worlds";
 
 const MAP_W = 156;
 const MAP_H = Math.round((MAP_W * WORLD_HALF_X) / WORLD_HALF_Z);
@@ -127,16 +129,42 @@ const CSS = `
 .fc-card .small{margin-top:6px;display:inline-block;padding:6px 14px;border-radius:999px;background:rgba(43,35,64,.1);font-weight:800;font-size:13px}
 .fc-tune label{display:flex;justify-content:space-between;gap:8px;align-items:center}
 .fc-tune input{width:110px}
+.fc-pts{flex:none;padding:3px 12px;border-radius:999px;background:rgba(43,35,64,.55);color:#fff;font-size:12px;font-weight:900;letter-spacing:.3px}
+.fc-pts b{color:#ffd166}
+.fc-world{display:flex;align-items:center;gap:4px;padding:3px;border-radius:999px;background:rgba(43,35,64,.1)}
+.fc-world .arw{pointer-events:auto;width:34px;height:40px;display:flex;align-items:center;justify-content:center;border-radius:999px;font-weight:900;font-size:20px;color:${PALETTE.ink};cursor:pointer;-webkit-tap-highlight-color:transparent}
+.fc-world .name{min-width:132px;min-height:40px;padding:3px 10px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:999px;background:#fffaf0;border:3px solid ${PALETTE.ink};font-weight:900;font-size:15px;line-height:1.05;text-align:center}
+.fc-world .name small{display:block;margin-top:1px;font-size:9px;font-weight:800;letter-spacing:.3px;color:rgba(43,35,64,.6)}
+.fc-world .name.locked{background:#e9e4ee;color:rgba(43,35,64,.55)}
+.fc-mode.locked,.fc-size.locked{opacity:.45}
+.fc-tile{position:relative}
+.fc-tile.locked{background:rgba(233,228,238,.94)}
+.fc-tile.locked>*{opacity:.4}
+.fc-tile .lock{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);opacity:1!important;padding:5px 10px;border-radius:999px;background:${PALETTE.ink};color:#fff;font-size:11px;font-weight:900;white-space:nowrap}
+.fc-play.locked{background:#9a93a8}
+.shake{animation:fcshake .35s}
+@keyframes fcshake{20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(3px)}}
+.fc-earn{margin:6px 0 0;font-weight:900;font-size:15px}
+.fc-earn b{color:#e8a700}
+.fc-new{display:inline-block;margin:4px 3px 0;padding:3px 10px;border-radius:999px;background:#7ee36b;color:#fff;font-size:12px;font-weight:900;-webkit-text-stroke:0;box-shadow:0 2px 0 rgba(43,35,64,.2)}
+@media (max-height:420px){.fc-world .arw{height:36px;width:30px}.fc-world .name{min-height:36px;min-width:120px;font-size:14px}}
 `;
 
 export interface Hud {
   update(m: Match, controls: Controls, camYaw: number): void;
   call(text: string, color?: string): void;
   /** Pick your animal, mode and team size. onPick fires on every tap so the 3D preview can swap. */
-  showSelect(current: string, setup: MatchSetup, onPick: (id: string) => void, onPlay: (setup: MatchSetup) => void): void;
+  showSelect(
+    current: string,
+    setup: MatchSetup,
+    progress: SelectInfo,
+    onPick: (id: string) => void,
+    onPlay: (setup: MatchSetup) => void,
+    onWorld: (id: string) => void,
+  ): void;
   /** 3, 2, 1, GO! then onDone. */
   countdown(onDone: () => void): void;
-  showResults(m: Match, stats: MatchStats, onAgain: () => void, onChange: () => void): void;
+  showResults(m: Match, stats: MatchStats, award: Award | null, onAgain: () => void, onChange: () => void): void;
   /** True while the settings card is open; the match waits. */
   readonly paused: boolean;
   /** Camera distance multiplier from the Zoom setting (smaller is closer). */
@@ -172,7 +200,23 @@ export interface MatchSetup {
   size: number;
   medic: boolean;
   difficulty: Difficulty;
+  world: string;
 }
+
+/** Your points and what they have opened, for the start screen. */
+export interface SelectInfo {
+  progress: Progress;
+  open: Set<string>;
+}
+
+/** A display name for anything on the unlock track. */
+export function unlockName(id: string): string {
+  if (ANIMALS[id]) return ANIMALS[id].name;
+  if (WORLDS.some((w) => w.id === id)) return worldById(id).name;
+  return id === "playful" ? "Playful mode" : id;
+}
+
+const fmt = (n: number) => n.toLocaleString("en-US");
 
 export function createHud(controls: Controls): Hud {
   const style = document.createElement("style");
@@ -201,6 +245,7 @@ export function createHud(controls: Controls): Hud {
   // Redrawn whenever a match on another map starts.
   let mapBg = drawMapBackground(MAP_W * dpr, MAP_H * dpr);
   let mapFor: MapDef | null = null;
+  let mapWorld: WorldDef | null = null;
 
   const zone = el("div", "fc-zone", root);
   let lastLand = -2;
@@ -345,7 +390,7 @@ export function createHud(controls: Controls): Hud {
       scoreA.textContent = String(m.scores[0]);
       scoreB.textContent = String(m.scores[1]);
       // A score pill pops when it goes up (in Capture; Hoard ticks every second).
-      if (m.mode === "capture") {
+      if (m.mode !== "hoard") {
         if (m.scores[0] > shownScores[0]) bump(teamA);
         if (m.scores[1] > shownScores[1]) bump(teamB);
       }
@@ -368,8 +413,9 @@ export function createHud(controls: Controls): Hud {
       }
 
       stick.style.display = knob.style.display = c.stick.active ? "block" : "none";
-      if (m.map !== mapFor) {
+      if (m.map !== mapFor || currentWorld() !== mapWorld) {
         mapFor = m.map;
+        mapWorld = currentWorld();
         mapBg = drawMapBackground(MAP_W * dpr, MAP_H * dpr);
       }
       if (c.stick.active) {
@@ -476,8 +522,9 @@ export function createHud(controls: Controls): Hud {
       call.classList.add("show");
       callTimer = 0.9;
     },
-    showSelect(current, chosen, onPick, onPlay) {
-      let { mode, size, medic, difficulty } = chosen;
+    showSelect(current, chosen, info, onPick, onPlay, onWorld) {
+      let { mode, size, medic, difficulty, world } = chosen;
+      const { progress, open } = info;
       root.classList.add("fc-menu");
       const sel = el("div", "fc-sel", root);
       const title = el("h2", "fc-logo", sel);
@@ -485,6 +532,11 @@ export function createHud(controls: Controls): Hud {
       el("span", "flag", title);
       el("span", "b", title).textContent = "CATCH";
       el("small", "", title).textContent = "Pick your animal, steal their flags and bring them home!";
+      // Your points, and what they open next.
+      const pts = el("div", "fc-pts", sel);
+      const next = nextUnlock(progress);
+      const nextIds = next ? [...(next.animals ?? []), ...(next.worlds ?? []), ...(next.modes ?? [])].filter((id) => !open.has(id)) : [];
+      pts.innerHTML = `<b>★ ${fmt(progress.points)}</b> POINTS` + (next && nextIds.length ? ` · NEXT: ${nextIds.map(unlockName).join(", ").toUpperCase()} AT ${fmt(next.at)}` : "");
       // On an iPhone in Safari, point the way to full screen play.
       const nav = navigator as Navigator & { standalone?: boolean };
       if (/iPhone|iPad|iPod/.test(navigator.userAgent) && nav.standalone === false && !tipSeen()) {
@@ -503,6 +555,33 @@ export function createHud(controls: Controls): Hud {
       // Mode and team size share one panel above the animals, so nothing overlaps.
       const setup = el("div", "fc-setup", sel);
       setup.addEventListener("pointerdown", (e) => e.stopPropagation());
+      // The world: step through all eight; locked ones show what opens them.
+      const worldGroup = el("div", "fc-group", setup);
+      el("label", "", worldGroup).textContent = "WORLD";
+      const worldBox = el("div", "fc-world", worldGroup);
+      const prevW = el("div", "arw", worldBox);
+      prevW.textContent = "‹";
+      const worldName = el("div", "name", worldBox);
+      const nextW = el("div", "arw", worldBox);
+      nextW.textContent = "›";
+      const showWorld = () => {
+        const w = worldById(world);
+        const locked = !open.has(world);
+        worldName.textContent = w.name.toUpperCase();
+        worldName.classList.toggle("locked", locked);
+        const best = progress.best[world];
+        el("small", "", worldName).textContent = locked ? `LOCKED · ${fmt(costOf(world))} PTS` : best ? `${w.blurb.toUpperCase()} · BEST ${best}` : w.blurb.toUpperCase();
+        refreshPlay();
+      };
+      const stepWorld = (d: number) => {
+        const i = WORLDS.findIndex((w) => w.id === world);
+        world = WORLDS[(i + d + WORLDS.length) % WORLDS.length].id;
+        showWorld();
+        sfx.pick();
+        onWorld(world);
+      };
+      prevW.addEventListener("click", () => stepWorld(-1));
+      nextW.addEventListener("click", () => stepWorld(1));
       const modeGroup = el("div", "fc-group", setup);
       el("label", "", modeGroup).textContent = "MODE";
       const modes = el("div", "fc-seg", modeGroup);
@@ -510,12 +589,18 @@ export function createHud(controls: Controls): Hud {
       const modeInfo: Array<[Mode, string, string]> = [
         ["capture", "CAPTURE", "Most steals wins"],
         ["hoard", "HOARD", `First to ${HOARD_TARGET} points`],
+        ["playful", "PLAYFUL", "One flag each"],
       ];
       for (const [id, name, info] of modeInfo) {
-        const b = el("div", "fc-mode", modes);
+        const locked = !open.has(id);
+        const b = el("div", locked ? "fc-mode locked" : "fc-mode", modes);
         b.textContent = name;
-        el("small", "", b).textContent = info;
+        el("small", "", b).textContent = locked ? `${fmt(costOf(id))} PTS` : info;
         b.addEventListener("click", () => {
+          if (locked) {
+            nope(b);
+            return;
+          }
           mode = id;
           modeBtns.forEach((n, k) => n.classList.toggle("on", k === mode));
           sfx.pick();
@@ -584,28 +669,45 @@ export function createHud(controls: Controls): Hud {
       const row = el("div", "fc-row", sel);
       const tiles = new Map<string, HTMLElement>();
       const pick = (id: string) => {
+        if (!open.has(id)) {
+          nope(tiles.get(id)!);
+          return;
+        }
         current = id;
         tiles.forEach((t, key) => t.classList.toggle("on", key === id));
         onPick(id);
       };
-      // Seven tiles don't fit a phone, so they scroll sideways; a tap (not a swipe) picks.
+      // The tiles don't fit a phone, so they scroll sideways; a tap (not a swipe) picks.
       const strip = el("div", "fc-tiles", row);
       strip.addEventListener("pointerdown", (e) => e.stopPropagation());
       for (const id of ANIMAL_IDS) {
         const tile = animalTile(ANIMALS[id], strip);
+        if (!open.has(id)) {
+          tile.classList.add("locked");
+          el("div", "lock", tile).textContent = `LOCKED · ${fmt(costOf(id))} PTS`;
+        }
         tile.addEventListener("click", () => pick(id));
         tiles.set(id, tile);
       }
       tiles.get(current)?.scrollIntoView({ inline: "center", block: "nearest" });
       const play = el("div", "fc-play", row);
       play.textContent = "PLAY";
+      function refreshPlay() {
+        play.classList.toggle("locked", !open.has(world));
+      }
       play.addEventListener("pointerdown", (e) => {
         e.stopPropagation();
+        if (!open.has(world)) {
+          nope(worldName);
+          nope(play);
+          return;
+        }
         sel.remove();
         root.classList.remove("fc-menu");
-        onPlay({ mode, size, medic, difficulty });
+        onPlay({ mode, size, medic, difficulty, world });
       });
-      pick(current);
+      showWorld();
+      pick(open.has(current) ? current : "lion");
     },
     countdown(onDone) {
       hintTimer = 8;
@@ -630,7 +732,7 @@ export function createHud(controls: Controls): Hud {
       };
       next();
     },
-    showResults(m, stats, onAgain, onChange) {
+    showResults(m, stats, award, onAgain, onChange) {
       const card = el("div", "fc-card fc-results", root);
       const box = el("div", "box", card);
       const [a, b] = m.scores;
@@ -662,6 +764,16 @@ export function createHud(controls: Controls): Hud {
       const mvp = m.players.reduce((best, p) => (p.score > best.score ? p : best), m.players[0]);
       el("p", "", box).textContent =
         mvp.id === 0 ? "You were the MVP!" : `MVP: ${mvp.def.name} on ${TEAMS[mvp.team].name}, ${mvp.score} points`;
+      // What this match paid, a new best and anything it opened.
+      if (award) {
+        const earn = el("div", "fc-earn", box);
+        earn.innerHTML = `<b>+${fmt(award.gained)}</b> POINTS` + (award.record ? ` · NEW BEST ON ${worldById(m.world.id).name.toUpperCase()}!` : "");
+        if (award.opened.length) {
+          const opened = el("div", "", box);
+          for (const id of award.opened) el("span", "fc-new", opened).textContent = `NEW: ${unlockName(id).toUpperCase()}`;
+          sfx.bank(0, 1);
+        }
+      }
       const btns = el("div", "row2", box);
       const again = el("div", "go", btns);
       again.textContent = "PLAY AGAIN";
@@ -690,6 +802,14 @@ function tipSeen(): boolean {
   } catch {
     return false;
   }
+}
+
+/** A little shake and buzz for a tap on something still locked. */
+function nope(n: HTMLElement): void {
+  n.classList.remove("shake");
+  void n.offsetWidth;
+  n.classList.add("shake");
+  sfx.fizzle(0, 0.6);
 }
 
 function el(tag: string, cls: string, parent?: HTMLElement): HTMLElement {
@@ -739,13 +859,18 @@ function drawMapBackground(w: number, h: number): HTMLCanvasElement {
   c.height = h;
   const ctx = c.getContext("2d")!;
   const img = ctx.createImageData(w, h);
+  const P = currentWorld().palette;
+  const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const grass = rgb(P.grassLow);
+  const sand = rgb(P.sand);
+  const sea = rgb(P.waterShallow);
   for (let py = 0; py < h; py++) {
     for (let px = 0; px < w; px++) {
       const z = (0.5 - px / w) * 2 * WORLD_HALF_Z;
       const x = (py / h - 0.5) * 2 * WORLD_HALF_X;
       const i = (py * w + px) * 4;
       const g = groundHeight(x, z);
-      let [r, gr, b] = onBridge(x, z) ? [201, 154, 104] : g > 0.9 ? [126, 200, 100] : g > 0 ? [240, 218, 160] : [95, 200, 214];
+      let [r, gr, b] = onBridge(x, z) ? [201, 154, 104] : g > 0.9 ? grass : g > 0 ? sand : sea;
       const land = landOf(z);
       if (land >= 0 && g > 0) {
         // Tint each homeland toward its team, like the ground does.

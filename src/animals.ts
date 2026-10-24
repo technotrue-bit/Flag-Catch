@@ -32,6 +32,8 @@ export interface AnimalDef {
   toughness: number;
   /** One line for the pick screen. */
   perk: string;
+  /** How well it holds the road on ice; the default slides. */
+  iceGrip?: number;
 }
 
 const BASE = {
@@ -64,7 +66,8 @@ export const ANIMALS: Record<string, AnimalDef> = {
     turnRate: 3.8,
     jumpSpeed: 9.5,
     dive: true,
-    perk: "Fastest swimmer, dives under shots",
+    iceGrip: 7,
+    perk: "Swift swimmer, dives, grips on ice",
   }),
   croc: animal({
     id: "croc",
@@ -115,6 +118,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
     turnRate: 2.9,
     jumpSpeed: 8,
     toughness: 0.5,
+    iceGrip: 4,
     perk: "Heavy, shrugs off pops fast",
   }),
   wolf: animal({
@@ -131,6 +135,83 @@ export const ANIMALS: Record<string, AnimalDef> = {
     shotLift: 0.35,
     shotCooldown: 0.55,
     perk: "Fastest car, rapid long shots",
+  }),
+  shark: animal({
+    id: "shark",
+    name: "Jet Shark",
+    cls: "water",
+    landSpeed: 5.5,
+    waterSpeed: 18,
+    airSpeed: 8.5,
+    turnRate: 3.0,
+    jumpSpeed: 9,
+    dive: true,
+    toughness: 0.85,
+    perk: "Fastest in the water, slow on land",
+  }),
+  goldfish: animal({
+    id: "goldfish",
+    name: "Bowl Goldfish",
+    cls: "water",
+    landSpeed: 12,
+    waterSpeed: 12.5,
+    airSpeed: 9,
+    turnRate: 4.6,
+    jumpSpeed: 9.5,
+    floatTime: 0.7,
+    perk: "Rolls in a bowl: as good on land as in water",
+  }),
+  panther: animal({
+    id: "panther",
+    name: "Dash Panther",
+    cls: "land",
+    landSpeed: 16,
+    waterSpeed: 4.5,
+    turnRate: 4.5,
+    jumpSpeed: 9.5,
+    perk: "Fast on land with razor sharp turns",
+  }),
+  flyfish: animal({
+    id: "flyfish",
+    name: "Glide Fish",
+    cls: "air",
+    landSpeed: 7,
+    waterSpeed: 13.5,
+    airSpeed: 11.5,
+    turnRate: 3.3,
+    jumpSpeed: 10,
+    floatTime: 2.6,
+    climb: 20,
+    dive: true,
+    perk: "Swims, dives and flies",
+  }),
+  bat: animal({
+    id: "bat",
+    name: "Night Bat",
+    cls: "air",
+    landSpeed: 9,
+    waterSpeed: 6,
+    airSpeed: 14,
+    turnRate: 3.6,
+    jumpSpeed: 8.5,
+    floatTime: 3.6,
+    climb: 30,
+    shotCooldown: 0.7,
+    toughness: 1.2,
+    perk: "Fastest flyer, quick throws, fragile",
+  }),
+  frog: animal({
+    id: "frog",
+    name: "Pogo Frog",
+    cls: "water",
+    landSpeed: 11.5,
+    waterSpeed: 13,
+    airSpeed: 10,
+    turnRate: 3.6,
+    jumpSpeed: 14,
+    floatTime: 0.9,
+    dive: true,
+    perk: "Giant pogo jumps, dives in water",
   }),
 };
 

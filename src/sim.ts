@@ -14,14 +14,17 @@ import {
   fromLayout,
   groundHeight,
   inWorld,
+  isLava,
   isWater,
   landOf,
   mapFor,
   mapScale,
   outposts,
   setMap,
+  setWorld,
   surfaceHeight,
 } from "./terrain";
+import { type WorldDef, worldById } from "./worlds";
 
 export const STEP = 1 / 60;
 
@@ -80,6 +83,16 @@ export const tune = {
   medicFlags: 2,
   /** Enemies touching a respawn flag knock it down. */
   respawnRadius: 1.8,
+  /** Frost Floe: how fast your slide turns to follow you (higher grips more). */
+  iceGrip: 1.6,
+  /** Lava Loop: a burn's cooldown, hop and shove back toward land. */
+  burnCooldown: 1.1,
+  burnLift: 9,
+  burnPush: 13,
+  /** Storm Spire: wind strength, lightning's warning and how wide it hits. */
+  windSpeed: 4.5,
+  strikeWarn: 1.2,
+  strikeRadius: 3.5,
 };
 
 /**
@@ -265,6 +278,11 @@ export interface Player {
   thinkCd: number;
   goalX: number;
   goalZ: number;
+  /** The way the body is actually moving; lags the heading on ice. */
+  sx: number;
+  sz: number;
+  /** Lava burns at most this often. */
+  burnCd: number;
 }
 
 /**
@@ -342,6 +360,9 @@ export type SimEvent =
   | { kind: "respawn"; x: number; y: number; z: number; player: number }
   | { kind: "plant"; x: number; z: number; player: number; flag: number }
   | { kind: "unplant"; x: number; z: number; flag: number; by: number }
+  | { kind: "strike_warn"; x: number; z: number; t: number }
+  | { kind: "strike"; x: number; y: number; z: number }
+  | { kind: "burn"; x: number; y: number; z: number; player: number }
   | { kind: "end"; winner: Team | -1 };
 
 export interface Base {
@@ -358,7 +379,7 @@ export interface Base {
  * Hoard: every flag sitting in your base earns points over time, and the
  * first team to HOARD_TARGET wins; stealing shifts who earns faster.
  */
-export type Mode = "capture" | "hoard";
+export type Mode = "capture" | "hoard" | "playful";
 export const HOARD_TARGET = 1000;
 /**
  * Points per second each flag in your base earns in Hoard, for a match with
@@ -367,9 +388,23 @@ export const HOARD_TARGET = 1000;
  */
 export const HOARD_RATE = 1;
 
+/** Lightning about to land on Storm Spire. */
+export interface Strike {
+  x: number;
+  z: number;
+  /** Seconds until it lands. */
+  t: number;
+}
+
 export interface Match {
   mode: Mode;
   map: MapDef;
+  world: WorldDef;
+  /** Storm Spire's wind, in meters per second. */
+  wind: [number, number];
+  strikes: Strike[];
+  nextStrike: number;
+  strikeTeam: Team;
   /** Carry a flag within this of your base center to bank it. */
   baseRadius: number;
   hoardRate: number;
@@ -413,12 +448,18 @@ export interface MatchOptions {
   humanMedic?: boolean;
   /** Sets the rival team's CPUs; teammates play Medium. Defaults to Medium. */
   difficulty?: Difficulty;
+  /** Which world; defaults to Home Isle. */
+  world?: string;
 }
 
 export function createMatch(opts: MatchOptions): Match {
   const rng = mulberry32(opts.seed);
   const map = opts.map ?? mapFor(opts.perTeam);
+  const world = worldById(opts.world ?? "home");
+  setWorld(world);
   setMap(map);
+  // Playful mode plays for one flag a side.
+  const flagsPerTeam = opts.mode === "playful" ? 1 : opts.flagsPerTeam;
   const bases: Base[] = [
     { id: 0, team: 0, x: 0, z: BASE_Z, main: true },
     { id: 1, team: 1, x: 0, z: -BASE_Z, main: true },
@@ -426,10 +467,13 @@ export function createMatch(opts: MatchOptions): Match {
   ];
   const players: Player[] = [];
   const ids = Object.keys(ANIMALS);
+  // Each CPU slot gets the same animal on both teams, so the sides stay even.
+  const picks = Array.from({ length: opts.perTeam }, () => ids[Math.floor(rng() * ids.length)]);
   for (let team = 0 as Team; team <= 1; team = (team + 1) as Team) {
     for (let i = 0; i < opts.perTeam; i++) {
       const human = team === 0 && i === 0;
-      const def = human ? ANIMALS[opts.humanAnimal] ?? ANIMALS.lion : ANIMALS[ids[Math.floor(rng() * ids.length)]];
+      // Your rival in slot 0 gets your animal, so neither side has the edge.
+      const def = human || (team === 1 && i === 0) ? ANIMALS[opts.humanAnimal] ?? ANIMALS.lion : ANIMALS[picks[i]];
       const b = bases[team];
       // A sunflower spiral around the base, so a big team starts spread out.
       const a = i * 2.39996;
@@ -450,9 +494,9 @@ export function createMatch(opts: MatchOptions): Match {
   for (const team of [0, 1] as const) {
     // Half the flags at the main base, the rest shared among the outposts.
     const own = bases.filter((b) => b.team === team);
-    const atMain = own.length > 1 ? Math.ceil(opts.flagsPerTeam / 2) : opts.flagsPerTeam;
+    const atMain = own.length > 1 ? Math.ceil(flagsPerTeam / 2) : flagsPerTeam;
     const used = new Map<number, number>();
-    for (let i = 0; i < opts.flagsPerTeam; i++) {
+    for (let i = 0; i < flagsPerTeam; i++) {
       const b = i < atMain ? own[0] : own[1 + ((i - atMain) % (own.length - 1))];
       const slot = used.get(b.id) ?? 0;
       used.set(b.id, slot + 1);
@@ -468,8 +512,13 @@ export function createMatch(opts: MatchOptions): Match {
   return {
     rng,
     map,
+    world,
+    wind: [0, 0],
+    strikes: [],
+    nextStrike: 7,
+    strikeTeam: 0,
     baseRadius: map.baseRadius,
-    hoardRate: (HOARD_RATE * 5) / Math.max(1, opts.flagsPerTeam),
+    hoardRate: (HOARD_RATE * 5) / Math.max(1, flagsPerTeam),
     aggro: Math.min(1, Math.sqrt(8 / opts.perTeam)),
     skill: [SKILLS.medium, rivalSkill(opts.difficulty ?? "medium", opts.perTeam)],
     difficulty: opts.difficulty ?? "medium",
@@ -539,6 +588,9 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     thinkCd: 0,
     goalX: x,
     goalZ: z,
+    sx: 0,
+    sz: 0,
+    burnCd: 0,
   };
 }
 
@@ -567,6 +619,7 @@ export function step(m: Match, human: Input): void {
     movePlayer(m, p, input);
   }
   stepFires(m);
+  if (m.world.storm) stepStorm(m);
   stepStars(m);
   stepStations(m);
   stepRespawns(m);
@@ -640,8 +693,27 @@ function movePlayer(m: Match, p: Player, input: Input): void {
   p.kx *= kDecay;
   p.kz *= kDecay;
 
-  let nx = p.x + (Math.sin(p.heading) * p.speed + p.kx) * STEP;
-  let nz = p.z + (Math.cos(p.heading) * p.speed + p.kz) * STEP;
+  // Where you are heading. On ice the body only drifts round to it slowly.
+  const wantX = Math.sin(p.heading) * p.speed;
+  const wantZ = Math.cos(p.heading) * p.speed;
+  if (m.world.ice && p.medium === "land" && p.onSurface) {
+    const grip = 1 - Math.exp(-(p.def.iceGrip ?? tune.iceGrip) * STEP);
+    p.sx += (wantX - p.sx) * grip;
+    p.sz += (wantZ - p.sz) * grip;
+  } else {
+    p.sx = wantX;
+    p.sz = wantZ;
+  }
+  let vx = p.sx + p.kx;
+  let vz = p.sz + p.kz;
+  if (m.world.storm) {
+    // The wind shoves flyers about, and walkers a little.
+    const w = p.medium === "air" ? 1 : 0.3;
+    vx += m.wind[0] * w;
+    vz += m.wind[1] * w;
+  }
+  let nx = p.x + vx * STEP;
+  let nz = p.z + vz * STEP;
   if (!inWorld(nx, nz)) {
     nx = clamp(nx, -WORLD_HALF_X, WORLD_HALF_X);
     nz = clamp(nz, -WORLD_HALF_Z, WORLD_HALF_Z);
@@ -698,11 +770,82 @@ function movePlayer(m: Match, p: Player, input: Input): void {
     p.onSurface = false;
   }
   p.medium = !p.onSurface && p.y - surf > 1.2 ? "air" : water ? "water" : "land";
-  stepDive(m, p, !stunned && !!input.dive && water && p.onSurface);
+  const lava = p.medium === "water" && p.onSurface && isLava(p.x, p.z);
+  p.burnCd = Math.max(0, p.burnCd - STEP);
+  if (lava && p.burnCd <= 0) burn(m, p);
+  stepDive(m, p, !stunned && !!input.dive && water && !lava && p.onSurface);
 
   if (!stunned && !p.diving && input.throwPressed && p.throwCd <= 0) throwFire(m, p);
   if (!stunned && input.useItem && p.item) useItem(m, p);
   if (!stunned && input.plant && p.medic) plantRespawn(m, p);
+}
+
+/** Lava stings: one hit, and a hop back toward the nearest dry ground. */
+function burn(m: Match, p: Player): void {
+  p.burnCd = tune.burnCooldown;
+  let best: [number, number] = [0, 0];
+  let bestD = Infinity;
+  for (let r = 3; r <= 24 && bestD === Infinity; r += 3) {
+    for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * Math.PI * 2;
+      const dx = Math.cos(a) * r;
+      const dz = Math.sin(a) * r;
+      if (!isWater(p.x + dx, p.z + dz) && r < bestD) {
+        bestD = r;
+        best = [dx, dz];
+      }
+    }
+  }
+  m.events.push({ kind: "burn", x: p.x, y: p.y, z: p.z, player: p.id });
+  const [dx, dz] = bestD === Infinity ? [-p.x, Math.sign(p.team === 0 ? 1 : -1) * 10] : best;
+  const len = Math.hypot(dx, dz) || 1;
+  p.diving = false;
+  // Even a shield doesn't stop lava pushing you out, but it saves the hit.
+  if (!protectedFrom(p)) pop(m, p, -1, dx, dz);
+  if (p.out > 0) return;
+  p.vy = tune.burnLift;
+  p.onSurface = false;
+  p.kx = (dx / len) * tune.burnPush;
+  p.kz = (dz / len) * tune.burnPush;
+  p.speed *= 0.3;
+}
+
+/**
+ * Storm Spire: the wind swings once round the compass every 40 seconds,
+ * and lightning lands near each team in turn after a warning glow.
+ */
+function stepStorm(m: Match): void {
+  const a = (m.time / 40) * Math.PI * 2;
+  const gust = tune.windSpeed * (0.75 + 0.25 * Math.sin(m.time * 0.9));
+  m.wind[0] = Math.sin(a) * gust;
+  m.wind[1] = Math.cos(a) * gust;
+  m.nextStrike -= STEP;
+  if (m.nextStrike <= 0) {
+    m.nextStrike = 6 + m.rng() * 3;
+    const team = m.strikeTeam;
+    m.strikeTeam = team === 0 ? 1 : 0;
+    const pool = m.players.filter((p) => p.team === team && p.out <= 0);
+    if (pool.length > 0) {
+      const o = pool[Math.floor(m.rng() * pool.length)];
+      const ang = m.rng() * Math.PI * 2;
+      const off = 1 + m.rng() * 4;
+      const s: Strike = { x: o.x + Math.cos(ang) * off, z: o.z + Math.sin(ang) * off, t: tune.strikeWarn };
+      m.strikes.push(s);
+      m.events.push({ kind: "strike_warn", x: s.x, z: s.z, t: s.t });
+    }
+  }
+  for (let i = m.strikes.length - 1; i >= 0; i--) {
+    const s = m.strikes[i];
+    s.t -= STEP;
+    if (s.t > 0) continue;
+    m.strikes.splice(i, 1);
+    m.events.push({ kind: "strike", x: s.x, y: surfaceHeight(s.x, s.z), z: s.z });
+    for (const p of m.turn) {
+      const dx = p.x - s.x;
+      const dz = p.z - s.z;
+      if (p.out <= 0 && dx * dx + dz * dz < tune.strikeRadius ** 2) pop(m, p, -1, dx || 1, dz);
+    }
+  }
 }
 
 function stepDive(m: Match, p: Player, want: boolean): void {
@@ -1178,8 +1321,9 @@ function stepFlags(m: Match): void {
         c.carrying = -1;
         c.score += 25;
         // In Hoard the flag pays out by sitting in the base instead.
-        if (m.mode === "capture") m.scores[c.team] += 1;
-        placeHome(m, flag, base);
+        if (m.mode !== "hoard") m.scores[c.team] += 1;
+        // In Playful the one flag goes straight back to its owners' base.
+        placeHome(m, flag, m.mode === "playful" ? m.bases[flag.team] : base);
         m.events.push({ kind: "bank", x: base.x, y: surfaceHeight(base.x, base.z), z: base.z, player: c.id, team: c.team });
       }
       continue;
@@ -1249,7 +1393,8 @@ function cpuInput(m: Match, p: Player): Input {
   if (p.thinkCd <= 0) {
     p.thinkCd = sk.react * (0.8 + m.rng() * 0.4);
     const [gx, gz] = cpuGoal(m, p, sk);
-    [p.goalX, p.goalZ] = p.def.cls === "land" ? viaBridge(p, gx, gz) : [gx, gz];
+    const bridges = p.def.cls === "land" || (m.world.liquid === "lava" && p.def.cls !== "air");
+    [p.goalX, p.goalZ] = bridges ? viaBridge(p, gx, gz) : [gx, gz];
   }
   let dx = p.goalX - p.x;
   let dz = p.goalZ - p.z;
@@ -1311,6 +1456,8 @@ function cpuInput(m: Match, p: Player): Input {
     p.dodgeJump -= STEP;
     jump = true;
   }
+  // Lava Loop: steer round the lava rather than into it.
+  if (m.world.liquid === "lava" && p.medium !== "air") [dx, dz] = avoidLava(p, dx, dz);
 
   // Throw when a target lines up; better CPUs aim where it's going.
   let throwPressed = false;
@@ -1349,6 +1496,17 @@ function cpuInput(m: Match, p: Player): Input {
   const useItem = p.item !== null && (sk.itemSmart ? cpuWantsItem(m, p, d) : p.itemHeld > 2 + ((p.id % (m.players.length / 2)) % 5));
   const plant = p.medic && cpuWantsPlant(m, p);
   return { dirX: dx * throttle, dirZ: dz * throttle, jump: jump && !dive, throwPressed, dive, useItem, plant };
+}
+
+/** The closest heading to (dx, dz) that keeps lava out of the next few meters. */
+function avoidLava(p: Player, dx: number, dz: number): [number, number] {
+  const a = Math.atan2(dx, dz);
+  for (const off of [0, 0.45, -0.45, 0.9, -0.9, 1.5, -1.5, 2.2, -2.2]) {
+    const sx = Math.sin(a + off);
+    const sz = Math.cos(a + off);
+    if (!isLava(p.x + sx * 2.5, p.z + sz * 2.5) && !isLava(p.x + sx * 5, p.z + sz * 5)) return [sx, sz];
+  }
+  return [dx, dz];
 }
 
 /** An enemy shot about to pass close by, if there is one. */

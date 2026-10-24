@@ -11,20 +11,40 @@ import { music, sfx, unlockAudio } from "./audio";
 import { Fx } from "./fx";
 import { type MatchStats, createHud } from "./hud";
 import { createControls } from "./input";
-import { type AnimalRig, type FlagRig, buildAnimal, buildFlag, buildMedicBadge, buildRespawnFlag, toon } from "./models";
+import { type AnimalRig, buildAnimal } from "./critters";
+import { type FlagRig, buildFlag, buildMedicBadge, buildRespawnFlag, toon } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, ME_GLOW, TEAMS } from "./palette";
 import { type Difficulty, HOARD_TARGET, ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
+import * as progressStore from "./progress";
 import { MAPS, WATER_Y, groundHeight, landOf, mapFor, surfaceHeight } from "./terrain";
+import { WORLDS } from "./worlds";
 import { type World, buildWorld } from "./world";
 
 const params = new URLSearchParams(location.search);
-let humanAnimal = ANIMALS[params.get("animal") ?? ""] ? params.get("animal")! : "lion";
+const store = (() => {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+})();
+// Points and unlocks; ?unlock=all opens everything for testing.
+const progress = progressStore.load(store);
+const unlockAll = params.get("unlock") === "all";
+const isOpen = (id: string) => progressStore.unlocked(progress, unlockAll).has(id);
+// Saved at once, so a first visit is never mistaken for a player from before unlocks.
+progressStore.save(store, progress);
+let humanAnimal = ANIMALS[params.get("animal") ?? ""] ? params.get("animal")! : loadAnimal();
+if (!isOpen(humanAnimal)) humanAnimal = "lion";
+let worldId = WORLDS.some((w) => w.id === params.get("world")) ? params.get("world")! : loadWorld();
+if (!isOpen(worldId)) worldId = "home";
 // Team size: 8 a side at least, up to 64; ?per= still allows small test games.
 let humanMedic = loadMedic();
 let difficulty: Difficulty = loadDifficulty();
 let perTeam = params.has("per") ? clampInt(Number(params.get("per")), 1, 64) : loadSize();
 const timeParam = params.has("time") ? clampInt(Number(params.get("time")), 20, 900) : 0;
-let mode: Mode = params.get("mode") === "hoard" ? "hoard" : loadMode();
+let mode: Mode = params.get("mode") === "hoard" || params.get("mode") === "playful" ? (params.get("mode") as Mode) : loadMode();
+if (!isOpen(mode)) mode = "capture";
 
 const app = document.getElementById("app")!;
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -53,8 +73,44 @@ interface PlayerView {
   animal: string;
   bank: number;
   spin: number;
+  /** Landing squash, 1 just after touchdown. */
+  squash: number;
+  /** Seconds left of a happy spin after banking a flag. */
+  cheer: number;
+  grounded: boolean;
+  fallVy: number;
+  lastSpeed: number;
+  lean: number;
 }
 let views: PlayerView[] = [];
+/**
+ * Where each animal was one sim step ago. The sim ticks at 60 Hz but phones
+ * draw at 60 or 120, so animals and the camera are drawn part way between
+ * the last two steps, which keeps motion smooth at any frame rate.
+ */
+let prev = new Float32Array(0);
+let alpha = 1;
+const ip = { x: 0, y: 0, z: 0, h: 0 };
+function snapshot(): void {
+  if (prev.length !== match.players.length * 4) prev = new Float32Array(match.players.length * 4);
+  for (const p of match.players) prev.set([p.x, p.y, p.z, p.heading], p.id * 4);
+}
+/** The drawn position of `p` this frame. */
+function drawn(p: Match["players"][number]): typeof ip {
+  const k = p.id * 4;
+  if (prev.length <= k || Math.abs(prev[k] - p.x) + Math.abs(prev[k + 2] - p.z) > 6) {
+    ip.x = p.x;
+    ip.y = p.y;
+    ip.z = p.z;
+    ip.h = p.heading;
+    return ip;
+  }
+  ip.x = prev[k] + (p.x - prev[k]) * alpha;
+  ip.y = prev[k + 1] + (p.y - prev[k + 1]) * alpha;
+  ip.z = prev[k + 2] + (p.z - prev[k + 2]) * alpha;
+  ip.h = prev[k + 3] + wrapAngle(p.heading - prev[k + 3]) * alpha;
+  return ip;
+}
 const flagViews: FlagRig[] = [];
 const fireGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.7, 10);
 fireGeo.rotateX(Math.PI / 2);
@@ -88,12 +144,12 @@ const boltGeo = new THREE.CylinderGeometry(0.18, 0.05, 1, 5);
 boltGeo.translate(0, 0.5, 0);
 const boltMat = new THREE.MeshBasicMaterial({ color: "#fff27a", transparent: true, opacity: 0.95 });
 /** Lightning bolts and blast rings that fade out on their own. */
-const flashes: Array<{ mesh: THREE.Mesh; life: number; max: number; grow: number }> = [];
+const flashes: Array<{ mesh: THREE.Mesh; life: number; max: number; grow: number; rise?: boolean }> = [];
+const warnMat = new THREE.MeshBasicMaterial({ color: "#fff27a", transparent: true, opacity: 0.2, depthWrite: false });
 const UP = new THREE.Vector3(0, 1, 0);
 const slope = new THREE.Vector3();
 const WAKE = ["#ffffff", "#d8f6f7"];
-const SAND_DUST = ["#f6e7bf", "#e9d6a4"];
-const GRASS_DUST = ["#d9f0b4", "#eef7d8"];
+const EMBERS = ["#ffb347", "#ff7a2f"];
 // Animals beyond the fog are hidden, which matters with 128 of them.
 const DRAW_RANGE = 230;
 
@@ -101,7 +157,7 @@ function newMatch(seed: number): Match {
   const map = mapFor(perTeam);
   // Hoard ends at the points target; the 15 minute cap only stops a stalemate.
   const duration = mode === "hoard" ? 900 : timeParam || map.duration;
-  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam: map.flagsPerTeam, mode, map, humanMedic, difficulty });
+  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam: map.flagsPerTeam, mode, map, humanMedic, difficulty, world: worldId });
 }
 
 function rebuildViews(): void {
@@ -131,9 +187,9 @@ function makeView(animal: string, team: number, me: boolean): PlayerView {
   ring.add(new THREE.Mesh(bandGeo, bandMats[team]));
   scene.add(ring);
   const badge = buildMedicBadge();
-  badge.position.y = 2.6;
+  badge.position.y = 2.95;
   rig.root.add(badge);
-  const view: PlayerView = { rig, ring, animal, bank: 0, spin: 0, badge };
+  const view: PlayerView = { rig, ring, animal, bank: 0, spin: 0, badge, squash: 0, cheer: 0, grounded: true, fallVy: 0, lastSpeed: 0, lean: 0 };
   if (me) {
     const halo = new THREE.Mesh(haloGeo, haloMat);
     ring.add(halo);
@@ -183,7 +239,8 @@ let lastLand = landOf(match.players[0].z);
 placeCamera(1);
 
 function placeCamera(blend: number): void {
-  const p = match.players[0];
+  const me = match.players[0];
+  const p = { ...drawn(me), speed: me.speed };
   const air = Math.max(0, p.y - surfaceHeight(p.x, p.z));
   const z = hud.camScale;
   const dist = (9.5 + Math.min(4, air * 0.4) + p.speed * 0.08) * z;
@@ -304,6 +361,7 @@ function handleEvents(): void {
         sfx.drop(pan, near);
         break;
       case "bank":
+        views[e.player].cheer = 1.1;
         sfx.bank(pan, near);
         fx.burst(e.x, e.y + 1, e.z, ["#ffd166", "#ff6b5b", "#46b4e8", "#7ee36b", "#b3a9ff"], 60, 12, 14, 0.3);
         // In Hoard a bank adds a flag that earns points, not a point itself.
@@ -350,6 +408,20 @@ function handleEvents(): void {
         sfx.zap(pan, near);
         flash(e.x, e.y, e.z, "bolt");
         break;
+      case "strike_warn":
+        warnRing(e.x, e.z, e.t);
+        break;
+      case "strike":
+        sfx.zap(pan, near);
+        flash(e.x, e.y, e.z, "bolt");
+        world.flash();
+        if (near > 0.6) shake = Math.max(shake, 0.35);
+        break;
+      case "burn":
+        sfx.fizzle(pan, near);
+        fx.burst(e.x, e.y + 0.4, e.z, ["#ff7a2f", "#ffd166", "#3a2f36"], 18, 6, 10, 0.24);
+        if (mine) hud.call("HOT HOT LAVA!", "#ff7a2f");
+        break;
       case "hit": {
         sfx.block(pan, near);
         const p = match.players[e.player];
@@ -389,6 +461,15 @@ function handleEvents(): void {
   }
 }
 
+/** Storm Spire: a glowing ring where lightning is about to land. */
+function warnRing(x: number, z: number, life: number): void {
+  const mesh = new THREE.Mesh(ringGeo, warnMat.clone());
+  mesh.position.set(x, surfaceHeight(x, z) + 0.15, z);
+  mesh.scale.setScalar(2.9);
+  scene.add(mesh);
+  flashes.push({ mesh, life, max: life, grow: 0, rise: true });
+}
+
 /** A lightning bolt down onto a spot, or a blast ring spreading from one. */
 function flash(x: number, y: number, z: number, kind: "bolt" | "blast"): void {
   const mesh = kind === "bolt" ? new THREE.Mesh(boltGeo, boltMat.clone()) : new THREE.Mesh(ringGeo, starMat.clone());
@@ -408,7 +489,7 @@ function stepFlashes(dt: number): void {
     const f = flashes[i];
     f.life -= dt;
     const k = Math.max(0, f.life / f.max);
-    (f.mesh.material as THREE.MeshBasicMaterial).opacity = k * 0.9;
+    (f.mesh.material as THREE.MeshBasicMaterial).opacity = f.rise ? 0.2 + (1 - k) * 0.6 + Math.sin(f.life * 30) * 0.12 : k * 0.9;
     if (f.grow) f.mesh.scale.setScalar(1 + (1 - k) * f.grow);
     if (f.life <= 0) {
       scene.remove(f.mesh);
@@ -446,34 +527,23 @@ function syncViews(t: number, dt: number): void {
     if (far) continue;
     if (p.starT > 0 && Math.random() < 0.5) fx.burst(p.x, p.y + 1, p.z, ["#ffd166", "#ff6b9a", "#7fd8ff", "#7ee36b"], 1, 3, 4, 0.16);
     if (p.turboT > 0 && p.speed > 4 && Math.random() < 0.6) fx.burst(p.x, p.y + 0.4, p.z, ["#ff6b5b", "#ffd166"], 1, 1.5, 3, 0.14);
-    r.root.position.set(p.x, p.y, p.z);
-    r.root.rotation.y = p.heading;
-    // Lean into turns and squash on landing.
-    const turn = wrapAngle(p.heading - (r.root.userData.lastHeading ?? p.heading)) / dt;
-    r.root.userData.lastHeading = p.heading;
-    v.bank += (Math.max(-0.45, Math.min(0.45, -turn * 0.12)) - v.bank) * Math.min(1, dt * 8);
-    r.body.rotation.z = v.bank;
-    const moving = Math.min(1, p.speed / 10);
-    r.body.position.y = p.onSurface ? Math.abs(Math.sin(t * 14 + p.id)) * 0.08 * moving : 0;
-    r.body.rotation.x = p.onSurface ? 0 : Math.max(-0.4, Math.min(0.4, -p.vy * 0.04));
-    if (p.stun > 0) v.spin += dt * 18;
-    else v.spin *= 0.8;
-    r.body.rotation.y = v.spin;
-    for (const w of r.wheels) w.rotation.x += p.speed * dt * 2.5;
-    const flap = p.onSurface ? Math.sin(t * 6 + p.id) * 0.15 : Math.sin(t * 16 + p.id) * 0.7;
-    r.wings.forEach((w, i) => (w.rotation.z = (i === 0 ? 1 : -1) * flap));
+    const at = drawn(p);
+    r.root.position.set(at.x, at.y, at.z);
+    r.root.rotation.y = at.h;
+    animate(v, p, t, dt);
     const surf = surfaceHeight(p.x, p.z);
     // Tilt the ring to the slope so it never sinks into a hillside.
     slope.set(surfaceHeight(p.x - 0.8, p.z) - surfaceHeight(p.x + 0.8, p.z), 1.6, surfaceHeight(p.x, p.z - 0.8) - surfaceHeight(p.x, p.z + 0.8)).normalize();
     v.ring.quaternion.setFromUnitVectors(UP, slope);
-    v.ring.position.set(p.x, surf + 0.1, p.z);
+    v.ring.position.set(at.x, surfaceHeight(at.x, at.z) + 0.1, at.z);
     // Dust behind wheels on land and a white wake on the water.
     const near = Math.hypot(p.x - cx, p.z - cz) < 45;
     if (near && p.onSurface && p.speed > 6 && p.y > WATER_Y - 0.3 && Math.random() < dt * p.speed * 1.4) {
       const bx = p.x - Math.sin(p.heading) * 1.1 + (Math.random() - 0.5) * 0.8;
       const bz = p.z - Math.cos(p.heading) * 1.1 + (Math.random() - 0.5) * 0.8;
       const ground = groundHeight(bx, bz);
-      const colors = ground <= WATER_Y ? WAKE : ground < 0.9 ? SAND_DUST : GRASS_DUST;
+      const P = match.world.palette;
+      const colors = ground <= WATER_Y ? (match.world.liquid === "lava" ? EMBERS : WAKE) : ground < 0.9 ? [P.sand, P.foam] : [P.grassLow, P.sand];
       fx.burst(bx, surf + 0.15, bz, colors, 1, 1.6, 3, 0.24);
     }
     const air = p.y - surf;
@@ -498,10 +568,11 @@ function syncViews(t: number, dt: number): void {
     cloth.color.set(team.color);
     glow.color.set(team.light);
     if (f.state === "carried") {
-      const c = match.players[f.carrier];
+      // Riding on the carrier, drawn where the carrier is drawn.
+      const c = drawn(match.players[f.carrier]);
       const back = 0.7;
-      v.root.position.set(c.x - Math.sin(c.heading) * back, c.y + 1.1, c.z - Math.cos(c.heading) * back);
-      v.root.rotation.y = c.heading + Math.PI / 2;
+      v.root.position.set(c.x - Math.sin(c.h) * back, c.y + 1.1, c.z - Math.cos(c.h) * back);
+      v.root.rotation.y = c.h + Math.PI / 2;
       v.root.scale.setScalar(0.8);
       v.glow.visible = false;
     } else if (f.state === "dropped") {
@@ -563,6 +634,75 @@ function syncViews(t: number, dt: number): void {
   }
 }
 
+/**
+ * Bring an animal to life: lean into turns and against speeding up, bounce
+ * over bumps (the frog on its pogo stick), squash on landing and stretch on
+ * the way up, breathe and look about when still, flap, spin when stunned
+ * and twirl for joy after banking a flag.
+ */
+function animate(v: PlayerView, p: Match["players"][number], t: number, dt: number): void {
+  const r = v.rig;
+  const id = p.id;
+  const turn = wrapAngle(p.heading - (r.root.userData.lastHeading ?? p.heading)) / dt;
+  r.root.userData.lastHeading = p.heading;
+  v.bank += (Math.max(-0.45, Math.min(0.45, -turn * 0.12)) - v.bank) * Math.min(1, dt * 8);
+  const accel = (p.speed - v.lastSpeed) / dt;
+  v.lastSpeed = p.speed;
+  v.lean += (Math.max(-0.16, Math.min(0.16, -accel * 0.008)) - v.lean) * Math.min(1, dt * 6);
+  const moving = Math.min(1, p.speed / 10);
+  const still = 1 - moving;
+
+  if (p.onSurface && !v.grounded && v.fallVy < -3) v.squash = Math.min(1, -v.fallVy / 14);
+  v.grounded = p.onSurface;
+  v.fallVy = p.vy;
+  v.squash = Math.max(0, v.squash - dt * 5);
+  v.cheer = Math.max(0, v.cheer - dt);
+  const stretch = p.onSurface ? 0 : Math.max(-0.08, Math.min(0.12, p.vy * 0.012));
+  const breathe = Math.sin(t * 2.4 + id) * 0.025 * still;
+  const sy = 1 - 0.24 * v.squash + stretch + breathe;
+  const sxz = 1 + 0.13 * v.squash - stretch * 0.5;
+  r.body.scale.set(sxz, sy, sxz);
+
+  let y = 0;
+  let roll = 0;
+  if (r.style === "hop") {
+    // Boing: the frog springs along, its pogo spring squeezing on each touch.
+    const h = Math.abs(Math.sin(t * 9 + id));
+    if (p.onSurface) y = h * 0.45 * moving;
+    if (r.pogo) r.pogo.scale.y = p.onSurface ? 1 - (1 - h) * 0.4 * moving - 0.3 * v.squash : 1.1;
+  } else if (r.style === "swim" && p.medium === "water") {
+    y = Math.sin(t * 3 + id) * 0.07;
+    roll = Math.sin(t * 2.1 + id) * 0.06;
+  } else if (r.style === "fly" && !p.onSurface) {
+    y = Math.sin(t * 3 + id) * 0.15;
+  } else if (p.onSurface) {
+    y = Math.abs(Math.sin(t * 14 + id)) * 0.07 * moving;
+  }
+  // A happy hop and twirl after banking a flag.
+  const joy = v.cheer > 0 ? 1 - v.cheer / 1.1 : 0;
+  if (v.cheer > 0) y += Math.sin(joy * Math.PI) * 1.1;
+  r.body.position.y = y;
+  r.body.rotation.z = v.bank + roll;
+  const pitch = p.onSurface ? v.lean : Math.max(-0.4, Math.min(0.4, -p.vy * 0.04));
+  r.body.rotation.x = r.style === "fly" && !p.onSurface ? pitch + 0.15 * moving : pitch;
+  if (p.stun > 0) v.spin += dt * 18;
+  else v.spin *= 0.8;
+  r.body.rotation.y = v.spin + (v.cheer > 0 ? joy * Math.PI * 2 : 0);
+
+  // The head turns into corners, glances about when still and nods along.
+  r.head.rotation.y = -v.bank * 0.8 + Math.sin(t * 0.6 + id * 1.7) * 0.45 * still;
+  r.head.rotation.x = Math.sin(t * 14 + id) * 0.05 * moving + Math.sin(t * 1.3 + id) * 0.04 * still + (p.stun > 0 ? Math.sin(t * 20) * 0.2 : 0);
+  r.head.rotation.z = p.stun > 0 ? Math.sin(t * 17) * 0.25 : 0;
+
+  for (const w of r.wheels) w.rotation.x += p.speed * dt * 2.5;
+  let flap: number;
+  if (v.cheer > 0) flap = -0.8 + Math.sin(t * 22) * 0.4;
+  else if (r.style === "fly") flap = p.onSurface ? 0.35 + Math.sin(t * 3 + id) * 0.08 : Math.sin(t * 13 + id) * 0.7;
+  else if (!p.onSurface) flap = -0.6 + Math.sin(t * 18 + id) * 0.3;
+  else flap = Math.sin(t * 10 + id) * 0.3 * moving + Math.sin(t * 2.5 + id) * 0.08;
+  r.wings.forEach((w, i) => (w.rotation.z = (i % 2 === 0 ? 1 : -1) * flap));
+}
+
 /** Pick screen camera: a slow turn around your animal, waiting at its base. */
 function placeSelectCamera(t: number): void {
   const p = match.players[0];
@@ -608,16 +748,18 @@ function frame(now: number): void {
   } else if (phase === "play" && !hud.paused) {
     acc += dt;
     while (acc >= STEP) {
+      snapshot();
       step(match, humanInput());
       handleEvents();
       acc -= STEP;
     }
-  }
+    alpha = acc / STEP;
+  } else alpha = 1;
   const me = match.players[0];
   if (me.stun <= 0) camYaw += wrapAngle(me.heading - camYaw) * Math.min(1, dt * 2.6);
   shake = Math.max(0, shake - dt * 2.5);
   const t = now / 1000;
-  world.update(t, match);
+  world.update(t, match, camera.position);
   stepFlashes(dt);
   syncViews(t, Math.max(dt, 1 / 240));
   fx.update(dt);
@@ -649,9 +791,15 @@ function frame(now: number): void {
       const me = match.players[0];
       for (let k = 0; k < 4; k++) fx.burst(me.x + (k - 1.5) * 2, me.y + 3, me.z, ["#ffd166", "#ff6b9a", TEAMS[0].color, "#7ee36b", "#ffffff"], 40, 10, 9, 0.3);
     }
+    // Pay out points (not for test games with a forced clock or team size).
+    const [a, b] = match.scores;
+    const award =
+      timeParam || params.has("per") ? null : progressStore.award(progress, worldId, match.players[0].score, a > b ? "win" : a === b ? "draw" : "loss");
+    if (award) progressStore.save(store, progress);
     hud.showResults(
       match,
       stats,
+      award,
       () => {
         freshMatch();
         startCountdown(true);
@@ -668,9 +816,10 @@ requestAnimationFrame(frame);
 
 function freshMatch(): void {
   const lastMap = match.map;
+  const lastWorld = match.world;
   match = newMatch(match.rng() * 1e9);
-  // A new team size means a new island.
-  if (match.map !== lastMap) {
+  // A new team size or world means a new island.
+  if (match.map !== lastMap || match.world !== lastWorld) {
     world.dispose();
     world = buildWorld(scene, match);
   }
@@ -680,16 +829,19 @@ function freshMatch(): void {
   lastLand = landOf(match.players[0].z);
 }
 
+let worldPreview = 0;
 function showSelect(): void {
   phase = "select";
   music.play(0);
   hud.showSelect(
     humanAnimal,
-    { mode, size: mapFor(perTeam).size, medic: humanMedic, difficulty },
+    { mode, size: mapFor(perTeam).size, medic: humanMedic, difficulty, world: worldId },
+    { progress, open: progressStore.unlocked(progress, unlockAll) },
     (id) => {
       unlockAudio();
       if (id !== humanAnimal) sfx.pick();
       swapAnimal(id);
+      saveAnimal(id);
     },
     (setup) => {
       const { mode: picked, size, medic } = setup;
@@ -697,20 +849,29 @@ function showSelect(): void {
       humanMedic = medic;
       saveMedic(medic);
       match.players[0].medic = medic;
-      const newDifficulty = setup.difficulty !== difficulty;
       difficulty = setup.difficulty;
       saveDifficulty(difficulty);
       tryLandscape();
       const newSize = params.has("per") && size === mapFor(perTeam).size ? perTeam : size;
-      if (picked !== mode || newSize !== perTeam || newDifficulty) {
-        mode = picked;
-        perTeam = newSize;
-        saveMode(mode);
-        saveSize(perTeam);
-        freshMatch();
-      }
+      worldId = setup.world;
+      saveWorld(worldId);
+      mode = picked;
+      perTeam = newSize;
+      saveMode(mode);
+      saveSize(perTeam);
+      // Always a fresh match, so the rival who mirrors you rides your animal.
+      freshMatch();
       // Swoop from the turntable view to behind your animal.
       startCountdown(false);
+    },
+    (id) => {
+      // Show the world behind the pick screen as you flick through them.
+      clearTimeout(worldPreview);
+      worldPreview = window.setTimeout(() => {
+        if (phase !== "select" || id === match.world.id) return;
+        worldId = id;
+        freshMatch();
+      }, 250);
     },
   );
 }
@@ -745,7 +906,8 @@ const MODE_KEY = "flagcatch.mode";
 
 function loadMode(): Mode {
   try {
-    return localStorage.getItem(MODE_KEY) === "hoard" ? "hoard" : "capture";
+    const v = localStorage.getItem(MODE_KEY);
+    return v === "hoard" || v === "playful" ? v : "capture";
   } catch {
     return "capture";
   }
@@ -828,3 +990,41 @@ function clampInt(v: number, lo: number, hi: number): number {
   },
   controls,
 };
+
+const ANIMAL_KEY = "flagcatch.animal";
+
+function loadAnimal(): string {
+  try {
+    const v = localStorage.getItem(ANIMAL_KEY) ?? "";
+    return ANIMALS[v] ? v : "lion";
+  } catch {
+    return "lion";
+  }
+}
+
+function saveAnimal(id: string): void {
+  try {
+    localStorage.setItem(ANIMAL_KEY, id);
+  } catch {
+    // Private mode: the pick lasts until the page closes.
+  }
+}
+
+const WORLD_KEY = "flagcatch.world";
+
+function loadWorld(): string {
+  try {
+    const v = localStorage.getItem(WORLD_KEY) ?? "";
+    return WORLDS.some((w) => w.id === v) ? v : "home";
+  } catch {
+    return "home";
+  }
+}
+
+function saveWorld(id: string): void {
+  try {
+    localStorage.setItem(WORLD_KEY, id);
+  } catch {
+    // Private mode: the pick lasts until the page closes.
+  }
+}
