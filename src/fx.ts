@@ -22,6 +22,8 @@ export class Fx {
   private bits: Bit[] = [];
   private dummy = new THREE.Object3D();
   private color = new THREE.Color();
+  /** Share of sparks kept; Calm effects in Settings lowers it. */
+  amount = 1;
 
   constructor(scene: THREE.Scene) {
     this.mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: "#ffffff" }), MAX);
@@ -32,7 +34,8 @@ export class Fx {
   }
 
   burst(x: number, y: number, z: number, colors: readonly string[], count: number, speed: number, gravity = 18, size = 0.28): void {
-    for (let i = 0; i < count && this.bits.length < MAX; i++) {
+    const n = count <= 1 ? (Math.random() < this.amount ? count : 0) : Math.max(1, Math.round(count * this.amount));
+    for (let i = 0; i < n && this.bits.length < MAX; i++) {
       const a = Math.random() * Math.PI * 2;
       const up = 0.3 + Math.random() * 0.9;
       const s = speed * (0.5 + Math.random() * 0.6);

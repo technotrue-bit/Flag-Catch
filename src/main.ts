@@ -2,12 +2,12 @@
  * FLAG CATCH. Three lands in a row (yours, the middle, the enemy's), two
  * teams of 8 to 64 animals, flags, bases, firecrackers and power ups.
  *
- * Flow: pick your animal, mode and team size, then 3, 2, 1, GO!, then the
- * match, then results.
+ * Flow: the title screen, then pick your animal, world, mode and team size,
+ * then 3, 2, 1, GO!, then the match (with a pause menu), then results.
  */
 import * as THREE from "three";
 import { ANIMALS } from "./animals";
-import { music, sfx, unlockAudio } from "./audio";
+import { type Mood, buzz, chatter, music, sfx, unlockAudio } from "./audio";
 import { Fx } from "./fx";
 import { type MatchStats, createHud } from "./hud";
 import { createControls } from "./input";
@@ -19,6 +19,8 @@ import * as progressStore from "./progress";
 import { MAPS, WATER_Y, groundHeight, landOf, mapFor, surfaceHeight } from "./terrain";
 import { WORLDS } from "./worlds";
 import { type World, buildWorld } from "./world";
+import { camTurnRate, onSettings, settings } from "./settings";
+import { announce, hush, primeVoice } from "./voice";
 
 const params = new URLSearchParams(location.search);
 const store = (() => {
@@ -81,6 +83,8 @@ interface PlayerView {
   fallVy: number;
   lastSpeed: number;
   lean: number;
+  /** Little stars that circle the head of a stunned animal. */
+  stars?: THREE.Group;
 }
 let views: PlayerView[] = [];
 /**
@@ -147,6 +151,9 @@ const boltMat = new THREE.MeshBasicMaterial({ color: "#fff27a", transparent: tru
 const flashes: Array<{ mesh: THREE.Mesh; life: number; max: number; grow: number; rise?: boolean }> = [];
 const warnMat = new THREE.MeshBasicMaterial({ color: "#fff27a", transparent: true, opacity: 0.2, depthWrite: false });
 const UP = new THREE.Vector3(0, 1, 0);
+const starGeo = new THREE.OctahedronGeometry(0.16, 0);
+const dizzyMat = new THREE.MeshBasicMaterial({ color: "#ffe066" });
+const DUST = ["#ffffff", "#f2e6c8"];
 const slope = new THREE.Vector3();
 const WAKE = ["#ffffff", "#d8f6f7"];
 const EMBERS = ["#ffb347", "#ff7a2f"];
@@ -233,8 +240,10 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 let shake = 0;
 let hitStop = 0;
-type Phase = "select" | "countdown" | "play" | "results";
-let phase: Phase = "select";
+type Phase = "title" | "select" | "countdown" | "play" | "results";
+let phase: Phase = "title";
+/** A quick widening of the view when you score. */
+let fovKick = 0;
 let lastLand = landOf(match.players[0].z);
 placeCamera(1);
 
@@ -254,9 +263,10 @@ function placeCamera(blend: number): void {
   const look = new THREE.Vector3(p.x + fx * 4, p.y + 1.6, p.z + fz * 4);
   camLook.lerp(look, Math.min(1, blend * 1.6));
   camera.position.copy(camPos);
-  if (shake > 0) {
-    camera.position.x += (Math.random() - 0.5) * shake;
-    camera.position.y += (Math.random() - 0.5) * shake;
+  const s = shake * settings.shake;
+  if (s > 0) {
+    camera.position.x += (Math.random() - 0.5) * s;
+    camera.position.y += (Math.random() - 0.5) * s;
   }
   camera.lookAt(camLook);
 }
@@ -320,6 +330,10 @@ function handleEvents(): void {
     const pan = (dx * right.x + dz * right.z) / dist;
     const near = Math.max(0.12, Math.min(1, 1 - dist / 80));
     const mine = "player" in e && e.player === 0;
+    // Animals nearby chatter about what just happened to them.
+    const talk = (id: number, mood: Mood) => {
+      if (id >= 0 && (id === 0 || near > 0.45)) chatter(match.players[id].def.id, mood, id === 0 ? 0 : pan, id === 0 ? 1 : near);
+    };
     switch (e.kind) {
       case "throw":
         sfx.throw(pan, near);
@@ -328,14 +342,20 @@ function handleEvents(): void {
         sfx.pop(pan, near);
         const p = match.players[e.player];
         fx.burst(e.x, e.y, e.z, ["#ffd166", "#ff6b5b", "#ffffff", TEAMS[p.team].color], 26, 9);
+        talk(e.player, mine ? "sad" : "ouch");
         if (mine) {
           shake = 0.6;
           hitStop = 0.08;
           hud.call("POPPED!", "#ff6b5b");
+          hud.flash("rgba(255,79,94,.75)", 1);
+          announce("popped");
+          buzz(140);
         } else if (e.by === 0) {
           shake = 0.25;
           hitStop = 0.05;
           hud.call("POP!", "#ffd166");
+          announce("knockout");
+          buzz(40);
         }
         break;
       }
@@ -347,14 +367,26 @@ function handleEvents(): void {
         sfx.grab(pan, near);
         const thief = match.players[e.player];
         fx.burst(e.x, e.y + 2, e.z, [TEAMS[thief.team === 0 ? 1 : 0].color, "#ffffff"], 10, 4, 10, 0.2);
-        if (mine) hud.call("GOT ONE! RUN HOME!", FLAG_FREE);
-        else if (thief.team === 1) hud.call("THEY TOOK A FLAG!", FLAG_ENEMY);
+        talk(e.player, "happy");
+        if (mine) {
+          hud.call("GOT ONE! RUN HOME!", FLAG_FREE);
+          hud.flash("rgba(126,227,107,.7)", 0.7);
+          announce("grab");
+          buzz(30);
+        } else if (thief.team === 1) {
+          hud.call("THEY TOOK A FLAG!", FLAG_ENEMY);
+          announce("theyGrab");
+        }
         break;
       }
       case "return":
         sfx.grab(pan, near);
         fx.burst(e.x, e.y + 1, e.z, [TEAMS[e.team].color, "#ffffff"], 16, 6, 12, 0.22);
-        if (mine) hud.call("SAVED!", TEAMS[0].color);
+        if (mine) {
+          hud.call("SAVED!", TEAMS[0].color);
+          announce("save");
+          talk(0, "happy");
+        }
         else if (e.team === 0 && e.player >= 0) hud.call("FLAG SAVED", TEAMS[0].light);
         break;
       case "drop":
@@ -366,9 +398,21 @@ function handleEvents(): void {
         fx.burst(e.x, e.y + 1, e.z, ["#ffd166", "#ff6b5b", "#46b4e8", "#7ee36b", "#b3a9ff"], 60, 12, 14, 0.3);
         // In Hoard a bank adds a flag that earns points, not a point itself.
         const hoard = match.mode === "hoard";
-        if (mine) hud.call(hoard ? "FLAG BANKED!" : "YOU SCORED!", TEAMS[0].color);
-        else if (e.team === 0) hud.call(hoard ? "TEAM BANKED A FLAG!" : "TEAM SCORED!", TEAMS[0].color);
-        else hud.call(hoard ? "THEY BANKED ONE" : "THEY SCORED", TEAMS[1].light);
+        talk(e.player, "cheer");
+        if (mine) {
+          hud.call(hoard ? "FLAG BANKED!" : "YOU SCORED!", TEAMS[0].color);
+          hud.flash("rgba(255,209,102,.85)", 1);
+          announce("score");
+          buzz([40, 60, 40]);
+          fovKick = 7;
+          shake = Math.max(shake, 0.2);
+        } else if (e.team === 0) {
+          hud.call(hoard ? "TEAM BANKED A FLAG!" : "TEAM SCORED!", TEAMS[0].color);
+          announce("teamScore");
+        } else {
+          hud.call(hoard ? "THEY BANKED ONE" : "THEY SCORED", TEAMS[1].light);
+          announce("theyScore");
+        }
         break;
       case "splash":
         sfx.splash(pan, near);
@@ -388,6 +432,7 @@ function handleEvents(): void {
         if (mine) {
           sfx.item(0, 1);
           hud.call(`GOT ${ITEMS[e.item].name}!`, "#ff6b9a");
+          announce("powerUp");
         }
         fx.burst(e.x, 2, e.z, ["#ff6b9a", "#ffd166", "#ffffff"], mine ? 24 : 10, 5, 10, 0.2);
         break;
@@ -414,21 +459,30 @@ function handleEvents(): void {
       case "strike":
         sfx.zap(pan, near);
         flash(e.x, e.y, e.z, "bolt");
-        world.flash();
+        if (!settings.calm) world.flash();
         if (near > 0.6) shake = Math.max(shake, 0.35);
         break;
       case "burn":
         sfx.fizzle(pan, near);
         fx.burst(e.x, e.y + 0.4, e.z, ["#ff7a2f", "#ffd166", "#3a2f36"], 18, 6, 10, 0.24);
-        if (mine) hud.call("HOT HOT LAVA!", "#ff7a2f");
+        talk(e.player, "ouch");
+        if (mine) {
+          hud.call("HOT HOT LAVA!", "#ff7a2f");
+          hud.flash("rgba(255,122,47,.75)", 0.8);
+          buzz(80);
+        }
         break;
       case "hit": {
         sfx.block(pan, near);
         const p = match.players[e.player];
         fx.burst(e.x, e.y, e.z, ["#ffd166", "#ffffff", TEAMS[p.team].color], 10, 5, 8, 0.18);
+        views[e.player].squash = Math.max(views[e.player].squash, 0.7);
+        talk(e.player, "ouch");
         if (mine) {
           shake = Math.max(shake, 0.3);
           hud.call(e.hp === 1 ? "ONE HIT LEFT!" : "HIT!", "#ff6b5b");
+          hud.flash("rgba(255,79,94,.6)", e.hp === 1 ? 0.9 : 0.5);
+          buzz(50);
         } else if (e.by === 0) {
           hud.call("HIT!", "#ffd166");
         }
@@ -531,6 +585,7 @@ function syncViews(t: number, dt: number): void {
     r.root.position.set(at.x, at.y, at.z);
     r.root.rotation.y = at.h;
     animate(v, p, t, dt);
+    dizzy(v, p, t);
     const surf = surfaceHeight(p.x, p.z);
     // Tilt the ring to the slope so it never sinks into a hillside.
     slope.set(surfaceHeight(p.x - 0.8, p.z) - surfaceHeight(p.x + 0.8, p.z), 1.6, surfaceHeight(p.x, p.z - 0.8) - surfaceHeight(p.x, p.z + 0.8)).normalize();
@@ -575,6 +630,8 @@ function syncViews(t: number, dt: number): void {
       v.root.rotation.y = c.h + Math.PI / 2;
       v.root.scale.setScalar(0.8);
       v.glow.visible = false;
+      // A thin trail of sparkles so a carrier is easy to spot and chase.
+      if (Math.random() < 0.25) fx.burst(v.root.position.x, v.root.position.y + 0.8, v.root.position.z, [team.light, "#ffffff"], 1, 1.2, 1.5, 0.14);
     } else if (f.state === "dropped") {
       // A dropped flag bobs and pulses so both teams spot it.
       v.root.position.set(f.x, f.y + Math.sin(t * 5 + i) * 0.2, f.z);
@@ -652,7 +709,13 @@ function animate(v: PlayerView, p: Match["players"][number], t: number, dt: numb
   const moving = Math.min(1, p.speed / 10);
   const still = 1 - moving;
 
-  if (p.onSurface && !v.grounded && v.fallVy < -3) v.squash = Math.min(1, -v.fallVy / 14);
+  if (p.onSurface && !v.grounded && v.fallVy < -3) {
+    v.squash = Math.min(1, -v.fallVy / 14);
+    // A puff of dust where a big fall lands.
+    if (v.fallVy < -7 && p.medium !== "water" && Math.hypot(p.x - camera.position.x, p.z - camera.position.z) < 40) {
+      fx.burst(p.x, surfaceHeight(p.x, p.z) + 0.1, p.z, DUST, Math.round(6 + v.squash * 8), 3.5, 5, 0.26);
+    }
+  }
   v.grounded = p.onSurface;
   v.fallVy = p.vy;
   v.squash = Math.max(0, v.squash - dt * 5);
@@ -703,12 +766,41 @@ function animate(v: PlayerView, p: Match["players"][number], t: number, dt: numb
   r.wings.forEach((w, i) => (w.rotation.z = (i % 2 === 0 ? 1 : -1) * flap));
 }
 
+/** Stars circling the head while an animal is stunned. */
+function dizzy(v: PlayerView, p: Match["players"][number], t: number): void {
+  if (p.stun <= 0) {
+    if (v.stars) v.stars.visible = false;
+    return;
+  }
+  if (!v.stars) {
+    v.stars = new THREE.Group();
+    for (let i = 0; i < 3; i++) {
+      const star = new THREE.Mesh(starGeo, dizzyMat);
+      const a = (i / 3) * Math.PI * 2;
+      star.position.set(Math.cos(a) * 0.55, 0, Math.sin(a) * 0.55);
+      v.stars.add(star);
+    }
+    const top = new THREE.Box3().setFromObject(v.rig.head).max.y - v.rig.root.position.y;
+    v.stars.position.y = Math.max(1.4, top + 0.3);
+    v.rig.root.add(v.stars);
+  }
+  v.stars.visible = true;
+  v.stars.rotation.y = t * 6;
+  v.stars.children.forEach((c, i) => {
+    c.position.y = Math.sin(t * 8 + i * 2) * 0.08;
+    c.rotation.y = t * 9;
+  });
+}
+
 /** Pick screen camera: a slow turn around your animal, waiting at its base. */
 function placeSelectCamera(t: number): void {
   const p = match.players[0];
-  const a = p.heading + Math.PI * 0.75 + t * 0.35;
-  camPos.set(p.x + Math.sin(a) * 6.2, p.y + 2.6, p.z + Math.cos(a) * 6.2);
-  camLook.set(p.x, p.y + 0.5, p.z);
+  // The title screen circles wider and higher, showing off the island.
+  const wide = phase === "title";
+  const a = p.heading + Math.PI * 0.75 + t * (wide ? 0.12 : 0.35);
+  const r = wide ? 15 : 6.2;
+  camPos.set(p.x + Math.sin(a) * r, p.y + (wide ? 7.5 : 2.6), p.z + Math.cos(a) * r);
+  camLook.set(p.x, p.y + (wide ? 1.5 : 0.5), p.z);
   camera.position.copy(camPos);
   camera.lookAt(camLook);
 }
@@ -722,6 +814,41 @@ function watchLands(): void {
     else if (land === 0 && me.carrying >= 0) hud.call("HOME STRETCH!", TEAMS[0].color);
     lastLand = land;
   }
+}
+
+/** Calls for the closing seconds, made once a match. */
+const said = { thirty: false, ten: false, almost: false };
+function watchClock(): void {
+  if (match.over) return;
+  if (match.mode === "hoard") {
+    if (!said.almost && match.scores[0] >= HOARD_TARGET * 0.85) {
+      said.almost = true;
+      announce("almost");
+    }
+    return;
+  }
+  if (!said.thirty && match.timeLeft <= 30) {
+    said.thirty = true;
+    announce("thirty");
+  }
+  if (!said.ten && match.timeLeft <= 10) {
+    said.ten = true;
+    announce("ten");
+  }
+}
+
+/** Your points float up over your head as you earn them. */
+let shownMine = 0;
+const headAt = new THREE.Vector3();
+function watchScore(): void {
+  const me = match.players[0];
+  const gain = me.score - shownMine;
+  shownMine = me.score;
+  if (gain <= 0) return;
+  const at = drawn(me);
+  headAt.set(at.x, at.y + 3.2, at.z).project(camera);
+  if (headAt.z > 1) return;
+  hud.floatText((headAt.x * 0.5 + 0.5) * window.innerWidth, (-headAt.y * 0.5 + 0.5) * window.innerHeight, `+${gain}`);
 }
 
 let baseFov = 60;
@@ -756,22 +883,27 @@ function frame(now: number): void {
     alpha = acc / STEP;
   } else alpha = 1;
   const me = match.players[0];
-  if (me.stun <= 0) camYaw += wrapAngle(me.heading - camYaw) * Math.min(1, dt * 2.6);
+  if (me.stun <= 0) camYaw += wrapAngle(me.heading - camYaw) * Math.min(1, dt * camTurnRate(settings));
   shake = Math.max(0, shake - dt * 2.5);
   const t = now / 1000;
   world.update(t, match, camera.position);
   stepFlashes(dt);
   syncViews(t, Math.max(dt, 1 / 240));
   fx.update(dt);
-  if (phase === "select") placeSelectCamera(t);
+  if (phase === "select" || phase === "title") placeSelectCamera(t);
   else placeCamera(Math.min(1, dt * 7));
   // The view widens a little with speed and more on Turbo, for a rush.
-  const wantFov = phase === "play" ? baseFov + Math.min(6, me.speed * 0.3) + (me.turboT > 0 ? 5 : 0) : baseFov;
+  fovKick = Math.max(0, fovKick - dt * 14);
+  const wantFov = phase === "play" ? baseFov + Math.min(6, me.speed * 0.3) + (me.turboT > 0 ? 5 : 0) + fovKick * (settings.calm ? 0.4 : 1) : baseFov;
   if (Math.abs(wantFov - camera.fov) > 0.05) {
     camera.fov += (wantFov - camera.fov) * Math.min(1, dt * 4);
     camera.updateProjectionMatrix();
   }
-  if (phase === "play") watchLands();
+  if (phase === "play") {
+    watchLands();
+    watchClock();
+    watchScore();
+  }
   hud.update(match, controls, camYaw);
   renderer.render(scene, camera);
 
@@ -787,15 +919,26 @@ function frame(now: number): void {
       if (phase === "results") music.play(0);
     }, 2600);
     // A win throws confetti over the island.
-    if (match.scores[0] > match.scores[1]) {
+    const won = match.scores[0] > match.scores[1];
+    if (won) {
       const me = match.players[0];
       for (let k = 0; k < 4; k++) fx.burst(me.x + (k - 1.5) * 2, me.y + 3, me.z, ["#ffd166", "#ff6b9a", TEAMS[0].color, "#7ee36b", "#ffffff"], 40, 10, 9, 0.3);
+      views[0].cheer = 1.1;
     }
+    const draw = match.scores[0] === match.scores[1];
+    window.setTimeout(() => {
+      announce(won ? "win" : draw ? "draw" : "lose");
+      chatter(humanAnimal, won ? "cheer" : draw ? "happy" : "sad");
+    }, 500);
     // Pay out points (not for test games with a forced clock or team size).
     const [a, b] = match.scores;
     const award =
       timeParam || params.has("per") ? null : progressStore.award(progress, worldId, match.players[0].score, a > b ? "win" : a === b ? "draw" : "loss");
-    if (award) progressStore.save(store, progress);
+    if (award) {
+      progressStore.save(store, progress);
+      if (award.opened.length) window.setTimeout(() => phase === "results" && announce("unlock"), 2600);
+      else if (award.record) window.setTimeout(() => phase === "results" && announce("best"), 2200);
+    }
     hud.showResults(
       match,
       stats,
@@ -808,6 +951,7 @@ function frame(now: number): void {
         freshMatch();
         showSelect();
       },
+      award ? progress : undefined,
     );
   }
   requestAnimationFrame(frame);
@@ -825,6 +969,8 @@ function freshMatch(): void {
   }
   rebuildViews();
   stats = freshStats();
+  said.thirty = said.ten = said.almost = false;
+  shownMine = 0;
   camYaw = match.players[0].heading;
   lastLand = landOf(match.players[0].z);
 }
@@ -873,8 +1019,50 @@ function showSelect(): void {
         freshMatch();
       }, 250);
     },
+    showTitle,
   );
 }
+
+function showTitle(): void {
+  phase = "title";
+  if (music.level !== 0) music.play(0);
+  hud.showTitle(progress.points, () => {
+    unlockAudio();
+    primeVoice();
+    showSelect();
+  });
+}
+
+// Restart and Quit from the pause menu.
+hud.setPauseActions({
+  restart() {
+    hush();
+    freshMatch();
+    startCountdown(true);
+  },
+  quit() {
+    hush();
+    freshMatch();
+    showSelect();
+  },
+});
+
+// Going to the home screen or another app pauses the match.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && (phase === "play" || phase === "countdown")) hud.pause();
+});
+
+// Phones only start sound after a touch, so wake audio and speech on the first one.
+for (const kind of ["pointerup", "touchend", "keydown"]) {
+  window.addEventListener(kind, () => unlockAudio(), { passive: true });
+}
+window.addEventListener("pointerup", () => primeVoice(), { once: true, passive: true });
+
+const applySettings = () => {
+  fx.amount = settings.calm ? 0.4 : 1;
+};
+onSettings(applySettings);
+applySettings();
 
 function startCountdown(snap: boolean): void {
   phase = "countdown";
@@ -889,7 +1077,7 @@ function startCountdown(snap: boolean): void {
   });
 }
 
-showSelect();
+showTitle();
 
 function tryLandscape(): void {
   const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };

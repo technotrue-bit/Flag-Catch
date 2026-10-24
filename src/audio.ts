@@ -1,10 +1,15 @@
 /**
- * Tiny synth for prototype sounds. Every effect is a few oscillators and a
- * noise burst, panned by where it happens relative to the camera.
+ * Tiny synth for every sound. Each effect is a few oscillators and a noise
+ * burst, panned by where it happens relative to the camera. Music, effects
+ * and animal chatter run on their own buses so Settings can set each level.
  */
+import { onSettings, settings } from "./settings";
+
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
+let sfxBus: GainNode | null = null;
 let noise: AudioBuffer | null = null;
+let ducked = false;
 
 export function unlockAudio(): void {
   if (ctx) {
@@ -20,8 +25,11 @@ export function unlockAudio(): void {
     const d = noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     musicBus = ctx.createGain();
-    musicBus.gain.value = musicOn ? MUSIC_VOLUME : 0;
+    musicBus.gain.value = musicLevel();
     musicBus.connect(master);
+    sfxBus = ctx.createGain();
+    sfxBus.gain.value = settings.sound;
+    sfxBus.connect(master);
     if (wantLevel >= 0) startClock();
   } catch {
     ctx = null;
@@ -34,10 +42,8 @@ export function unlockAudio(): void {
  * Level 0 is the calm menu loop, 1 adds drums and the tune, 2 is the
  * frantic finish: faster, busier hats, the tune an octave up.
  */
-const MUSIC_KEY = "flagcatch.music";
 const MUSIC_VOLUME = 0.34;
 let musicBus: GainNode | null = null;
-let musicOn = loadMusicOn();
 let wantLevel = -1;
 let level: 0 | 1 | 2 = 0;
 let clock: number | undefined;
@@ -58,13 +64,15 @@ const TUNE = [
   [74, 0, 0, 72, 74, 0, 77, 0, 81, 0, 79, 0, 77, 0, 0, 0, 74, 0, 72, 0, 70, 0, 72, 0, 74, 0, 0, 0, 77, 0, 0, 0],
 ];
 
-function loadMusicOn(): boolean {
-  try {
-    return localStorage.getItem(MUSIC_KEY) !== "0";
-  } catch {
-    return true;
-  }
+function musicLevel(): number {
+  return settings.music * MUSIC_VOLUME * (ducked ? 0.35 : 1);
 }
+
+onSettings(() => {
+  if (!ctx) return;
+  musicBus?.gain.setTargetAtTime(musicLevel(), ctx.currentTime, 0.08);
+  sfxBus?.gain.setTargetAtTime(settings.sound, ctx.currentTime, 0.05);
+});
 
 function hz(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12);
@@ -169,27 +177,20 @@ export const music = {
   get level(): number {
     return wantLevel;
   },
-  get on(): boolean {
-    return musicOn;
-  },
-  set on(v: boolean) {
-    musicOn = v;
-    try {
-      localStorage.setItem(MUSIC_KEY, v ? "1" : "0");
-    } catch {
-      // Private mode: the switch lasts until the page closes.
-    }
-    if (ctx && musicBus) musicBus.gain.setTargetAtTime(v ? MUSIC_VOLUME : 0, ctx.currentTime, 0.1);
+  /** Quieter under the pause menu. */
+  duck(on: boolean) {
+    ducked = on;
+    if (ctx && musicBus) musicBus.gain.setTargetAtTime(musicLevel(), ctx.currentTime, 0.1);
   },
 };
 
 function out(pan: number, gain: number): AudioNode | null {
-  if (!ctx || !master) return null;
+  if (!ctx || !sfxBus) return null;
   const g = ctx.createGain();
   g.gain.value = gain;
   const p = ctx.createStereoPanner();
   p.pan.value = Math.max(-1, Math.min(1, pan));
-  g.connect(p).connect(master);
+  g.connect(p).connect(sfxBus);
   return g;
 }
 
@@ -296,3 +297,99 @@ export const sfx = {
     [784, 659, 523, 784, 1046].forEach((f, i) => tone("triangle", f, f, 0.22, 0, 0.2, i * 0.12));
   },
 };
+
+/*
+ * Animal chatter: a few made up syllables, sung through two vowel filters
+ * so they sound like a tiny voice. Each animal has its own pitch, and the
+ * mood shapes the tune: happy rises, sad sinks, ouch is one sharp yelp.
+ */
+export type Mood = "happy" | "cheer" | "sad" | "ouch";
+const VOICE_PITCH: Record<string, number> = {
+  lion: 230,
+  wolf: 210,
+  penguin: 330,
+  croc: 160,
+  bird: 430,
+  eagle: 300,
+  mammoth: 125,
+  shark: 175,
+  goldfish: 480,
+  panther: 250,
+  flyfish: 390,
+  bat: 520,
+  frog: 270,
+};
+// First and second formants of a, e, i, o, u.
+const VOWELS: Array<[number, number]> = [
+  [800, 1200],
+  [420, 2200],
+  [300, 2700],
+  [460, 820],
+  [330, 700],
+];
+
+function syllable(f0: number, f1: number, when: number, dur: number, vowel: [number, number], pan: number, gain: number): void {
+  const dest = out(pan, gain);
+  if (!ctx || !dest) return;
+  const o = ctx.createOscillator();
+  o.type = "sawtooth";
+  o.frequency.setValueAtTime(f0, when);
+  o.frequency.exponentialRampToValueAtTime(Math.max(40, f1), when + dur);
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0.0001, when);
+  env.gain.exponentialRampToValueAtTime(1, when + 0.015);
+  env.gain.setValueAtTime(1, when + dur * 0.6);
+  env.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  o.connect(env);
+  for (const [i, f] of vowel.entries()) {
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = f;
+    bp.Q.value = 6;
+    const g = ctx.createGain();
+    g.gain.value = i === 0 ? 1.6 : 0.9;
+    env.connect(bp).connect(g).connect(dest);
+  }
+  o.start(when);
+  o.stop(when + dur + 0.02);
+}
+
+/** A little burst of animal talk. */
+export function chatter(animal: string, mood: Mood, pan = 0, near = 1): void {
+  if (!ctx || settings.voice === "off" || near < 0.15) return;
+  const base = VOICE_PITCH[animal] ?? 260;
+  const t0 = ctx.currentTime + 0.02;
+  const count = mood === "ouch" ? 1 : mood === "cheer" ? 5 : mood === "sad" ? 3 : 3 + Math.floor(Math.random() * 2);
+  let t = t0;
+  for (let i = 0; i < count; i++) {
+    const k = count === 1 ? 0 : i / (count - 1);
+    const dur = mood === "ouch" ? 0.16 : mood === "sad" ? 0.17 : 0.085 + Math.random() * 0.04;
+    let from = base;
+    let to = base;
+    if (mood === "happy") {
+      from = base * (1 + k * 0.35 + (i % 2) * 0.12);
+      to = from * 1.08;
+    } else if (mood === "cheer") {
+      from = base * (1.15 + k * 0.5 + (i % 2) * 0.18);
+      to = from * 1.15;
+    } else if (mood === "sad") {
+      from = base * (1.1 - k * 0.3);
+      to = from * 0.82;
+    } else {
+      from = base * 1.9;
+      to = base * 0.9;
+    }
+    syllable(from, to, t, dur, VOWELS[Math.floor(Math.random() * VOWELS.length)], pan, 0.2 * near);
+    t += dur + 0.025;
+  }
+}
+
+/** A short buzz on phones that allow it (not iPhone Safari). */
+export function buzz(ms: number | number[]): void {
+  if (!settings.vibrate) return;
+  try {
+    navigator.vibrate?.(ms);
+  } catch {
+    // No vibration here.
+  }
+}

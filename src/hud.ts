@@ -1,15 +1,18 @@
 /**
- * Everything drawn over the 3D view: score bar, timer, which land you are
- * in, minimap, thumb buttons, the stick ring, call outs, the pick your
- * animal screen, the 3, 2, 1, GO! countdown and the results card.
+ * Everything drawn over the 3D view: the title screen, score bar, timer,
+ * which land you are in, minimap, thumb buttons, the stick ring, call outs,
+ * the pick your animal screen, the 3, 2, 1, GO! countdown, the pause menu,
+ * Settings, How to play and the results card.
  * Big, soft and tucked into the corners so the middle stays clear.
  */
 import { ANIMALS, ANIMAL_IDS, type AnimalDef } from "./animals";
 import type { Controls } from "./input";
 import { FLAG_FREE, ME_GLOW, PALETTE, TEAMS } from "./palette";
 import { music, sfx } from "./audio";
+import { type Settings, onSettings, setSetting, settings } from "./settings";
+import { announce } from "./voice";
 import { type Difficulty, HOARD_TARGET, ITEMS, type ItemKind, type Match, type Mode, nearestBase, tune } from "./sim";
-import { type Award, type Progress, costOf, nextUnlock } from "./progress";
+import { type Award, type Progress, UNLOCKS, costOf, nextUnlock } from "./progress";
 import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, currentWorld, groundHeight, landOf, onBridge } from "./terrain";
 import { WORLDS, type WorldDef, worldById } from "./worlds";
 
@@ -69,8 +72,6 @@ const CSS = `
 .fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power,.fc-menu .fc-hearts,.fc-menu .fc-out{display:none!important}
 .fc-sel{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:8px;padding:max(10px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
 .fc-sel h2{flex:none;margin:0;text-align:center;font-size:30px;line-height:1.05;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
-.fc-tip{flex:none;pointer-events:auto;padding:4px 12px;border-radius:999px;background:rgba(43,35,64,.55);color:#fff;font-size:11px;font-weight:800}
-@media (max-height:350px){.fc-tip{display:none}}
 .fc-logo{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:0 10px;font-size:38px!important;letter-spacing:2px!important;animation:fclogo 3s ease-in-out infinite}
 .fc-logo .a{color:${TEAMS[0].color}}
 .fc-logo .b{color:${TEAMS[1].color}}
@@ -148,6 +149,71 @@ const CSS = `
 .fc-earn b{color:#e8a700}
 .fc-new{display:inline-block;margin:4px 3px 0;padding:3px 10px;border-radius:999px;background:#7ee36b;color:#fff;font-size:12px;font-weight:900;-webkit-text-stroke:0;box-shadow:0 2px 0 rgba(43,35,64,.2)}
 @media (max-height:420px){.fc-world .arw{height:36px;width:30px}.fc-world .name{min-height:36px;min-width:120px;font-size:14px}}
+.fc-pad{position:absolute;inset:0;pointer-events:none}
+.fc-left .fc-pad{transform:scaleX(-1)}
+.fc-left .fc-pad .fc-btn{transform:scaleX(-1)}
+.fc-left .fc-pad .fc-btn.down{transform:scaleX(-1) translateY(3px)}
+.fc-big .fc-jump{width:114px;height:114px;right:max(16px,calc(env(safe-area-inset-right) + 6px));bottom:max(16px,env(safe-area-inset-bottom));font-size:19px}
+.fc-big .fc-throw{width:92px;height:92px;right:max(142px,calc(env(safe-area-inset-right) + 132px));bottom:max(26px,env(safe-area-inset-bottom));font-size:17px}
+.fc-big .fc-item{width:76px;height:76px;right:max(36px,calc(env(safe-area-inset-right) + 26px));bottom:max(142px,calc(env(safe-area-inset-bottom) + 132px));font-size:11px}
+.fc-big .fc-dive{width:78px;height:78px;right:max(150px,calc(env(safe-area-inset-right) + 140px));bottom:max(136px,calc(env(safe-area-inset-bottom) + 126px));font-size:15px}
+.fc-big .fc-medic{width:74px;height:74px;right:max(248px,calc(env(safe-area-inset-right) + 238px));bottom:max(30px,calc(env(safe-area-inset-bottom) + 20px))}
+.fc-left .fc-hint{left:auto;right:max(18px,env(safe-area-inset-right))}
+.fc-menu .fc-pause,.fc-pause.hide{display:none!important}
+.fc-pause{width:44px;height:40px;display:flex;align-items:center;justify-content:center;gap:5px;padding:0!important}
+.fc-pause i{width:6px;height:16px;border-radius:2px;background:${PALETTE.ink}}
+.fc-top-left{z-index:2}
+.fc-hearts{top:calc(max(10px,env(safe-area-inset-top)) + 48px)}
+.fc-card .box{max-height:calc(100% - 16px);overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y}
+.fc-card .box.wide{max-width:min(720px,94vw);width:min(720px,94vw)}
+.fc-card h1.sm{font-size:28px}
+.fc-menu-list{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-top:8px;min-width:220px}
+.fc-menu-list .go{margin-top:0}
+.fc-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;text-align:left}
+@media (max-width:560px){.fc-grid{grid-template-columns:1fr}}
+.fc-grid h3{grid-column:1/-1;margin:8px 0 0;font-size:11px;font-weight:900;letter-spacing:1px;color:rgba(43,35,64,.5)}
+.fc-opt{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:40px;font-weight:800;font-size:14px}
+.fc-opt input[type=range]{flex:1;max-width:170px;height:28px;accent-color:#46b4e8}
+.fc-opt .fc-seg{flex:none}
+.fc-opt .seg{pointer-events:auto;padding:6px 10px;border-radius:999px;font-weight:900;font-size:11px;letter-spacing:.3px;border:2px solid transparent;cursor:pointer}
+.fc-opt .seg.on{background:#fffaf0;border-color:${PALETTE.ink}}
+.fc-tog{pointer-events:auto;position:relative;flex:none;width:52px;height:30px;border-radius:999px;background:rgba(43,35,64,.2);transition:background .15s;cursor:pointer}
+.fc-tog::after{content:"";position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 0 rgba(43,35,64,.2);transition:transform .15s}
+.fc-tog.on{background:#3cbf7a}
+.fc-tog.on::after{transform:translateX(22px)}
+.fc-title{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:max(10px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+.fc-title .fc-logo{margin:0;font-size:64px!important;line-height:1;font-weight:900;color:#fff;-webkit-text-stroke:3px ${PALETTE.ink};paint-order:stroke fill}
+.fc-title .fc-logo .flag{transform:scale(1.5);margin:0 10px}
+.fc-title .tag{font-weight:900;font-size:15px;color:#fff;-webkit-text-stroke:0;padding:4px 14px;border-radius:999px;background:rgba(43,35,64,.5)}
+.fc-title .big{pointer-events:auto;padding:14px 64px;border-radius:999px;background:#46b4e8;color:#fff;font-weight:900;font-size:30px;letter-spacing:1px;box-shadow:0 6px 0 rgba(43,35,64,.3);border:4px solid rgba(255,255,255,.85);animation:fcbreath 1.8s ease-in-out infinite;cursor:pointer}
+@keyframes fcbreath{50%{transform:scale(1.05)}}
+.fc-title .row3{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
+.fc-title .chip{pointer-events:auto;padding:9px 16px;border-radius:999px;background:rgba(255,250,240,.92);font-weight:900;font-size:14px;box-shadow:0 3px 0 rgba(43,35,64,.2);cursor:pointer}
+.fc-title .chip.hot{background:#ffd166}
+.fc-title .foot{position:absolute;bottom:max(8px,env(safe-area-inset-bottom));font-size:11px;font-weight:800;color:rgba(43,35,64,.55)}
+.fc-title.out{animation:fcout .3s ease-in forwards}
+@keyframes fcout{to{opacity:0;transform:scale(1.08)}}
+@media (max-height:360px){.fc-title{gap:6px}.fc-title .fc-logo{font-size:44px!important}.fc-title .fc-logo .flag{transform:scale(1.1)}.fc-title .big{padding:10px 48px;font-size:24px}.fc-title .tag{font-size:12px}}
+.fc-how{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
+@media (max-width:560px){.fc-how{grid-template-columns:repeat(2,1fr)}}
+.fc-how div{padding:8px;border-radius:14px;background:rgba(43,35,64,.06);font-size:12px;font-weight:700;line-height:1.25;color:rgba(43,35,64,.8)}
+.fc-how b{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:26px;margin-bottom:4px;padding:0 8px;border-radius:999px;color:#fff;font-size:11px;font-weight:900}
+.fc-steps{text-align:left;margin:8px auto;padding-left:22px;font-size:15px;font-weight:800;line-height:1.6;max-width:360px}
+.fc-back{pointer-events:auto}
+.fc-vig{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .5s ease-out}
+.fc-pops{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.fc-pop{position:absolute;font-weight:900;font-size:22px;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill;white-space:nowrap;animation:fcfloat 1s ease-out forwards}
+@keyframes fcfloat{0%{transform:translate(-50%,-30%) scale(.5);opacity:0}20%{transform:translate(-50%,-80%) scale(1.15);opacity:1}100%{transform:translate(-50%,-220%) scale(1);opacity:0}}
+.fc-results .fc-stats b,.fc-results .fc-pill b{font-variant-numeric:tabular-nums}
+.fc-results h1{animation:fcwiggle 1.2s ease-in-out .4s 2}
+@keyframes fcwiggle{25%{transform:rotate(-4deg) scale(1.06)}75%{transform:rotate(4deg) scale(1.06)}}
+.fc-next{margin:6px auto 0;max-width:340px}
+.fc-next small{display:block;font-size:10px;font-weight:900;letter-spacing:.5px;color:rgba(43,35,64,.6)}
+.fc-next i{display:block;height:10px;margin-top:3px;border-radius:5px;background:rgba(43,35,64,.12);overflow:hidden}
+.fc-next u{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,#ffd166,#ff9f1c);transition:width 1s cubic-bezier(.3,1,.5,1)}
+@media (max-height:380px){.fc-menu-list{flex-direction:row;flex-wrap:wrap;justify-content:center}.fc-card h1.sm{font-size:22px}.fc-how div{padding:6px;font-size:11px}}
+@media (max-height:300px){.fc-mode small,.fc-size small,.fc-world .name small{display:none}.fc-mode,.fc-size{min-height:30px;padding:2px 10px;font-size:13px}.fc-world .name{min-height:30px}.fc-world .arw{height:30px}.fc-tile .bar{display:none}.fc-tiles{padding-top:6px}.fc-play{padding:10px 18px;font-size:18px}}
+@media (max-height:260px){.fc-group>label{display:none}.fc-pts{display:none}}
 `;
 
 export interface Hud {
@@ -161,25 +227,30 @@ export interface Hud {
     onPick: (id: string) => void,
     onPlay: (setup: MatchSetup) => void,
     onWorld: (id: string) => void,
+    onBack: () => void,
   ): void;
+  /** The title screen: PLAY, How to play, Settings and Full screen. */
+  showTitle(points: number, onPlay: () => void): void;
+  /** Open the pause menu (a tap on the pause button, or the app going to the background). */
+  pause(): void;
+  /** What Restart and Quit to menu do. */
+  setPauseActions(actions: PauseActions): void;
+  /** A soft colored glow round the screen edges. */
+  flash(color: string, strength?: number): void;
+  /** Text that floats up from a point on the screen, like +10 over your head. */
+  floatText(x: number, y: number, text: string, color?: string): void;
   /** 3, 2, 1, GO! then onDone. */
   countdown(onDone: () => void): void;
-  showResults(m: Match, stats: MatchStats, award: Award | null, onAgain: () => void, onChange: () => void): void;
-  /** True while the settings card is open; the match waits. */
+  showResults(m: Match, stats: MatchStats, award: Award | null, onAgain: () => void, onChange: () => void, progress?: Progress): void;
+  /** True while the pause menu or a card over it is open; the match waits. */
   readonly paused: boolean;
   /** Camera distance multiplier from the Zoom setting (smaller is closer). */
   readonly camScale: number;
 }
 
-const ZOOM_KEY = "flagcatch.zoom";
-
-function loadZoom(): number {
-  try {
-    const v = Number(localStorage.getItem(ZOOM_KEY));
-    return Number.isFinite(v) && v > 0 ? Math.min(1, v) : 0.5;
-  } catch {
-    return 0.5;
-  }
+export interface PauseActions {
+  restart(): void;
+  quit(): void;
 }
 
 const CLASS_COLORS = { land: "#5cb85c", water: "#46b4e8", air: "#9b7be8" } as const;
@@ -258,19 +329,21 @@ export function createHud(controls: Controls): Hud {
   const hint = el("div", "fc-hint", root);
   hint.textContent = "Drag on the left to steer";
 
-  const jump = el("div", "fc-btn fc-jump", root);
+  // The thumb buttons sit on a pad that flips over for left handed play.
+  const pad = el("div", "fc-pad", root);
+  const jump = el("div", "fc-btn fc-jump", pad);
   jump.textContent = "JUMP";
-  const thr = el("div", "fc-btn fc-throw", root);
+  const thr = el("div", "fc-btn fc-throw", pad);
   thr.textContent = "THROW";
-  const item = el("div", "fc-btn fc-item", root);
+  const item = el("div", "fc-btn fc-item", pad);
   item.textContent = "ITEM";
   let shownItem: ItemKind | null | undefined;
   const power = el("div", "fc-power", root);
   // Shows only for swimmers in water; the ring drains with their breath.
-  const dive = el("div", "fc-btn fc-dive", root);
+  const dive = el("div", "fc-btn fc-dive", pad);
   dive.textContent = "DIVE";
   // Medics only: plant a respawn flag; the ring fills back up over 30 seconds.
-  const medicBtn = el("div", "fc-btn fc-medic", root);
+  const medicBtn = el("div", "fc-btn fc-medic", pad);
   el("b", "", medicBtn).textContent = "+";
   const medicLabel = el("span", "", medicBtn);
   const hearts = el("div", "fc-hearts", root);
@@ -304,65 +377,201 @@ export function createHud(controls: Controls): Hud {
   const call = el("div", "fc-call", root);
   let callTimer = 0;
 
-  // Settings: the only way to zoom, since pinching the page is turned off.
-  let zoom = loadZoom();
+  // The pause button (and Settings inside it) waits in the top left corner.
   let paused = false;
+  let pauseActions: PauseActions = { restart() {}, quit() {} };
   const tl = el("div", "fc-top-left", root);
-  const setChip = el("div", "fc-chip", tl);
-  setChip.textContent = "SETTINGS";
-  setChip.addEventListener("pointerdown", (e) => {
+  const pauseChip = el("div", "fc-chip fc-pause", tl);
+  el("i", "", pauseChip);
+  el("i", "", pauseChip);
+  pauseChip.addEventListener("pointerdown", (e) => {
     e.stopPropagation();
-    if (paused) return;
-    paused = true;
-    const card = el("div", "fc-card", root);
-    card.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-    const box = el("div", "box", card);
-    el("h1", "", box).textContent = "SETTINGS";
-    const row = el("label", "fc-set", box);
-    el("b", "", row).textContent = "Zoom";
-    el("span", "", row).textContent = "Out";
-    const slider = document.createElement("input");
-    slider.type = "range";
-    slider.min = "0";
-    slider.max = "1";
-    slider.step = "0.05";
-    slider.value = String(zoom);
-    slider.addEventListener("input", () => {
-      zoom = Number(slider.value);
-      try {
-        localStorage.setItem(ZOOM_KEY, String(zoom));
-      } catch {
-        // Private mode: the setting lasts until the page closes.
-      }
-    });
-    row.appendChild(slider);
-    el("span", "", row).textContent = "In";
-    const musicRow = el("div", "fc-set", box);
-    el("b", "", musicRow).textContent = "Music";
-    const musicBtn = el("div", "fc-chip", musicRow);
-    const showMusic = () => {
-      musicBtn.textContent = music.on ? "ON" : "OFF";
-      musicBtn.classList.toggle("on", music.on);
-    };
-    showMusic();
-    musicBtn.addEventListener("pointerdown", () => {
-      music.on = !music.on;
-      showMusic();
-    });
-    const feelBtn = el("div", "small", box);
-    feelBtn.textContent = "Feel tuning";
-    const tunePanel = buildTunePanel(box);
-    feelBtn.addEventListener("pointerdown", () => {
-      tunePanel.style.display = tunePanel.style.display === "block" ? "none" : "block";
-    });
-    el("div", "", box);
-    const done = el("div", "go", box);
-    done.textContent = "DONE";
-    done.addEventListener("pointerdown", () => {
-      card.remove();
-      paused = false;
-    });
+    openPause();
   });
+
+  /** A card over everything that swallows taps meant for the game. */
+  const card = (cls = "") => {
+    const c = el("div", `fc-card ${cls}`, root);
+    c.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    return { card: c, box: el("div", "box", c) };
+  };
+  const button = (parent: HTMLElement, text: string, cls: string, onTap: () => void) => {
+    const b = el("div", cls, parent);
+    b.textContent = text;
+    b.addEventListener("click", () => {
+      sfx.pick();
+      onTap();
+    });
+    return b;
+  };
+
+  function openPause(): void {
+    if (paused || root.classList.contains("fc-menu")) return;
+    paused = true;
+    music.duck(true);
+    const { card: c, box } = card();
+    el("h1", "", box).textContent = "PAUSED";
+    const list = el("div", "fc-menu-list", box);
+    const close = () => {
+      c.remove();
+      paused = false;
+      music.duck(false);
+    };
+    button(list, "RESUME", "go", close);
+    button(list, "SETTINGS", "go alt", () => openSettings());
+    button(list, "HOW TO PLAY", "go alt", () => openHow());
+    const row = el("div", "row2", list);
+    button(row, "RESTART", "small", () => {
+      close();
+      pauseActions.restart();
+    });
+    button(row, "QUIT TO MENU", "small", () => {
+      close();
+      pauseActions.quit();
+    });
+  }
+
+  /** Every setting on one card: sound, view and controls. */
+  function openSettings(): void {
+    const wasPaused = paused;
+    paused = true;
+    const { card: c, box } = card();
+    box.classList.add("wide");
+    el("h1", "sm", box).textContent = "SETTINGS";
+    const grid = el("div", "fc-grid", box);
+    const head = (t: string) => (el("h3", "", grid).textContent = t);
+    const row = (label: string) => {
+      const r = el("div", "fc-opt", grid);
+      el("span", "", r).textContent = label;
+      return r;
+    };
+    const slider = <K extends "zoom" | "music" | "sound" | "shake">(label: string, key: K) => {
+      const input = document.createElement("input");
+      input.type = "range";
+      input.min = "0";
+      input.max = "1";
+      input.step = "0.05";
+      input.value = String(settings[key]);
+      input.addEventListener("input", () => setSetting(key, Number(input.value)));
+      input.addEventListener("change", () => sfx.pick());
+      row(label).appendChild(input);
+    };
+    const choice = <K extends "voice" | "camTurn">(label: string, key: K, options: Array<[Settings[K], string]>) => {
+      const seg = el("div", "fc-seg", row(label));
+      const btns = options.map(([v, text]) => {
+        const b = el("div", "seg", seg);
+        b.textContent = text;
+        b.addEventListener("click", () => {
+          setSetting(key, v);
+          btns.forEach((n, i) => n.classList.toggle("on", options[i][0] === v));
+          sfx.pick();
+          if (key === "voice" && v !== "off") announce("powerUp");
+        });
+        b.classList.toggle("on", settings[key] === v);
+        return b;
+      });
+    };
+    const toggle = <K extends "calm" | "leftHanded" | "bigButtons" | "vibrate">(label: string, key: K) => {
+      const t = el("div", "fc-tog", row(label));
+      t.classList.toggle("on", settings[key]);
+      t.addEventListener("click", () => {
+        setSetting(key, !settings[key]);
+        t.classList.toggle("on", settings[key]);
+        sfx.pick();
+      });
+    };
+    head("SOUND");
+    slider("Music", "music");
+    slider("Sounds", "sound");
+    choice("Voices", "voice", [
+      ["announcer", "ALL"],
+      ["chatter", "ANIMALS"],
+      ["off", "OFF"],
+    ]);
+    head("VIEW");
+    slider("Zoom", "zoom");
+    choice("Camera turn", "camTurn", [
+      ["slow", "SLOW"],
+      ["normal", "NORMAL"],
+      ["fast", "FAST"],
+    ]);
+    slider("Screen shake", "shake");
+    toggle("Calm effects", "calm");
+    head("CONTROLS");
+    toggle("Left handed", "leftHanded");
+    toggle("Big buttons", "bigButtons");
+    if (typeof navigator.vibrate === "function") toggle("Vibration", "vibrate");
+    if (new URLSearchParams(location.search).has("dev")) {
+      const feelBtn = el("div", "small", box);
+      feelBtn.textContent = "Feel tuning";
+      const tunePanel = buildTunePanel(box);
+      feelBtn.addEventListener("click", () => {
+        tunePanel.style.display = tunePanel.style.display === "block" ? "none" : "block";
+      });
+      el("div", "", box);
+    }
+    button(box, "DONE", "go", () => {
+      c.remove();
+      paused = wasPaused;
+    });
+  }
+
+  /** The rules in six tiles, matching the colors of the buttons. */
+  function openHow(): void {
+    const wasPaused = paused;
+    paused = true;
+    const { card: c, box } = card();
+    box.classList.add("wide");
+    el("h1", "sm", box).textContent = "HOW TO PLAY";
+    const how = el("div", "fc-how", box);
+    const left = settings.leftHanded ? "right" : "left";
+    const tiles: Array<[string, string, string]> = [
+      ["STEER", "#9b7be8", `Drag anywhere on the ${left} side and your animal heads that way.`],
+      ["FLAGS", FLAG_FREE, "Grab a flag from the enemy base and bring it home to score."],
+      ["THROW", "#ff6b5b", "Throw firecrackers. Three hits knock a rival out for a moment."],
+      ["JUMP", "#46b4e8", "Hop over trouble. Flyers stay up while you hold it."],
+      ["ITEM", "#ff6b9a", "Drive through a gift box for a power up, then tap ITEM."],
+      ["DIVE", "#2fb5b0", "Swimmers can dive under the water to slip past."],
+    ];
+    for (const [name, color, text] of tiles) {
+      const d = el("div", "", how);
+      const b = el("b", "", d);
+      b.textContent = name;
+      b.style.background = color;
+      el("div", "", d).textContent = text;
+    }
+    el("p", "", box).textContent = "Carrying a flag? A hit drops it. Touch your own dropped flag to send it home.";
+    button(box, "GOT IT", "go", () => {
+      c.remove();
+      paused = wasPaused;
+    });
+  }
+
+  /** Full screen where the browser allows it; on iPhone, how to add it to the Home Screen. */
+  function openFullscreen(): void {
+    if (requestFullscreen()) return;
+    const { card: c, box } = card();
+    el("h1", "sm", box).textContent = "PLAY FULL SCREEN";
+    el("p", "", box).textContent = "Safari keeps its bars on web pages, but a Home Screen game has none:";
+    const steps = el("ol", "fc-steps", box);
+    for (const step of ["Tap the Share button in Safari", "Choose Add to Home Screen", "Open Flag Catch from your Home Screen"]) el("li", "", steps).textContent = step;
+    el("p", "", box).textContent = "Your points and unlocks come along.";
+    button(box, "OK", "go", () => c.remove());
+  }
+
+  // Settings that change the layout take effect at once.
+  const applyLayout = () => {
+    root.classList.toggle("fc-left", settings.leftHanded);
+    root.classList.toggle("fc-big", settings.bigButtons);
+    hint.textContent = `Drag on the ${settings.leftHanded ? "right" : "left"} to steer`;
+  };
+  onSettings(applyLayout);
+  applyLayout();
+
+  // A soft glow round the edges for big moments, and floating text over the action.
+  const vig = el("div", "fc-vig", root);
+  let vigTimer = 0;
+  const pops = el("div", "fc-pops", root);
 
   const rotate = el("div", "fc-rotate", root);
   el("div", "phone", rotate);
@@ -384,7 +593,58 @@ export function createHud(controls: Controls): Hud {
     },
     get camScale() {
       // Slider 0 is zoomed out, 1 is zoomed in; the middle is the default view.
-      return 1.35 - zoom * 0.7;
+      return 1.35 - settings.zoom * 0.7;
+    },
+    pause: openPause,
+    setPauseActions(a) {
+      pauseActions = a;
+    },
+    flash(color, strength = 1) {
+      const k = Math.min(1, strength) * (settings.calm ? 0.5 : 1);
+      vig.style.transition = "none";
+      vig.style.boxShadow = `inset 0 0 ${Math.round(60 + 60 * k)}px ${Math.round(18 + 30 * k)}px ${color}`;
+      vig.style.opacity = String(0.55 + 0.4 * k);
+      vigTimer = 0.12;
+    },
+    floatText(x, y, text, color = "#ffd166") {
+      if (pops.childElementCount > 12) pops.firstElementChild?.remove();
+      const n = el("div", "fc-pop", pops);
+      n.textContent = text;
+      n.style.left = `${x}px`;
+      n.style.top = `${y}px`;
+      n.style.color = color;
+      window.setTimeout(() => n.remove(), 1000);
+    },
+    showTitle(points, onPlay) {
+      root.classList.add("fc-menu");
+      const t = el("div", "fc-title", root);
+      const logo = el("h2", "fc-logo", t);
+      el("span", "a", logo).textContent = "FLAG";
+      el("span", "flag", logo);
+      el("span", "b", logo).textContent = "CATCH";
+      el("div", "tag", t).textContent = points > 0 ? `★ ${fmt(points)} POINTS` : "Steal their flags and bring them home!";
+      const play = el("div", "big", t);
+      play.textContent = "PLAY";
+      play.addEventListener("click", (e) => {
+        e.stopPropagation();
+        sfx.go();
+        t.classList.add("out");
+        window.setTimeout(() => {
+          t.remove();
+          onPlay();
+        }, 220);
+      });
+      const row = el("div", "row3", t);
+      button(row, "HOW TO PLAY", "chip", openHow);
+      button(row, "SETTINGS", "chip", openSettings);
+      if (!isFullscreen()) {
+        const fs = button(row, "FULL SCREEN", "chip hot", () => {
+          openFullscreen();
+          if (isFullscreen()) fs.remove();
+        });
+      }
+      el("div", "foot", t).textContent = "A TrueAIGaming.com game";
+      t.addEventListener("pointerdown", (e) => e.stopPropagation());
     },
     update(m, c, camYaw) {
       scoreA.textContent = String(m.scores[0]);
@@ -509,6 +769,14 @@ export function createHud(controls: Controls): Hud {
 
       drawMap(mctx, mapBg, m, map.width, map.height);
 
+      if (vigTimer > 0) {
+        vigTimer -= 1 / 60;
+        if (vigTimer <= 0) {
+          vig.style.transition = "";
+          vig.style.opacity = "0";
+        }
+      }
+      pauseChip.classList.toggle("hide", m.over);
       if (callTimer > 0) {
         callTimer -= 1 / 60;
         if (callTimer <= 0) call.classList.remove("show");
@@ -522,7 +790,7 @@ export function createHud(controls: Controls): Hud {
       call.classList.add("show");
       callTimer = 0.9;
     },
-    showSelect(current, chosen, info, onPick, onPlay, onWorld) {
+    showSelect(current, chosen, info, onPick, onPlay, onWorld, onBack) {
       let { mode, size, medic, difficulty, world } = chosen;
       const { progress, open } = info;
       root.classList.add("fc-menu");
@@ -537,21 +805,14 @@ export function createHud(controls: Controls): Hud {
       const next = nextUnlock(progress);
       const nextIds = next ? [...(next.animals ?? []), ...(next.worlds ?? []), ...(next.modes ?? [])].filter((id) => !open.has(id)) : [];
       pts.innerHTML = `<b>★ ${fmt(progress.points)}</b> POINTS` + (next && nextIds.length ? ` · NEXT: ${nextIds.map(unlockName).join(", ").toUpperCase()} AT ${fmt(next.at)}` : "");
-      // On an iPhone in Safari, point the way to full screen play.
-      const nav = navigator as Navigator & { standalone?: boolean };
-      if (/iPhone|iPad|iPod/.test(navigator.userAgent) && nav.standalone === false && !tipSeen()) {
-        const tip = el("div", "fc-tip", sel);
-        tip.textContent = "Tip: tap Share, then Add to Home Screen, to play full screen";
-        tip.addEventListener("pointerdown", (e) => {
-          e.stopPropagation();
-          tip.remove();
-          try {
-            localStorage.setItem(TIP_KEY, "1");
-          } catch {
-            // Private mode: the tip shows again next visit.
-          }
-        });
-      }
+      // Back to the title screen, and Settings from here too.
+      const corner = el("div", "fc-top-left", sel);
+      corner.style.pointerEvents = "auto";
+      button(corner, "‹ MENU", "fc-chip fc-back", () => {
+        sel.remove();
+        onBack();
+      });
+      button(corner, "SETTINGS", "fc-chip fc-back", openSettings);
       // Mode and team size share one panel above the animals, so nothing overlaps.
       const setup = el("div", "fc-setup", sel);
       setup.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -721,9 +982,11 @@ export function createHud(controls: Controls): Hud {
         void count.offsetWidth;
         count.classList.add("show");
         i++;
+        if (i === 1) announce("ready");
         if (last) {
           // GO! hands over control at once; its pop finishes on its own.
           sfx.go();
+          announce("go");
           onDone();
         } else {
           sfx.count();
@@ -732,7 +995,7 @@ export function createHud(controls: Controls): Hud {
       };
       next();
     },
-    showResults(m, stats, award, onAgain, onChange) {
+    showResults(m, stats, award, onAgain, onChange, progress) {
       const card = el("div", "fc-card fc-results", root);
       const box = el("div", "box", card);
       const [a, b] = m.scores;
@@ -744,7 +1007,7 @@ export function createHud(controls: Controls): Hud {
         const p = el("div", "fc-pill", board);
         p.style.background = TEAMS[team].color;
         el("small", "", p).textContent = TEAMS[team].name.toUpperCase();
-        el("b", "", p).textContent = String(score);
+        countUp(el("b", "", p), score);
       };
       pill(0, a);
       el("div", "fc-vs", board).textContent = m.mode === "hoard" ? "POINTS" : "FLAGS";
@@ -753,7 +1016,7 @@ export function createHud(controls: Controls): Hud {
       const row = el("div", "fc-stats", box);
       const stat = (n: number, label: string) => {
         const c = el("div", "", row);
-        el("b", "", c).textContent = String(n);
+        countUp(el("b", "", c), n);
         el("small", "", c).textContent = label;
       };
       stat(stats.banks, m.mode === "hoard" ? "BANKED" : "SCORED");
@@ -772,6 +1035,18 @@ export function createHud(controls: Controls): Hud {
           const opened = el("div", "", box);
           for (const id of award.opened) el("span", "fc-new", opened).textContent = `NEW: ${unlockName(id).toUpperCase()}`;
           sfx.bank(0, 1);
+        }
+        // How close the next unlock is, filling from where this match started.
+        const next = progress && nextUnlock(progress);
+        if (progress && next) {
+          const prevAt = [...UNLOCKS].reverse().find((u) => u.at <= progress.points)?.at ?? 0;
+          const span = next.at - prevAt;
+          const bar = el("div", "fc-next", box);
+          const ids = [...(next.animals ?? []), ...(next.worlds ?? []), ...(next.modes ?? [])];
+          el("small", "", bar).textContent = `NEXT: ${ids.map(unlockName).join(", ").toUpperCase()} · ${fmt(next.at - progress.points)} TO GO`;
+          const fill = el("u", "", el("i", "", bar));
+          fill.style.width = `${Math.round((Math.max(0, progress.points - award.gained - prevAt) / span) * 100)}%`;
+          window.setTimeout(() => (fill.style.width = `${Math.round(((progress.points - prevAt) / span) * 100)}%`), 500);
         }
       }
       const btns = el("div", "row2", box);
@@ -794,11 +1069,34 @@ export function createHud(controls: Controls): Hud {
   };
 }
 
-const TIP_KEY = "flagcatch.tip";
+/** Numbers on the results card tick up from zero. */
+function countUp(node: HTMLElement, to: number): void {
+  node.textContent = "0";
+  if (to <= 0) return;
+  const start = performance.now() + 350;
+  const dur = Math.min(900, 300 + to * 40);
+  const tick = (now: number) => {
+    const k = Math.max(0, Math.min(1, (now - start) / dur));
+    node.textContent = String(Math.round(to * (1 - (1 - k) * (1 - k))));
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
 
-function tipSeen(): boolean {
+function isFullscreen(): boolean {
+  const nav = navigator as Navigator & { standalone?: boolean };
+  return !!document.fullscreenElement || nav.standalone === true || matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches;
+}
+
+/** Ask the browser for full screen and a landscape lock; false where it can't (iPhone Safari). */
+export function requestFullscreen(): boolean {
+  const doc = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
+  const req = doc.requestFullscreen?.bind(doc) ?? doc.webkitRequestFullscreen?.bind(doc);
+  if (!req || !(document.fullscreenEnabled ?? true)) return false;
   try {
-    return localStorage.getItem(TIP_KEY) === "1";
+    const p = req() as unknown as Promise<void> | undefined;
+    p?.then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> })?.lock?.("landscape")).catch(() => {});
+    return true;
   } catch {
     return false;
   }

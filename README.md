@@ -64,11 +64,34 @@ and Home Isle. Players from before unlocks keep the first seven animals.
 - Score pills pop when a team scores, and the last ten seconds tick out loud.
 - An original looping island tune plays: calm on the menus, with drums in a
   match, then faster and busier for the last 30 seconds (or near 1,000 in
-  Hoard). Settings has a Music switch.
-- The results card shows both scores, your grabs, scores, knockouts, saves
-  and points, and the match MVP. A win throws confetti.
+  Hoard).
+- A cheery announcer calls the big moments (grabs, scores, knockouts, the
+  last 30 and 10 seconds, the result) in the phone's own voice, and the
+  animals chatter in made up syllables, each at its own pitch: happy when they
+  grab, a cheer when they score, a yelp when hit. Busy moments keep only the
+  most important call, and small calls don't repeat within six seconds.
+- Big moments glow round the screen edges (gold for your score, red when
+  you're hit), your points float up over your head, the view kicks wider when
+  you score, stunned animals get circling stars, hard landings puff dust, and
+  carried flags leave a sparkle trail. Phones that allow it buzz a little.
+- The results card counts its numbers up, shows the match MVP and fills a bar
+  toward your next unlock. A win throws confetti and your animal twirls.
 - Add it to your home screen (Share, then Add to Home Screen on iPhone) to
-  play full screen with its own icon.
+  play full screen with its own icon. The title screen's Full Screen button
+  does it in one tap on Android and computers, and shows the steps on iPhone,
+  where Safari doesn't let web pages hide its bars.
+
+## Menus and settings
+
+- The title screen has Play, How to Play, Settings and Full Screen.
+- The pick screen has Menu (back to the title) and Settings in its corner.
+- In a match, the pause button (top left) opens Resume, Settings, How to Play,
+  Restart and Quit to menu. Leaving the app pauses the match too.
+- Settings, saved on the phone: Music and Sounds volume; Voices (announcer
+  and animals, animals only, or off); Zoom; Camera turn (slow, normal, fast);
+  Screen shake; Calm effects (fewer sparks, no lightning flash, a softer
+  glow); Left handed (steer on the right, buttons on the left); Big buttons;
+  Vibration where the phone has it. `?dev` adds the feel tuning sliders.
 
 ## Telling teams apart
 
@@ -149,8 +172,10 @@ A station's box comes back 8 seconds after it is taken.
 
 ## Status
 
-Phase 6: eight worlds, points and unlocks, and Playful mode, on top of power
-ups and team sizes from 8v8 to 64v64. Thirteen animals to pick from:
+Phase 7: a title screen, pause menu, settings for sound, view and controls,
+an announcer and animal chatter, and a juice pass. Phase 6 brought eight
+worlds, points and unlocks, and Playful mode, on top of power ups and team
+sizes from 8v8 to 64v64. Thirteen animals to pick from:
 
 - Land: Rally Lion, Moto Bird (sharp turns, big hops), Skate Mammoth (heavy,
   shrugs off pops fast), Turbo Wolf (a fast four wheeled car with a launcher)
@@ -165,8 +190,9 @@ ups and team sizes from 8v8 to 64v64. Thirteen animals to pick from:
 CPU animals are mirrored slot by slot across the teams, and the rival in your
 slot rides your animal, so neither side starts with the better line up.
 
-A match opens on the pick screen, counts down 3, 2, 1, GO!, and ends on a results
-card. Online play comes next.
+The game opens on the title screen, then the pick screen; a match counts down
+3, 2, 1, GO!, and ends on a results card. Next is launch on TrueAIGaming.com,
+then online play.
 
 ## Run it
 
@@ -188,8 +214,7 @@ Test games with `?per` or `?time` don't pay points.
   climbs), Throw and Item on the right. Swimmers get a Dive button in water; its
   ring drains with their breath.
 - Keyboard: WASD or arrows, Space jumps (hold to fly), J throws, E uses your item, R plants a respawn flag as a medic, Shift or L dives.
-- Pinch and double tap never zoom the page. Zoom the camera from SETTINGS
-  (top left), which also holds the feel tuning sliders and pauses the match.
+- Pinch and double tap never zoom the page. Zoom the camera from Settings.
 
 ## Layout
 
@@ -200,4 +225,5 @@ Test games with `?per` or `?time` don't pay points.
 - `src/animals.ts`: per animal speeds by medium and shot stats.
 - `src/critters.ts`: the animal models and their rigs.
 - `src/main.ts`, `src/world.ts`, `src/models.ts`, `src/fx.ts`: rendering.
-- `src/hud.ts`, `src/input.ts`, `src/audio.ts`: thumbs, HUD and sound.
+- `src/hud.ts`, `src/input.ts`, `src/audio.ts`: menus, thumbs, HUD, sound and animal chatter.
+- `src/voice.ts`: the announcer. `src/settings.ts`: saved player settings.

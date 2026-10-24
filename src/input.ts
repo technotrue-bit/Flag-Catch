@@ -1,8 +1,11 @@
 /**
  * Thumbs and keys. The left thumb points where to go: drag from wherever it
  * lands, and the animal heads that way relative to the camera, like the
- * original's stylus. The right thumb has Jump, Throw and Item.
+ * original's stylus. The right thumb has Jump, Throw and Item. Left handed
+ * players can swap the sides in Settings.
  */
+import { settings } from "./settings";
+
 export interface Controls {
   /** Screen space steer: x right, y forward, length 0..1. */
   steerX: number;
@@ -52,7 +55,8 @@ export function createControls(surface: HTMLElement): Controls {
 
   surface.addEventListener("pointerdown", (e) => {
     if (stickId !== null) return;
-    if (e.clientX > window.innerWidth * 0.5) return;
+    const right = e.clientX > window.innerWidth * 0.5;
+    if (right !== settings.leftHanded) return;
     stickId = e.pointerId;
     c.stick.active = true;
     c.stick.ox = c.stick.x = e.clientX;
