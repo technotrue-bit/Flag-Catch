@@ -10,7 +10,7 @@ import type { Controls } from "./input";
 import { FLAG_FREE, ME_GLOW, PALETTE, TEAMS } from "./palette";
 import { music, sfx } from "./audio";
 import { type Settings, onSettings, setSetting, settings } from "./settings";
-import { announce } from "./voice";
+import { cue } from "./cues";
 import { type Difficulty, HOARD_TARGET, ITEMS, type ItemKind, type Match, type Mode, nearestBase, tune } from "./sim";
 import { type Award, type Progress, UNLOCKS, costOf, nextUnlock } from "./progress";
 import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, currentWorld, groundHeight, landOf, onBridge } from "./terrain";
@@ -456,7 +456,7 @@ export function createHud(controls: Controls): Hud {
       input.addEventListener("change", () => sfx.pick());
       row(label).appendChild(input);
     };
-    const choice = <K extends "voice" | "camTurn">(label: string, key: K, options: Array<[Settings[K], string]>) => {
+    const choice = <K extends "camTurn">(label: string, key: K, options: Array<[Settings[K], string]>) => {
       const seg = el("div", "fc-seg", row(label));
       const btns = options.map(([v, text]) => {
         const b = el("div", "seg", seg);
@@ -465,29 +465,26 @@ export function createHud(controls: Controls): Hud {
           setSetting(key, v);
           btns.forEach((n, i) => n.classList.toggle("on", options[i][0] === v));
           sfx.pick();
-          if (key === "voice" && v !== "off") announce("powerUp");
         });
         b.classList.toggle("on", settings[key] === v);
         return b;
       });
     };
-    const toggle = <K extends "calm" | "leftHanded" | "bigButtons" | "vibrate">(label: string, key: K) => {
+    const toggle = <K extends "chimes" | "calm" | "leftHanded" | "bigButtons" | "vibrate">(label: string, key: K) => {
       const t = el("div", "fc-tog", row(label));
       t.classList.toggle("on", settings[key]);
       t.addEventListener("click", () => {
         setSetting(key, !settings[key]);
         t.classList.toggle("on", settings[key]);
-        sfx.pick();
+        // Turning chimes on plays one so you hear what they are.
+        if (key === "chimes" && settings[key]) cue("score");
+        else sfx.pick();
       });
     };
     head("SOUND");
     slider("Music", "music");
     slider("Sounds", "sound");
-    choice("Voices", "voice", [
-      ["announcer", "ALL"],
-      ["chatter", "ANIMALS"],
-      ["off", "OFF"],
-    ]);
+    toggle("Chimes", "chimes");
     head("VIEW");
     slider("Zoom", "zoom");
     choice("Camera turn", "camTurn", [

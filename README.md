@@ -74,11 +74,12 @@ and Home Isle. Players from before unlocks keep the first seven animals.
 - An original looping island tune plays: calm on the menus, with drums in a
   match, then faster and busier for the last 30 seconds (or near 1,000 in
   Hoard).
-- A cheery announcer (quiet during the countdown) calls the big moments (grabs, scores, knockouts, the
-  last 30 and 10 seconds, the result) in the phone's own voice, and the
-  animals chatter in made up syllables, each at its own pitch: happy when they
-  grab, a cheer when they score, a yelp when hit. Busy moments keep only the
-  most important call, and small calls don't repeat within six seconds.
+- No spoken voices. The big moments (grabs, scores, saves, knockouts, power
+  ups, the last 30 and 10 seconds, the result, a new best or unlock) each ring
+  a short bell chime in F major, the key of the music. Nearby animals react
+  with a soft tone on their own note: up when happy, a little run when they
+  score, down when sad. Busy moments keep only the most important chime, and
+  small chimes don't repeat within four seconds.
 - Big moments glow round the screen edges (gold for your score, red when
   you're hit), your points float up over your head, the view kicks wider when
   you score, stunned animals get circling stars, hard landings puff dust, and
@@ -96,8 +97,8 @@ and Home Isle. Players from before unlocks keep the first seven animals.
 - The pick screen has Menu (back to the title) and Settings in its corner.
 - In a match, the pause button (top left) opens Resume, Settings, How to Play,
   Restart and Quit to menu. Leaving the app pauses the match too.
-- Settings, saved on the phone: Music and Sounds volume; Voices (announcer
-  and animals, animals only, or off); Zoom; Camera turn (slow, normal, fast);
+- Settings, saved on the phone: Music and Sounds volume (Sounds covers the
+  chimes); Chimes on or off; Zoom; Camera turn (slow, normal, fast);
   Screen shake; Calm effects (fewer sparks, no lightning flash, a softer
   glow); Left handed (steer on the right, buttons on the left); Big buttons;
   Vibration where the phone has it. `?dev` adds the feel tuning sliders.
@@ -182,7 +183,7 @@ A station's box comes back 8 seconds after it is taken.
 ## Status
 
 Phase 7: a title screen, pause menu, settings for sound, view and controls,
-an announcer and animal chatter, and a juice pass. Phase 6 brought eight
+cue chimes in place of voices, and a juice pass. Phase 6 brought eight
 worlds, points and unlocks, and Playful mode, on top of power ups and team
 sizes from 8v8 to 64v64. Thirteen animals to pick from:
 
@@ -234,5 +235,5 @@ Test games with `?per` or `?time` don't pay points.
 - `src/animals.ts`: per animal speeds by medium and shot stats.
 - `src/critters.ts`: the animal models and their rigs.
 - `src/main.ts`, `src/world.ts`, `src/models.ts`, `src/fx.ts`: rendering.
-- `src/hud.ts`, `src/input.ts`, `src/audio.ts`: menus, thumbs, HUD, sound and animal chatter.
-- `src/voice.ts`: the announcer. `src/settings.ts`: saved player settings.
+- `src/hud.ts`, `src/input.ts`, `src/audio.ts`: menus, thumbs, HUD, sound, chimes and animal mood tones.
+- `src/cues.ts`: the cue chimes for big moments. `src/settings.ts`: saved player settings.

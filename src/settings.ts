@@ -1,11 +1,10 @@
 /**
- * Player settings, kept on the phone: sound levels, voices, view comfort
+ * Player settings, kept on the phone: sound levels, chimes, view comfort
  * and control layout. Pure logic over a tiny store so the tests can run it;
  * the game reads `settings` and listens for changes.
  */
 import type { Store } from "./progress";
 
-export type VoiceMode = "announcer" | "chatter" | "off";
 export type CamTurn = "slow" | "normal" | "fast";
 
 export interface Settings {
@@ -14,8 +13,8 @@ export interface Settings {
   /** 0 to 1. */
   music: number;
   sound: number;
-  /** An announcer and animal chatter, chatter alone, or quiet. */
-  voice: VoiceMode;
+  /** Cue chimes for the big moments and the animals' mood tones. */
+  chimes: boolean;
   /** Screen shake strength, 0 to 1. */
   shake: number;
   /** Fewer sparks and no lightning flash, for comfort or older phones. */
@@ -33,7 +32,7 @@ export const DEFAULTS: Readonly<Settings> = {
   zoom: 0.5,
   music: 0.8,
   sound: 0.9,
-  voice: "announcer",
+  chimes: true,
   shake: 1,
   calm: false,
   camTurn: "normal",
@@ -55,12 +54,13 @@ export function loadSettings(store: Store | null): Settings {
   try {
     const raw = store.getItem(KEY);
     if (raw) {
-      const p = JSON.parse(raw) as Partial<Record<keyof Settings, unknown>>;
+      const p = JSON.parse(raw) as Partial<Record<keyof Settings | "voice", unknown>>;
       return {
         zoom: unit(p.zoom, s.zoom),
         music: unit(p.music, s.music),
         sound: unit(p.sound, s.sound),
-        voice: pick(p.voice, ["announcer", "chatter", "off"], s.voice),
+        // Chimes took the place of the old Voices switch; Voices off keeps them off.
+        chimes: bool(p.chimes, p.voice === "off" ? false : s.chimes),
         shake: unit(p.shake, s.shake),
         calm: bool(p.calm, s.calm),
         camTurn: pick(p.camTurn, ["slow", "normal", "fast"], s.camTurn),

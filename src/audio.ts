@@ -1,7 +1,8 @@
 /**
  * Tiny synth for every sound. Each effect is a few oscillators and a noise
- * burst, panned by where it happens relative to the camera. Music, effects
- * and animal chatter run on their own buses so Settings can set each level.
+ * burst, panned by where it happens relative to the camera. Music and
+ * effects (cue chimes included) run on their own buses so Settings can set
+ * each level.
  */
 import { onSettings, settings } from "./settings";
 
@@ -298,90 +299,104 @@ export const sfx = {
   },
 };
 
-/*
- * Animal chatter: a few made up syllables, sung through two vowel filters
- * so they sound like a tiny voice. Each animal has its own pitch, and the
- * mood shapes the tune: happy rises, sad sinks, ouch is one sharp yelp.
- */
-export type Mood = "happy" | "cheer" | "sad" | "ouch";
-const VOICE_PITCH: Record<string, number> = {
-  lion: 230,
-  wolf: 210,
-  penguin: 330,
-  croc: 160,
-  bird: 430,
-  eagle: 300,
-  mammoth: 125,
-  shark: 175,
-  goldfish: 480,
-  panther: 250,
-  flyfish: 390,
-  bat: 520,
-  frog: 270,
-};
-// First and second formants of a, e, i, o, u.
-const VOWELS: Array<[number, number]> = [
-  [800, 1200],
-  [420, 2200],
-  [300, 2700],
-  [460, 820],
-  [330, 700],
-];
-
-function syllable(f0: number, f1: number, when: number, dur: number, vowel: [number, number], pan: number, gain: number): void {
-  const dest = out(pan, gain);
-  if (!ctx || !dest) return;
-  const o = ctx.createOscillator();
-  o.type = "sawtooth";
-  o.frequency.setValueAtTime(f0, when);
-  o.frequency.exponentialRampToValueAtTime(Math.max(40, f1), when + dur);
-  const env = ctx.createGain();
-  env.gain.setValueAtTime(0.0001, when);
-  env.gain.exponentialRampToValueAtTime(1, when + 0.015);
-  env.gain.setValueAtTime(1, when + dur * 0.6);
-  env.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-  o.connect(env);
-  for (const [i, f] of vowel.entries()) {
-    const bp = ctx.createBiquadFilter();
-    bp.type = "bandpass";
-    bp.frequency.value = f;
-    bp.Q.value = 6;
-    const g = ctx.createGain();
-    g.gain.value = i === 0 ? 1.6 : 0.9;
-    env.connect(bp).connect(g).connect(dest);
-  }
-  o.start(when);
-  o.stop(when + dur + 0.02);
+export interface ChimeNote {
+  /** MIDI pitch. */
+  m: number;
+  /** Start, in seconds from now. */
+  at: number;
+  /** How long it rings, in seconds. */
+  dur: number;
+  /** A bell rings out with a soft overtone; a pluck is short and bright. */
+  kind: "bell" | "pluck";
 }
 
-/** A little burst of animal talk. */
-export function chatter(animal: string, mood: Mood, pan = 0, near = 1): void {
-  if (!ctx || settings.voice === "off" || near < 0.15) return;
-  const base = VOICE_PITCH[animal] ?? 260;
+/** Play a little tune of bell and pluck notes on the sounds bus. */
+export function chime(notes: readonly ChimeNote[], gain: number, pan = 0): void {
+  const dest = out(pan, gain);
+  if (!ctx || !dest) return;
   const t0 = ctx.currentTime + 0.02;
-  const count = mood === "ouch" ? 1 : mood === "cheer" ? 5 : mood === "sad" ? 3 : 3 + Math.floor(Math.random() * 2);
-  let t = t0;
-  for (let i = 0; i < count; i++) {
-    const k = count === 1 ? 0 : i / (count - 1);
-    const dur = mood === "ouch" ? 0.16 : mood === "sad" ? 0.17 : 0.085 + Math.random() * 0.04;
-    let from = base;
-    let to = base;
-    if (mood === "happy") {
-      from = base * (1 + k * 0.35 + (i % 2) * 0.12);
-      to = from * 1.08;
-    } else if (mood === "cheer") {
-      from = base * (1.15 + k * 0.5 + (i % 2) * 0.18);
-      to = from * 1.15;
-    } else if (mood === "sad") {
-      from = base * (1.1 - k * 0.3);
-      to = from * 0.82;
-    } else {
-      from = base * 1.9;
-      to = base * 0.9;
-    }
-    syllable(from, to, t, dur, VOWELS[Math.floor(Math.random() * VOWELS.length)], pan, 0.2 * near);
-    t += dur + 0.025;
+  for (const x of notes) {
+    const t = t0 + x.at;
+    const f = hz(x.m);
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(1, t + (x.kind === "pluck" ? 0.004 : 0.008));
+    env.gain.exponentialRampToValueAtTime(0.0001, t + x.dur);
+    env.connect(dest);
+    const body = ctx.createOscillator();
+    body.type = x.kind === "pluck" ? "triangle" : "sine";
+    body.frequency.setValueAtTime(f, t);
+    body.connect(env);
+    body.start(t);
+    body.stop(t + x.dur + 0.02);
+    // The bell's shimmer: a quiet overtone that fades faster than the note.
+    const over = ctx.createOscillator();
+    const og = ctx.createGain();
+    over.type = "sine";
+    over.frequency.setValueAtTime(f * (x.kind === "pluck" ? 2 : 3), t);
+    og.gain.setValueAtTime(x.kind === "pluck" ? 0.25 : 0.18, t);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + x.dur * 0.5);
+    over.connect(og).connect(env);
+    over.start(t);
+    over.stop(t + x.dur + 0.02);
   }
+}
+
+/*
+ * Animal moods: where the animals used to chatter, a soft tone on each
+ * animal's own note says how it feels. Happy steps up, cheer runs up
+ * three notes, sad steps down, ouch is one quick drop. Notes snap to the
+ * F major pentatonic so they never clash with the music.
+ */
+export type Mood = "happy" | "cheer" | "sad" | "ouch";
+// Each animal's note: small and quick animals high, big ones lower.
+const ANIMAL_NOTE: Record<string, number> = {
+  lion: 77,
+  wolf: 74,
+  penguin: 84,
+  croc: 69,
+  bird: 89,
+  eagle: 81,
+  mammoth: 65,
+  shark: 72,
+  goldfish: 91,
+  panther: 79,
+  flyfish: 86,
+  bat: 93,
+  frog: 81,
+};
+// F major pentatonic steps above F: F G A C D.
+const PENTA = [0, 2, 4, 7, 9];
+
+/** The pentatonic note `steps` away from `midi` (which should already be on the scale). */
+export function scaleStep(midi: number, steps: number): number {
+  const rel = midi - 53;
+  const oct = Math.floor(rel / 12);
+  let idx = PENTA.indexOf(rel - oct * 12);
+  if (idx < 0) idx = 0;
+  const k = oct * 5 + idx + steps;
+  return 53 + Math.floor(k / 5) * 12 + PENTA[((k % 5) + 5) % 5];
+}
+
+/** The notes an animal plays for a mood. */
+export function moodNotes(animal: string, mood: Mood): ChimeNote[] {
+  const base = ANIMAL_NOTE[animal] ?? 77;
+  const p = (steps: number, at: number, dur: number): ChimeNote => ({ m: scaleStep(base, steps), at, dur, kind: "pluck" });
+  if (mood === "happy") return [p(0, 0, 0.12), p(2, 0.08, 0.2)];
+  if (mood === "cheer") return [p(0, 0, 0.12), p(2, 0.07, 0.12), p(5, 0.14, 0.3)];
+  if (mood === "sad") return [p(1, 0, 0.16), p(-1, 0.12, 0.3)];
+  return [p(1, 0, 0.08), p(-1, 0.05, 0.16)];
+}
+
+let moodAt = 0;
+
+/** An animal nearby reacts to what just happened to it. */
+export function moodTone(animal: string, mood: Mood, pan = 0, near = 1): void {
+  if (!ctx || !settings.chimes || near < 0.15) return;
+  // A crowd of reactions at once would turn to mush; let one through at a time.
+  if (ctx.currentTime - moodAt < 0.18) return;
+  moodAt = ctx.currentTime;
+  chime(moodNotes(animal, mood), 0.1 * near, pan);
 }
 
 /** A short buzz on phones that allow it (not iPhone Safari). */

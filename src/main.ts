@@ -7,7 +7,7 @@
  */
 import * as THREE from "three";
 import { ANIMALS } from "./animals";
-import { type Mood, buzz, chatter, music, sfx, unlockAudio } from "./audio";
+import { type Mood, buzz, moodTone, music, sfx, unlockAudio } from "./audio";
 import { Fx } from "./fx";
 import { type MatchStats, createHud } from "./hud";
 import { createControls } from "./input";
@@ -20,7 +20,7 @@ import { MAPS, WATER_Y, groundHeight, landOf, mapFor, surfaceHeight } from "./te
 import { WORLDS } from "./worlds";
 import { type World, buildWorld } from "./world";
 import { camTurnRate, onSettings, settings } from "./settings";
-import { announce, hush, primeVoice } from "./voice";
+import { cue } from "./cues";
 
 const params = new URLSearchParams(location.search);
 const store = (() => {
@@ -335,9 +335,10 @@ function handleEvents(): void {
     const pan = (dx * right.x + dz * right.z) / dist;
     const near = Math.max(0.12, Math.min(1, 1 - dist / 80));
     const mine = "player" in e && e.player === 0;
-    // Animals nearby chatter about what just happened to them.
+    // Animals nearby react with a soft tone on their own note. Yours stays
+    // quiet when a cue chime already covers the moment.
     const talk = (id: number, mood: Mood) => {
-      if (id >= 0 && (id === 0 || near > 0.45)) chatter(match.players[id].def.id, mood, id === 0 ? 0 : pan, id === 0 ? 1 : near);
+      if (id > 0 && near > 0.45) moodTone(match.players[id].def.id, mood, pan, near);
     };
     switch (e.kind) {
       case "throw":
@@ -353,13 +354,13 @@ function handleEvents(): void {
           hitStop = 0.08;
           hud.call("POPPED!", "#ff6b5b");
           hud.flash("rgba(255,79,94,.75)", 1);
-          announce("popped");
+          cue("popped");
           buzz(140);
         } else if (e.by === 0) {
           shake = 0.25;
           hitStop = 0.05;
           hud.call("POP!", "#ffd166");
-          announce("knockout");
+          cue("knockout");
           buzz(40);
         }
         break;
@@ -376,11 +377,11 @@ function handleEvents(): void {
         if (mine) {
           hud.call("GOT ONE! RUN HOME!", FLAG_FREE);
           hud.flash("rgba(126,227,107,.7)", 0.7);
-          announce("grab");
+          cue("grab");
           buzz(30);
         } else if (thief.team === 1) {
           hud.call("THEY TOOK A FLAG!", FLAG_ENEMY);
-          announce("theyGrab");
+          cue("theyGrab");
         }
         break;
       }
@@ -389,7 +390,7 @@ function handleEvents(): void {
         fx.burst(e.x, e.y + 1, e.z, [TEAMS[e.team].color, "#ffffff"], 16, 6, 12, 0.22);
         if (mine) {
           hud.call("SAVED!", TEAMS[0].color);
-          announce("save");
+          cue("save");
           talk(0, "happy");
         }
         else if (e.team === 0 && e.player >= 0) hud.call("FLAG SAVED", TEAMS[0].light);
@@ -407,16 +408,16 @@ function handleEvents(): void {
         if (mine) {
           hud.call(hoard ? "FLAG BANKED!" : "YOU SCORED!", TEAMS[0].color);
           hud.flash("rgba(255,209,102,.85)", 1);
-          announce("score");
+          cue("score");
           buzz([40, 60, 40]);
           fovKick = 7;
           shake = Math.max(shake, 0.2);
         } else if (e.team === 0) {
           hud.call(hoard ? "TEAM BANKED A FLAG!" : "TEAM SCORED!", TEAMS[0].color);
-          announce("teamScore");
+          cue("teamScore");
         } else {
           hud.call(hoard ? "THEY BANKED ONE" : "THEY SCORED", TEAMS[1].light);
-          announce("theyScore");
+          cue("theyScore");
         }
         break;
       case "splash":
@@ -437,7 +438,7 @@ function handleEvents(): void {
         if (mine) {
           sfx.item(0, 1);
           hud.call(`GOT ${ITEMS[e.item].name}!`, "#ff6b9a");
-          announce("powerUp");
+          cue("powerUp");
         }
         fx.burst(e.x, 2, e.z, ["#ff6b9a", "#ffd166", "#ffffff"], mine ? 24 : 10, 5, 10, 0.2);
         break;
@@ -843,17 +844,17 @@ function watchClock(): void {
   if (match.mode === "hoard") {
     if (!said.almost && match.scores[0] >= HOARD_TARGET * 0.85) {
       said.almost = true;
-      announce("almost");
+      cue("almost");
     }
     return;
   }
   if (!said.thirty && match.timeLeft <= 30) {
     said.thirty = true;
-    announce("thirty");
+    cue("thirty");
   }
   if (!said.ten && match.timeLeft <= 10) {
     said.ten = true;
-    announce("ten");
+    cue("ten");
   }
 }
 
@@ -947,8 +948,7 @@ function frame(now: number): void {
     }
     const draw = match.scores[0] === match.scores[1];
     window.setTimeout(() => {
-      announce(won ? "win" : draw ? "draw" : "lose");
-      chatter(humanAnimal, won ? "cheer" : draw ? "happy" : "sad");
+      cue(won ? "win" : draw ? "draw" : "lose");
     }, 500);
     // Pay out points (not for test games with a forced clock or team size).
     const [a, b] = match.scores;
@@ -956,8 +956,8 @@ function frame(now: number): void {
       timeParam || params.has("per") ? null : progressStore.award(progress, worldId, match.players[0].score, a > b ? "win" : a === b ? "draw" : "loss");
     if (award) {
       progressStore.save(store, progress);
-      if (award.opened.length) window.setTimeout(() => phase === "results" && announce("unlock"), 2600);
-      else if (award.record) window.setTimeout(() => phase === "results" && announce("best"), 2200);
+      if (award.opened.length) window.setTimeout(() => phase === "results" && cue("unlock"), 2600);
+      else if (award.record) window.setTimeout(() => phase === "results" && cue("best"), 2200);
     }
     hud.showResults(
       match,
@@ -1048,7 +1048,6 @@ function showTitle(): void {
   if (music.level !== 0) music.play(0);
   hud.showTitle(progress.points, () => {
     unlockAudio();
-    primeVoice();
     showSelect();
   });
 }
@@ -1056,12 +1055,10 @@ function showTitle(): void {
 // Restart and Quit from the pause menu.
 hud.setPauseActions({
   restart() {
-    hush();
     freshMatch();
     startCountdown(true);
   },
   quit() {
-    hush();
     freshMatch();
     showSelect();
   },
@@ -1072,11 +1069,10 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden && (phase === "play" || phase === "countdown")) hud.pause();
 });
 
-// Phones only start sound after a touch, so wake audio and speech on the first one.
+// Phones only start sound after a touch, so wake audio on the first one.
 for (const kind of ["pointerup", "touchend", "keydown"]) {
   window.addEventListener(kind, () => unlockAudio(), { passive: true });
 }
-window.addEventListener("pointerup", () => primeVoice(), { once: true, passive: true });
 
 const applySettings = () => {
   fx.amount = settings.calm ? 0.4 : 1;
