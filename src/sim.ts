@@ -287,8 +287,9 @@ export interface Player {
 
 /**
  * Capture the flag rules. Each team's flags start in its own base. Steal
- * one from the enemy base and bring it to yours to score; it then sits in
- * your base and they can steal it back. A popped carrier drops the flag:
+ * one from the enemy base and bring it to yours to score. With one flag a
+ * side (Capture and Playful) it then goes back to its owners; in Hoard it
+ * sits in your base and they can steal it back. A popped carrier drops the flag:
  * its owners touch it to send it home, the thieves can pick it up again,
  * and left alone it goes home on its own.
  */
@@ -296,6 +297,8 @@ export type FlagState = "home" | "carried" | "dropped";
 
 export interface Flag {
   id: number;
+  /** The team whose flag it is: it always wears their color. */
+  owner: Team;
   /** The team whose base the flag belongs to right now. */
   team: Team;
   state: FlagState;
@@ -422,6 +425,8 @@ export interface Match {
   over: boolean;
   players: Player[];
   flags: Flag[];
+  /** One flag a side means one big flag each, standing in the middle of its base. */
+  flagsPerTeam: number;
   fires: Firecracker[];
   /** Main bases first (index = team), then any outposts. */
   bases: Base[];
@@ -500,8 +505,8 @@ export function createMatch(opts: MatchOptions): Match {
       const b = i < atMain ? own[0] : own[1 + ((i - atMain) % (own.length - 1))];
       const slot = used.get(b.id) ?? 0;
       used.set(b.id, slot + 1);
-      const [x, z] = baseSlot(b, slot, map.baseRadius);
-      flags.push({ id: flags.length, team, state: "home", x, y: surfaceHeight(x, z), z, carrier: -1, slot, base: b.id, timer: 0 });
+      const [x, z] = homeSpot(b, slot, map.baseRadius, flagsPerTeam);
+      flags.push({ id: flags.length, owner: team, team, state: "home", x, y: surfaceHeight(x, z), z, carrier: -1, slot, base: b.id, timer: 0 });
     }
   }
   const spots = map.gigantic ? [...STATION_SPOTS, ...GIGANTIC_STATION_SPOTS] : STATION_SPOTS;
@@ -530,6 +535,7 @@ export function createMatch(opts: MatchOptions): Match {
     over: false,
     players,
     flags,
+    flagsPerTeam,
     fires: [],
     bases,
     respawns: [],
@@ -1294,11 +1300,17 @@ export function baseSlot(b: Base, slot: number, padRadius = 4.2): [number, numbe
   return [b.x, b.z];
 }
 
+/** Where a home flag stands: one big flag a side takes the middle of the base, then the rings. */
+function homeSpot(b: Base, slot: number, padRadius: number, flagsPerTeam: number): [number, number] {
+  if (flagsPerTeam !== 1) return baseSlot(b, slot, padRadius);
+  return slot === 0 ? [b.x, b.z] : baseSlot(b, slot - 1, padRadius);
+}
+
 function placeHome(m: Match, flag: Flag, base: Base): void {
   const taken = new Set(m.flags.filter((f) => f !== flag && f.base === base.id && f.state === "home").map((f) => f.slot));
   let slot = 0;
   while (taken.has(slot)) slot++;
-  const [x, z] = baseSlot(base, slot, m.baseRadius);
+  const [x, z] = homeSpot(base, slot, m.baseRadius, m.flagsPerTeam);
   flag.team = base.team;
   flag.base = base.id;
   flag.state = "home";
@@ -1322,8 +1334,10 @@ function stepFlags(m: Match): void {
         c.score += 25;
         // In Hoard the flag pays out by sitting in the base instead.
         if (m.mode !== "hoard") m.scores[c.team] += 1;
-        // In Playful the one flag goes straight back to its owners' base.
-        placeHome(m, flag, m.mode === "playful" ? m.bases[flag.team] : base);
+        // With one flag a side (Playful, and Capture now) it goes straight
+        // back to its owners' base, so both teams always have one to steal.
+        const back = m.mode !== "hoard" && m.flagsPerTeam === 1;
+        placeHome(m, flag, back ? m.bases[flag.owner] : base);
         m.events.push({ kind: "bank", x: base.x, y: surfaceHeight(base.x, base.z), z: base.z, player: c.id, team: c.team });
       }
       continue;

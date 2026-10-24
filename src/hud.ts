@@ -754,7 +754,7 @@ export function createHud(controls: Controls): Hud {
             best = d;
             tx = f.x;
             tz = f.z;
-            color = TEAMS[f.team].color;
+            color = TEAMS[f.owner].color;
           }
         }
       }
@@ -1185,6 +1185,28 @@ function drawMapBackground(w: number, h: number): HTMLCanvasElement {
   return c;
 }
 
+/** A little flag pin whose point sits on (x, y). */
+function mapPin(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, s: number): void {
+  const r = 3.6 * s;
+  const cy = y - 6.5 * s;
+  ctx.beginPath();
+  ctx.arc(x, cy, r, Math.PI * 0.8, Math.PI * 2.2);
+  ctx.lineTo(x, y);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.2 * s;
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(x - 1.4 * s, cy - 2.2 * s, 0.8 * s, 4.4 * s);
+  ctx.beginPath();
+  ctx.moveTo(x - 0.6 * s, cy - 2.2 * s);
+  ctx.lineTo(x + 2.2 * s, cy - 1.2 * s);
+  ctx.lineTo(x - 0.6 * s, cy);
+  ctx.fill();
+}
+
 function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match, w: number, h: number): void {
   ctx.clearRect(0, 0, w, h);
   ctx.save();
@@ -1210,22 +1232,12 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
     const r = b.main ? 5 : 3.5;
     ctx.fillStyle = TEAMS[b.team].color;
     ctx.fillRect(mapX(b.z, w) - r * s, mapY(b.x, h) - r * s, 2 * r * s, 2 * r * s);
-    // Pips for how many flags this base holds right now.
-    const held = m.flags.filter((f) => f.base === b.id && f.state === "home").length;
+    // Pips for how many flags this base holds right now (big flags get a pin instead).
+    const held = m.flagsPerTeam === 1 ? 0 : m.flags.filter((f) => f.base === b.id && f.state === "home").length;
     ctx.fillStyle = "#ffffff";
     for (let i = 0; i < held; i++) ctx.fillRect(mapX(b.z, w) - 6 * s + (i % 5) * 2.6 * s, mapY(b.x, h) + (b.team === 0 ? 7 : -9) * s - Math.floor(i / 5) * 2.6 * s, 2 * s, 2 * s);
   }
-  for (const f of m.flags) {
-    if (f.state !== "dropped") continue;
-    // Dropped flags stand out; the ones at home sit inside the base square.
-    ctx.fillStyle = TEAMS[f.team].color;
-    ctx.beginPath();
-    ctx.arc(mapX(f.z, w), mapY(f.x, h), 3.5 * s, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = PALETTE.ink;
-    ctx.lineWidth = s;
-    ctx.stroke();
-  }
+
   // Smaller dots when the teams are big, so a crowd still reads.
   const dot = m.players.length > 40 ? 1.6 : m.players.length > 20 ? 2.2 : 3;
   for (const p of m.players) {
@@ -1242,6 +1254,13 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
       ctx.lineWidth = 2 * s;
       ctx.stroke();
     }
+  }
+  // Flag pins on top: every flag on the move, and big flags at home too, in
+  // their own team's color. A carried one rides its carrier's dot.
+  for (const f of m.flags) {
+    if (f.state === "home" && m.flagsPerTeam !== 1) continue;
+    const c = f.state === "carried" ? m.players[f.carrier] : f;
+    mapPin(ctx, mapX(c.z, w), mapY(c.x, h), TEAMS[f.owner].color, s * (f.state === "home" ? 0.9 : 1.1));
   }
   ctx.restore();
 }

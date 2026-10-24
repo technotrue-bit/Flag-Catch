@@ -12,7 +12,7 @@ import { Fx } from "./fx";
 import { type MatchStats, createHud } from "./hud";
 import { createControls } from "./input";
 import { type AnimalRig, buildAnimal } from "./critters";
-import { type FlagRig, buildFlag, buildMedicBadge, buildRespawnFlag, toon } from "./models";
+import { type FlagRig, buildFlag, buildMedicBadge, buildRespawnFlag, toon, waveFlag } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, ME_GLOW, TEAMS } from "./palette";
 import { type Difficulty, HOARD_TARGET, ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
 import * as progressStore from "./progress";
@@ -155,6 +155,7 @@ const starGeo = new THREE.OctahedronGeometry(0.16, 0);
 const dizzyMat = new THREE.MeshBasicMaterial({ color: "#ffe066" });
 const DUST = ["#ffffff", "#f2e6c8"];
 const slope = new THREE.Vector3();
+const mount = new THREE.Vector3();
 const WAKE = ["#ffffff", "#d8f6f7"];
 const EMBERS = ["#ffb347", "#ff7a2f"];
 // Animals beyond the fog are hidden, which matters with 128 of them.
@@ -164,7 +165,9 @@ function newMatch(seed: number): Match {
   const map = mapFor(perTeam);
   // Hoard ends at the points target; the 15 minute cap only stops a stalemate.
   const duration = mode === "hoard" ? 900 : timeParam || map.duration;
-  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam: map.flagsPerTeam, mode, map, humanMedic, difficulty, world: worldId });
+  // Capture plays for one big flag a side; Hoard needs a pile to fight over.
+  const flagsPerTeam = mode === "hoard" ? map.flagsPerTeam : 1;
+  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam, mode, map, humanMedic, difficulty, world: worldId });
 }
 
 function rebuildViews(): void {
@@ -176,8 +179,10 @@ function rebuildViews(): void {
   views = match.players.map((p) => makeView(p.def.id, p.team, p.id === 0));
   for (const f of flagViews) scene.remove(f.root);
   flagViews.length = 0;
-  for (let i = 0; i < match.flags.length; i++) {
-    const f = buildFlag();
+  for (const flag of match.flags) {
+    const team = TEAMS[flag.owner];
+    const f = buildFlag(team.color, team.light, team.shape);
+    (f.marker.material as THREE.SpriteMaterial).sizeAttenuation = false;
     scene.add(f.root);
     flagViews.push(f);
   }
@@ -614,37 +619,52 @@ function syncViews(t: number, dt: number): void {
     }
   }
 
-  // Flags wear the color of the base they belong to.
+  // Each flag wears its own team's color wherever it goes. One flag a side
+  // means big flags; Hoard's piles use smaller ones so a base doesn't crowd.
+  const big = match.flagsPerTeam === 1;
   match.flags.forEach((f, i) => {
     const v = flagViews[i];
-    const cloth = v.cloth.material as THREE.MeshToonMaterial;
     const glow = v.glow.material as THREE.MeshBasicMaterial;
-    const team = TEAMS[f.team];
-    cloth.color.set(team.color);
-    glow.color.set(team.light);
+    const team = TEAMS[f.owner];
+    let size = big ? 1 : 0.62;
+    let flutter = 0.45;
     if (f.state === "carried") {
-      // Riding on the carrier, drawn where the carrier is drawn.
-      const c = drawn(match.players[f.carrier]);
-      const back = 0.7;
-      v.root.position.set(c.x - Math.sin(c.h) * back, c.y + 1.1, c.z - Math.cos(c.h) * back);
-      v.root.rotation.y = c.h + Math.PI / 2;
-      v.root.scale.setScalar(0.8);
+      // Worn on the carrier's back, riding the animal as it leans and bounces.
+      const c = match.players[f.carrier];
+      const rig = views[f.carrier].rig;
+      rig.flagMount.getWorldPosition(mount);
+      size = big ? 0.72 : 0.5;
+      v.root.position.set(mount.x, mount.y - 0.5 * size, mount.z);
+      v.root.rotation.set(0, drawn(c).h + Math.PI / 2, 0);
+      v.root.visible = rig.root.visible;
       v.glow.visible = false;
+      flutter = Math.min(1, 0.35 + Math.abs(c.speed) / 12);
       // A thin trail of sparkles so a carrier is easy to spot and chase.
-      if (Math.random() < 0.25) fx.burst(v.root.position.x, v.root.position.y + 0.8, v.root.position.z, [team.light, "#ffffff"], 1, 1.2, 1.5, 0.14);
+      if (Math.random() < 0.3) fx.burst(mount.x, mount.y + 2.4 * size, mount.z, [team.light, "#ffffff"], 1, 1.2, 1.5, 0.14);
     } else if (f.state === "dropped") {
       // A dropped flag bobs and pulses so both teams spot it.
       v.root.position.set(f.x, f.y + Math.sin(t * 5 + i) * 0.2, f.z);
-      v.root.rotation.y = t * 1.6 + i;
-      v.root.scale.setScalar(1.1);
+      v.root.rotation.set(0, t * 1.6 + i, 0);
+      size *= 1.1;
+      v.root.visible = true;
       v.glow.visible = true;
       glow.opacity = 0.45 + 0.35 * Math.sin(t * 8 + i);
+      flutter = 0.3;
     } else {
       v.root.position.set(f.x, f.y + 0.3, f.z);
-      v.root.rotation.y = Math.sin(t * 1.2 + i) * 0.4 + Math.atan2(f.x - match.bases[f.base].x, f.z - match.bases[f.base].z);
-      v.root.scale.setScalar(0.85);
+      v.root.rotation.set(0, Math.sin(t * 1.2 + i) * 0.4 + (big ? t * 0.25 : Math.atan2(f.x - match.bases[f.base].x, f.z - match.bases[f.base].z)), 0);
+      v.root.visible = true;
       v.glow.visible = true;
-      glow.opacity = 0.3;
+      glow.opacity = 0.3 + (big ? 0.12 * Math.sin(t * 3) : 0);
+    }
+    v.root.scale.setScalar(size);
+    waveFlag(v, t + i * 0.7, flutter);
+    // The pin over a big flag always shows; in Hoard only over one on the move.
+    v.marker.visible = big || f.state !== "home";
+    if (v.marker.visible) {
+      const pin = big ? 0.085 : 0.065;
+      v.marker.scale.set(pin / size, (pin * 1.25) / size, 1);
+      v.marker.position.y = 4.5 + Math.sin(t * 3 + i) * 0.25 / size;
     }
   });
 

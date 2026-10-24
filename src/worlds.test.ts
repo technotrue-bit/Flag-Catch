@@ -131,6 +131,42 @@ describe("worlds", () => {
     expect(theirs.team).toBe(1);
     expect(theirs.base).toBe(1);
   });
+
+  it("Capture with one flag a side: one big flag in the middle of each base, back to its owners after a score", () => {
+    const m = createMatch({ ...opts, flagsPerTeam: 1 });
+    expect(m.flags.length).toBe(2);
+    for (const f of m.flags) {
+      expect(f.owner).toBe(f.team);
+      expect([f.x, f.z]).toEqual([m.bases[f.team].x, m.bases[f.team].z]);
+    }
+    const p = m.players[0];
+    m.players.forEach((o, i) => i && (o.stun = 999));
+    const theirs = m.flags.find((f) => f.owner === 1)!;
+    theirs.state = "carried";
+    theirs.carrier = p.id;
+    p.carrying = theirs.id;
+    [p.x, p.z] = [m.bases[0].x, m.bases[0].z];
+    step(m, NO_INPUT);
+    expect(m.scores[0]).toBe(1);
+    expect(theirs.state).toBe("home");
+    expect(theirs.base).toBe(1);
+    expect([theirs.x, theirs.z]).toEqual([m.bases[1].x, m.bases[1].z]);
+  });
+
+  it("Hoard keeps its piles: a banked flag stays with the scorers but still wears its owners' color", () => {
+    const m = createMatch({ ...opts, mode: "hoard" });
+    expect(m.flags.length).toBe(10);
+    const p = m.players[0];
+    m.players.forEach((o, i) => i && (o.stun = 999));
+    const theirs = m.flags.find((f) => f.owner === 1)!;
+    theirs.state = "carried";
+    theirs.carrier = p.id;
+    p.carrying = theirs.id;
+    [p.x, p.z] = [m.bases[0].x, m.bases[0].z];
+    step(m, NO_INPUT);
+    expect(theirs.team).toBe(0);
+    expect(theirs.owner).toBe(1);
+  });
 });
 
 describe("progress", () => {

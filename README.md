@@ -10,11 +10,20 @@ it home.
 
 Three modes, picked on the start screen:
 
-- Capture: most steals before the clock runs out (3 to 6 minutes, by map).
+- Capture: one big flag a side, in the team's color with its shape (sun or
+  moon), standing in the middle of its base. Steal theirs and bring it home to
+  score; it then goes back to their base. Most steals before the clock runs
+  out (3 to 6 minutes, by map) wins.
 - Hoard: every flag sitting in your base earns a point a second, and the first
   team to 1000 points wins. Stealing flags shifts who earns faster.
 - Playful: one flag a side. Bank it to score, and it goes straight back to its
   owners' base for the next round of chasing.
+
+Every flag wears its own team's color wherever it goes. A carried flag rides
+on the carrier's back and flutters as they run, and a pin in the team's color
+floats over each big flag (and over any Hoard flag on the move), drawn over
+hills and trees so you can always see where it is. The minimap shows the same
+pins.
 
 Land, water and air animals each rule different ground.
 

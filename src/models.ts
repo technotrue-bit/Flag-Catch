@@ -71,33 +71,161 @@ export interface FlagRig {
   root: THREE.Group;
   cloth: THREE.Mesh;
   glow: THREE.Mesh;
+  /** A pin that floats over the flag, drawn over everything, so you can always find it. */
+  marker: THREE.Sprite;
+  /** The cloth's resting shape, for the flutter. */
+  rest: Float32Array;
 }
 
-const clothGeo = (() => {
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, 0, -0.9, 0, 1.3, -0.45, 0], 3));
-  g.setIndex([0, 1, 2]);
-  g.computeVertexNormals();
-  return g;
-})();
+const CLOTH_W = 1.9;
+const CLOTH_H = 1.25;
+const POLE_H = 3.8;
 
-export function buildFlag(): FlagRig {
+/** The team's cloth: its color with its shape (sun or moon) in white, for color blind players. */
+function clothTexture(color: string, shape: string): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = 128;
+  c.height = 84;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 128, 84);
+  ctx.fillStyle = "rgba(255,255,255,.22)";
+  ctx.fillRect(0, 62, 128, 10);
+  ctx.fillStyle = "#fffbea";
+  const cx = 70;
+  const cy = 38;
+  if (shape === "moon") {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 20, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.beginPath();
+    ctx.arc(cx + 10, cy - 6, 17, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalCompositeOperation = "source-over";
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 5;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#fffbea";
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 17, cy + Math.sin(a) * 17);
+      ctx.lineTo(cx + Math.cos(a) * 25, cy + Math.sin(a) * 25);
+      ctx.stroke();
+    }
+  }
+  ctx.strokeStyle = "#2b2340";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, 124, 80);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** A round pin in the team's color with a little white flag on it. */
+function markerTexture(color: string): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = 64;
+  c.height = 80;
+  const ctx = c.getContext("2d")!;
+  // The pin: a circle with a point at the bottom, on a dark edge.
+  const pin = () => {
+    ctx.beginPath();
+    ctx.arc(32, 30, 24, Math.PI * 0.8, Math.PI * 2.2);
+    ctx.lineTo(32, 76);
+    ctx.closePath();
+  };
+  pin();
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = "#2b2340";
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "#ffffff";
+  ctx.stroke();
+  // The flag on it.
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(21, 14, 4, 30);
+  ctx.beginPath();
+  ctx.moveTo(25, 15);
+  ctx.lineTo(45, 22);
+  ctx.lineTo(25, 30);
+  ctx.closePath();
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const flagLooks = new Map<string, { cloth: THREE.MeshToonMaterial; glow: THREE.MeshBasicMaterial; marker: THREE.SpriteMaterial; knob: THREE.MeshToonMaterial }>();
+function flagLook(color: string, light: string, shape: string) {
+  let look = flagLooks.get(color);
+  if (!look) {
+    look = {
+      cloth: new THREE.MeshToonMaterial({ color: "#ffffff", map: clothTexture(color, shape), gradientMap: RAMP, side: THREE.DoubleSide }),
+      glow: new THREE.MeshBasicMaterial({ color: light, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide }),
+      marker: new THREE.SpriteMaterial({ map: markerTexture(color), depthTest: false, depthWrite: false, transparent: true }),
+      knob: new THREE.MeshToonMaterial({ color, gradientMap: RAMP }),
+    };
+    flagLooks.set(color, look);
+  }
+  return look;
+}
+
+const glowGeo = new THREE.RingGeometry(1.0, 1.65, 32);
+const knobGeo = new THREE.SphereGeometry(0.22, 12, 9);
+
+/**
+ * A team's flag: a tall pole and a big cloth in the team's color with its
+ * shape, a glow ring on the ground and a pin floating above. The cloth
+ * hangs from the pole's top with its near edge at x = 0 and flies out
+ * along +x; waveFlag makes it flutter.
+ */
+export function buildFlag(color: string, light: string, shape: string): FlagRig {
+  const look = flagLook(color, light, shape);
   const root = new THREE.Group();
   const pole = new THREE.Mesh(cylGeo, toon("#f4f1e8"));
-  pole.scale.set(0.12, 2.6, 0.12);
-  pole.position.y = 1.3;
+  pole.scale.set(0.14, POLE_H, 0.14);
+  pole.position.y = POLE_H / 2;
   root.add(pole);
-  const cloth = new THREE.Mesh(clothGeo, new THREE.MeshToonMaterial({ color: "#7ee36b", gradientMap: RAMP, side: THREE.DoubleSide }));
-  cloth.position.set(0.06, 2.55, 0);
+  const knob = new THREE.Mesh(knobGeo, look.knob);
+  knob.position.y = POLE_H + 0.12;
+  root.add(knob);
+  const geo = new THREE.PlaneGeometry(CLOTH_W, CLOTH_H, 8, 2);
+  geo.translate(CLOTH_W / 2, -CLOTH_H / 2, 0);
+  const cloth = new THREE.Mesh(geo, look.cloth);
+  cloth.position.set(0.07, POLE_H - 0.08, 0);
   root.add(cloth);
-  const glow = new THREE.Mesh(
-    new THREE.RingGeometry(0.8, 1.35, 28),
-    new THREE.MeshBasicMaterial({ color: "#7ee36b", transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }),
-  );
+  const glow = new THREE.Mesh(glowGeo, look.glow.clone());
   glow.rotation.x = -Math.PI / 2;
   glow.position.y = 0.06;
   root.add(glow);
-  return { root, cloth, glow };
+  const marker = new THREE.Sprite(look.marker);
+  marker.center.set(0.5, 0);
+  marker.renderOrder = 20;
+  marker.position.y = POLE_H + 0.7;
+  root.add(marker);
+  const rest = Float32Array.from(geo.attributes.position.array as Float32Array);
+  return { root, cloth, glow, marker, rest };
+}
+
+/** Ripple the cloth: waves run out from the pole and grow toward the free edge. */
+export function waveFlag(rig: FlagRig, t: number, strength: number): void {
+  const pos = rig.cloth.geometry.attributes.position as THREE.BufferAttribute;
+  const a = pos.array as Float32Array;
+  for (let i = 0; i < a.length; i += 3) {
+    const x = rig.rest[i];
+    const k = x / CLOTH_W;
+    a[i + 2] = Math.sin(x * 3.2 - t * 9) * 0.22 * k * strength;
+    a[i + 1] = rig.rest[i + 1] - k * k * 0.12 * (1 - strength * 0.6);
+  }
+  pos.needsUpdate = true;
+  rig.cloth.geometry.computeVertexNormals();
 }
 
 type TreePart = { geo: THREE.BufferGeometry; mat: THREE.Material; offset: THREE.Matrix4 };
