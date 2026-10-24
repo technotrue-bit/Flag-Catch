@@ -26,6 +26,8 @@ export interface Settings {
   bigButtons: boolean;
   /** A short buzz on hits and scores, where the phone allows it. */
   vibrate: boolean;
+  /** Phone held upright: the game on a top screen, the map and controls on a bottom one. */
+  dsMode: boolean;
 }
 
 export const DEFAULTS: Readonly<Settings> = {
@@ -39,6 +41,7 @@ export const DEFAULTS: Readonly<Settings> = {
   leftHanded: false,
   bigButtons: false,
   vibrate: true,
+  dsMode: false,
 };
 
 const KEY = "flagcatch.settings";
@@ -67,6 +70,7 @@ export function loadSettings(store: Store | null): Settings {
         leftHanded: bool(p.leftHanded, s.leftHanded),
         bigButtons: bool(p.bigButtons, s.bigButtons),
         vibrate: bool(p.vibrate, s.vibrate),
+        dsMode: bool(p.dsMode, s.dsMode),
       };
     }
     // Before this settings card, Zoom and Music had keys of their own.

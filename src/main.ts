@@ -21,6 +21,7 @@ import { WORLDS } from "./worlds";
 import { type World, buildWorld } from "./world";
 import { camTurnRate, onSettings, settings } from "./settings";
 import { cue } from "./cues";
+import { applyDs, ds } from "./ds";
 
 const params = new URLSearchParams(location.search);
 const store = (() => {
@@ -30,6 +31,13 @@ const store = (() => {
     return null;
   }
 })();
+// Where your last picks are kept. Set before the loads below read them.
+const MODE_KEY = "flagcatch.mode";
+const DIFFICULTY_KEY = "flagcatch.difficulty";
+const MEDIC_KEY = "flagcatch.medic";
+const SIZE_KEY = "flagcatch.size";
+const ANIMAL_KEY = "flagcatch.animal";
+const WORLD_KEY = "flagcatch.world";
 // Points and unlocks; ?unlock=all opens everything for testing.
 const progress = progressStore.load(store);
 const unlockAll = params.get("unlock") === "all";
@@ -60,7 +68,9 @@ const camera = new THREE.PerspectiveCamera(60, 1, 0.3, 400);
 let match: Match = newMatch(Number(params.get("seed") ?? 1));
 let world: World = buildWorld(scene, match);
 const fx = new Fx(scene);
-const controls = createControls(renderer.domElement);
+const controls = createControls(document.body);
+// In DS mode only the bottom screen steers; the top one is for watching.
+controls.canSteer = (x, y) => (!ds || y >= ds.bottom.y) && (x > window.innerWidth * 0.5) === settings.leftHanded;
 const hud = createHud(controls);
 
 interface PlayerView {
@@ -869,21 +879,33 @@ function watchScore(): void {
   const at = drawn(me);
   headAt.set(at.x, at.y + 3.2, at.z).project(camera);
   if (headAt.z > 1) return;
-  hud.floatText((headAt.x * 0.5 + 0.5) * window.innerWidth, (-headAt.y * 0.5 + 0.5) * window.innerHeight, `+${gain}`);
+  // The view may be the DS top screen rather than the whole window.
+  const view = renderer.domElement.getBoundingClientRect();
+  hud.floatText(view.left + (headAt.x * 0.5 + 0.5) * view.width, view.top + (-headAt.y * 0.5 + 0.5) * view.height, `+${gain}`);
 }
 
 let baseFov = 60;
 function resize(): void {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  // DS mode (phone upright) shrinks the view to the top screen.
+  const split = applyDs(app);
+  const w = split ? split.top.w : window.innerWidth;
+  const h = split ? split.top.h : window.innerHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  // Wider view on short landscape phones so the sides don't feel cramped.
-  baseFov = w / h > 1.9 ? 58 : 62;
+  // Wider view on short landscape phones so the sides don't feel cramped,
+  // and a touch wider on the squarer DS top screen so you see round you.
+  baseFov = w / h > 1.9 ? 58 : w / h < 1.5 ? 66 : 62;
   camera.fov = baseFov;
   camera.updateProjectionMatrix();
+  hud.layout(split);
 }
 window.addEventListener("resize", resize);
+window.visualViewport?.addEventListener("resize", resize);
+window.addEventListener("orientationchange", () => {
+  resize();
+  // iPhones can report the old size for a moment after turning.
+  window.setTimeout(resize, 300);
+});
 resize();
 
 let acc = 0;
@@ -1074,8 +1096,14 @@ for (const kind of ["pointerup", "touchend", "keydown"]) {
   window.addEventListener(kind, () => unlockAudio(), { passive: true });
 }
 
+let dsWas = settings.dsMode;
 const applySettings = () => {
   fx.amount = settings.calm ? 0.4 : 1;
+  if (settings.dsMode !== dsWas) {
+    dsWas = settings.dsMode;
+    resize();
+    lockOrientation();
+  }
 };
 onSettings(applySettings);
 applySettings();
@@ -1100,13 +1128,26 @@ function tryLandscape(): void {
   try {
     const req = el.requestFullscreen?.bind(el) ?? el.webkitRequestFullscreen?.bind(el);
     const p = req?.() as unknown as Promise<void> | undefined;
-    p?.then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> })?.lock?.("landscape")).catch(() => {});
+    p?.then(lockOrientation).catch(() => {});
   } catch {
     // Fullscreen is a bonus; iPhone Safari does not offer it.
   }
 }
 
-const MODE_KEY = "flagcatch.mode";
+/**
+ * Full screen phones hold the game sideways, except in DS mode, where the
+ * phone may turn freely: upright for the two screens, sideways for the wide view.
+ */
+function lockOrientation(): void {
+  const o = screen.orientation as (ScreenOrientation & { lock?: (o: string) => Promise<void>; unlock?: () => void }) | undefined;
+  if (!o || !document.fullscreenElement) return;
+  try {
+    if (settings.dsMode) o.unlock?.();
+    else o.lock?.("landscape")?.catch(() => {});
+  } catch {
+    // Not every browser can lock the screen.
+  }
+}
 
 function loadMode(): Mode {
   try {
@@ -1124,8 +1165,6 @@ function saveMode(m: Mode): void {
     // Private mode: the pick lasts until the page closes.
   }
 }
-
-const DIFFICULTY_KEY = "flagcatch.difficulty";
 
 function loadDifficulty(): Difficulty {
   const want = params.get("difficulty");
@@ -1146,8 +1185,6 @@ function saveDifficulty(d: Difficulty): void {
   }
 }
 
-const MEDIC_KEY = "flagcatch.medic";
-
 function loadMedic(): boolean {
   try {
     return localStorage.getItem(MEDIC_KEY) === "1";
@@ -1163,8 +1200,6 @@ function saveMedic(on: boolean): void {
     // Private mode: the pick lasts until the page closes.
   }
 }
-
-const SIZE_KEY = "flagcatch.size";
 
 function loadSize(): number {
   try {
@@ -1195,8 +1230,6 @@ function clampInt(v: number, lo: number, hi: number): number {
   controls,
 };
 
-const ANIMAL_KEY = "flagcatch.animal";
-
 function loadAnimal(): string {
   try {
     const v = localStorage.getItem(ANIMAL_KEY) ?? "";
@@ -1213,8 +1246,6 @@ function saveAnimal(id: string): void {
     // Private mode: the pick lasts until the page closes.
   }
 }
-
-const WORLD_KEY = "flagcatch.world";
 
 function loadWorld(): string {
   try {

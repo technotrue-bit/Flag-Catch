@@ -16,7 +16,7 @@ describe("settings", () => {
 
   it("save and load every setting", () => {
     const store = memory();
-    const s = { ...DEFAULTS, music: 0.3, chimes: false, leftHanded: true, camTurn: "slow" as const, calm: true };
+    const s = { ...DEFAULTS, music: 0.3, chimes: false, leftHanded: true, camTurn: "slow" as const, calm: true, dsMode: true };
     saveSettings(store, s);
     expect(loadSettings(store)).toEqual(s);
   });
@@ -33,6 +33,7 @@ describe("settings", () => {
     expect(s.chimes).toBe(DEFAULTS.chimes);
     expect(s.shake).toBe(DEFAULTS.shake);
     expect(s.leftHanded).toBe(false);
+    expect(loadSettings(memory({ "flagcatch.settings": JSON.stringify({ dsMode: "on" }) })).dsMode).toBe(false);
     expect(loadSettings(memory({ "flagcatch.settings": "{oops" }))).toEqual(DEFAULTS);
   });
 

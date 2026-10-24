@@ -4,7 +4,7 @@
   "description": "Steal their flags and bring them home. A colorful 3D capture the flag game.",
   "start_url": "/",
   "display": "fullscreen",
-  "orientation": "landscape",
+  "orientation": "any",
   "background_color": "#7cc4f2",
   "theme_color": "#7cc4f2",
   "icons": [

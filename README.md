@@ -91,9 +91,26 @@ and Home Isle. Players from before unlocks keep the first seven animals.
   does it in one tap on Android and computers, and shows the steps on iPhone,
   where Safari doesn't let web pages hide its bars.
 
+## DS mode
+
+An optional layout for playing with the phone held upright, like a two screen
+handheld. The 3D game plays on the top screen; the bottom screen holds an
+upright map (the enemy's land at the top, yours at the bottom) with a steering
+area on the left and Jump, Throw, Item and Dive on the right (swapped for left
+handed play). A hinge with two little lights sits between them.
+
+- Turn it on or off with the DS MODE chip on the title screen, the DS mode
+  row in Settings, or the "Play upright in DS mode" button on the turn your
+  phone card. The choice is saved on the phone.
+- It only splits the screen while the phone is upright. Turn the phone
+  sideways and the normal wide layout comes back; turn it upright again for
+  the two screens. With DS mode off, an upright phone still asks to be turned.
+- Full screen phones only lock to landscape with DS mode off.
+- Only the bottom screen steers, so a thumb never covers the game view.
+
 ## Menus and settings
 
-- The title screen has Play, How to Play, Settings and Full Screen.
+- The title screen has Play, How to Play, Settings, DS Mode and Full Screen.
 - The pick screen has Menu (back to the title) and Settings in its corner.
 - In a match, the pause button (top left) opens Resume, Settings, How to Play,
   Restart and Quit to menu. Leaving the app pauses the match too.
@@ -101,7 +118,9 @@ and Home Isle. Players from before unlocks keep the first seven animals.
   chimes); Chimes on or off; Zoom; Camera turn (slow, normal, fast);
   Screen shake; Calm effects (fewer sparks, no lightning flash, a softer
   glow); Left handed (steer on the right, buttons on the left); Big buttons;
-  Vibration where the phone has it. `?dev` adds the feel tuning sliders.
+  Vibration where the phone has it; DS mode. `?dev` adds the feel tuning sliders.
+- Your last animal, world, mode, team size, role and rival level are kept
+  for next time.
 
 ## Telling teams apart
 

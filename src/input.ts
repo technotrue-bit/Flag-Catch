@@ -23,10 +23,16 @@ export interface Controls {
   setButtonDive(down: boolean): void;
   /** Where the left thumb started and is now, for drawing the stick. */
   stick: { active: boolean; ox: number; oy: number; x: number; y: number };
+  /** Whether a thumb landing at (x, y) steers; DS mode keeps it to the bottom screen. */
+  canSteer(x: number, y: number): boolean;
 }
 
 const STICK_RANGE = 64;
 
+/**
+ * `surface` hears every touch that no button or card has taken, so a thumb
+ * can land on the game view or, in DS mode, on the bottom screen.
+ */
 export function createControls(surface: HTMLElement): Controls {
   const c: Controls = {
     steerX: 0,
@@ -45,6 +51,7 @@ export function createControls(surface: HTMLElement): Controls {
       c.dive = keyDive || buttonDive;
     },
     stick: { active: false, ox: 0, oy: 0, x: 0, y: 0 },
+    canSteer: (x) => (x > window.innerWidth * 0.5) === settings.leftHanded,
   };
   let stickId: number | null = null;
   let keyJump = false;
@@ -54,14 +61,16 @@ export function createControls(surface: HTMLElement): Controls {
   const keys = new Set<string>();
 
   surface.addEventListener("pointerdown", (e) => {
-    if (stickId !== null) return;
-    const right = e.clientX > window.innerWidth * 0.5;
-    if (right !== settings.leftHanded) return;
+    if (stickId !== null || !c.canSteer(e.clientX, e.clientY)) return;
     stickId = e.pointerId;
     c.stick.active = true;
     c.stick.ox = c.stick.x = e.clientX;
     c.stick.oy = c.stick.y = e.clientY;
-    surface.setPointerCapture?.(e.pointerId);
+    try {
+      surface.setPointerCapture?.(e.pointerId);
+    } catch {
+      // A pointer the browser has already let go of; the stick still works.
+    }
   });
   surface.addEventListener("pointermove", (e) => {
     if (e.pointerId !== stickId) return;

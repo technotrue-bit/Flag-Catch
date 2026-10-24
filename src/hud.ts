@@ -15,6 +15,7 @@ import { type Difficulty, HOARD_TARGET, ITEMS, type ItemKind, type Match, type M
 import { type Award, type Progress, UNLOCKS, costOf, nextUnlock } from "./progress";
 import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, currentWorld, groundHeight, landOf, onBridge } from "./terrain";
 import { WORLDS, type WorldDef, worldById } from "./worlds";
+import { type DsLayout, mapRect } from "./ds";
 
 const MAP_W = 156;
 const MAP_H = Math.round((MAP_W * WORLD_HALF_X) / WORLD_HALF_Z);
@@ -64,7 +65,7 @@ const CSS = `
 .fc-card h1{margin:0 0 4px;font-size:40px;font-weight:900;letter-spacing:1px;color:#ffd166;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
 .fc-card p{margin:6px 0;font-size:15px;font-weight:700;color:rgba(43,35,64,.75)}
 .fc-card .go{margin-top:12px;display:inline-block;padding:12px 30px;border-radius:999px;background:#46b4e8;color:#fff;font-weight:900;font-size:20px;box-shadow:0 5px 0 rgba(43,35,64,.28)}
-.fc-rotate{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px;background:#7cc4f2;pointer-events:auto;font-weight:800;font-size:20px;color:#fff;text-align:center;padding:24px}
+.fc-rotate{position:absolute;inset:0;z-index:5;display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px;background:#7cc4f2;pointer-events:auto;font-weight:800;font-size:20px;color:#fff;text-align:center;padding:24px}
 .fc-rotate .phone{width:46px;height:78px;border:5px solid #fff;border-radius:10px;animation:fcrot 1.6s ease-in-out infinite}
 @keyframes fcrot{0%,20%{transform:rotate(0)}50%,80%{transform:rotate(-90deg)}100%{transform:rotate(0)}}
 @media (orientation:portrait){.fc-rotate{display:flex}}
@@ -214,6 +215,64 @@ const CSS = `
 @media (max-height:380px){.fc-menu-list{flex-direction:row;flex-wrap:wrap;justify-content:center}.fc-card h1.sm{font-size:22px}.fc-how div{padding:6px;font-size:11px}}
 @media (max-height:300px){.fc-mode small,.fc-size small,.fc-world .name small{display:none}.fc-mode,.fc-size{min-height:30px;padding:2px 10px;font-size:13px}.fc-world .name{min-height:30px}.fc-world .arw{height:30px}.fc-tile .bar{display:none}.fc-tiles{padding-top:6px}.fc-play{padding:10px 18px;font-size:18px}}
 @media (max-height:260px){.fc-group>label{display:none}.fc-pts{display:none}}
+
+/* DS mode: phone upright, the game on a top screen and the map and buttons on a bottom one. */
+html.fc-ds,html.fc-ds body{background:linear-gradient(180deg,#f1edf7,#d9d2e8)}
+html.fc-ds #app{border-radius:10px;overflow:hidden;box-shadow:0 0 0 5px ${PALETTE.ink},0 0 0 7px rgba(255,255,255,.65),0 8px 18px 6px rgba(43,35,64,.16)}
+.fc-dsb,.fc-hinge{display:none;position:absolute}
+.fc-ds .fc-dsb{display:block;left:var(--dsx);top:var(--dsb);width:var(--dsw);height:var(--dsbh);border-radius:10px;background:radial-gradient(circle at 2px 2px,rgba(43,35,64,.07) 1.2px,transparent 1.8px) 0 0/16px 16px,linear-gradient(180deg,#f7fbfe,#e2edf7);box-shadow:0 0 0 5px ${PALETTE.ink},0 0 0 7px rgba(255,255,255,.65),inset 0 2px 8px rgba(43,35,64,.12),0 8px 18px 6px rgba(43,35,64,.16)}
+.fc-ds .fc-hinge{display:block;left:calc(var(--dsx) + 18px);width:calc(var(--dsw) - 36px);top:calc(var(--dst) + var(--dsh) + 11px);height:8px;border-radius:999px;background:linear-gradient(180deg,#d6cee6,#b9afd0);box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 1px 0 rgba(43,35,64,.18)}
+.fc-hinge i{position:absolute;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:50%}
+.fc-hinge .on{left:10px;background:#7ee36b;box-shadow:0 0 6px 1px #7ee36b}
+.fc-hinge .chg{right:10px;background:#ffb347;opacity:.75}
+.fc-ds .fc-top{top:calc(var(--dst) + 8px)}
+.fc-ds .fc-team{font-size:17px;padding:5px 11px}
+.fc-ds .fc-timer{font-size:17px;min-width:62px;padding:5px 9px}
+.fc-ds .fc-top-left{top:calc(var(--dst) + 8px);left:calc(var(--dsx) + 8px)}
+.fc-ds .fc-hearts{top:calc(var(--dst) + 54px);left:calc(var(--dsx) + 10px)}
+.fc-ds .fc-zone{top:calc(var(--dst) + 48px)}
+.fc-ds .fc-arrow{top:calc(var(--dst) + 74px)}
+.fc-ds .fc-power{top:calc(var(--dst) + 110px)}
+.fc-ds .fc-call{top:calc(var(--dst) + var(--dsh) * .36);width:calc(var(--dsw) - 24px);font-size:30px;line-height:1.05;text-align:center;white-space:normal}
+.fc-ds .fc-count{top:calc(var(--dst) + var(--dsh) * .5);font-size:96px}
+.fc-ds .fc-out{top:calc(var(--dst) + var(--dsh) * .6);font-size:19px}
+.fc-ds .fc-vig{left:var(--dsx);top:var(--dst);width:var(--dsw);height:var(--dsh);right:auto;bottom:auto;border-radius:10px}
+.fc-ds .fc-map{right:auto;border-radius:12px;background:rgba(255,255,255,.8);box-shadow:0 0 0 3px rgba(43,35,64,.14),0 3px 0 3px rgba(43,35,64,.1)}
+.fc-ds .fc-pad{left:var(--dsx);top:var(--dsb);width:var(--dsw);height:var(--dsbh);right:auto;bottom:auto}
+.fc-ds .fc-jump{width:84px;height:84px;right:8px;bottom:10px;font-size:15px}
+.fc-ds .fc-throw{width:68px;height:68px;right:16px;bottom:104px;font-size:13px}
+.fc-ds .fc-item{width:56px;height:56px;right:22px;top:10px;bottom:auto;font-size:9px}
+.fc-ds .fc-dive{width:56px;height:56px;right:22px;top:74px;bottom:auto;font-size:12px}
+.fc-ds .fc-medic{width:58px;height:58px;left:10px;top:10px;right:auto;bottom:auto}
+.fc-ds .fc-big .fc-jump{width:94px;height:94px;right:4px;bottom:8px;font-size:17px}
+.fc-ds .fc-big .fc-throw{width:74px;height:74px;right:12px;bottom:110px;font-size:14px}
+.fc-ds .fc-big .fc-item{width:60px;height:60px;right:18px;top:8px}
+.fc-ds .fc-big .fc-dive{width:60px;height:60px;right:18px;top:74px;font-size:13px}
+.fc-ds .fc-big .fc-medic{width:64px;height:64px;left:8px;top:8px}
+.fc-ds .fc-hint{left:calc(var(--dsx) + 8px);bottom:calc(var(--dsbb) + 14px);width:calc(var(--dsw) * .25);text-align:center;font-size:12px;line-height:1.2}
+.fc-ds .fc-left .fc-hint{left:auto;right:calc(var(--dsx) + 8px)}
+.fc-ds .fc-rotate{display:none!important}
+.fc-ds .fc-title{justify-content:flex-start;gap:8px;padding-top:calc(var(--dst) + var(--dsh) * .3);padding-bottom:calc(var(--dsbb) + 36px)}
+.fc-ds .fc-title .fc-logo{font-size:46px!important}
+.fc-ds .fc-title .fc-logo .flag{transform:scale(1.15);margin:0 6px}
+.fc-ds .fc-title .tag{margin-top:auto}
+.fc-ds .fc-title .big{padding:12px 56px;font-size:26px}
+.fc-ds .fc-title .chip{padding:9px 14px;font-size:13px}
+.fc-ds .fc-title .foot{bottom:calc(var(--dsbb) + 12px)}
+.fc-ds .fc-sel{padding:calc(var(--dst) + 52px) calc(var(--dsx) - 4px) calc(var(--dsbb) + 4px)}
+.fc-ds .fc-sel h2.fc-logo{display:none}
+.fc-ds .fc-setup{margin-top:auto;gap:4px 10px;padding:5px 8px 7px;border-radius:16px}
+.fc-ds .fc-mode,.fc-ds .fc-size{min-width:0;min-height:34px;padding:3px 9px;font-size:13px}
+.fc-ds .fc-mode small,.fc-ds .fc-size small{display:none}
+.fc-ds .fc-world .name{min-width:120px;min-height:34px;font-size:14px}
+.fc-ds .fc-world .arw{width:30px;height:34px}
+.fc-ds .fc-row{margin-top:2px;width:100%}
+.fc-ds .fc-tile{width:112px}
+.fc-ds .fc-play{margin-left:2px;padding:14px 16px;font-size:19px}
+@media (max-height:760px){.fc-ds .fc-tile .perk{display:none}}
+.fc-rotate .ds{pointer-events:auto;margin-top:8px;padding:12px 22px;border-radius:999px;background:#fffaf0;color:${PALETTE.ink};font-size:16px;font-weight:900;box-shadow:0 4px 0 rgba(43,35,64,.25);cursor:pointer}
+.fc-rotate small{display:block;font-size:13px;font-weight:700;opacity:.9}
+.fc-rotate .or{font-size:13px;font-weight:800;opacity:.85}
 `;
 
 export interface Hud {
@@ -242,6 +301,8 @@ export interface Hud {
   /** 3, 2, 1, GO! then onDone. */
   countdown(onDone: () => void): void;
   showResults(m: Match, stats: MatchStats, award: Award | null, onAgain: () => void, onChange: () => void, progress?: Progress): void;
+  /** Fit the HUD to DS mode's two screens, or back to the whole view (null). */
+  layout(split: DsLayout | null): void;
   /** True while the pause menu or a card over it is open; the match waits. */
   readonly paused: boolean;
   /** Camera distance multiplier from the Zoom setting (smaller is closer). */
@@ -296,6 +357,11 @@ export function createHud(controls: Controls): Hud {
 
   const root = el("div", "fc-hud");
   document.body.appendChild(root);
+  // DS mode's bottom screen and the hinge above it; hidden in the normal layout.
+  el("div", "fc-dsb", root);
+  const hinge = el("div", "fc-hinge", root);
+  el("i", "on", hinge);
+  el("i", "chg", hinge);
 
   const top = el("div", "fc-top", root);
   const teamA = el("div", "fc-team sun", top);
@@ -314,9 +380,28 @@ export function createHud(controls: Controls): Hud {
   map.height = MAP_H * dpr;
   const mctx = map.getContext("2d")!;
   // Redrawn whenever a match on another map starts.
-  let mapBg = drawMapBackground(MAP_W * dpr, MAP_H * dpr);
+  let mapBg = drawMapBackground(MAP_W * dpr, MAP_H * dpr, false);
   let mapFor: MapDef | null = null;
   let mapWorld: WorldDef | null = null;
+  /** DS mode's two screens, or null for the normal layout. */
+  let split: DsLayout | null = null;
+  /**
+   * Size the map for the layout: a small one on its side in the corner, or
+   * in DS mode an upright one filling the middle of the bottom screen.
+   */
+  const placeMap = () => {
+    if (split) {
+      const r = mapRect(split.bottom, WORLD_HALF_X / WORLD_HALF_Z);
+      map.width = Math.round(r.w * dpr);
+      map.height = Math.round(r.h * dpr);
+      Object.assign(map.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+    } else {
+      map.width = MAP_W * dpr;
+      map.height = MAP_H * dpr;
+      map.removeAttribute("style");
+    }
+    mapBg = drawMapBackground(map.width, map.height, !!split);
+  };
 
   const zone = el("div", "fc-zone", root);
   let lastLand = -2;
@@ -470,7 +555,7 @@ export function createHud(controls: Controls): Hud {
         return b;
       });
     };
-    const toggle = <K extends "chimes" | "calm" | "leftHanded" | "bigButtons" | "vibrate">(label: string, key: K) => {
+    const toggle = <K extends "chimes" | "calm" | "leftHanded" | "bigButtons" | "vibrate" | "dsMode">(label: string, key: K) => {
       const t = el("div", "fc-tog", row(label));
       t.classList.toggle("on", settings[key]);
       t.addEventListener("click", () => {
@@ -494,6 +579,7 @@ export function createHud(controls: Controls): Hud {
     ]);
     slider("Screen shake", "shake");
     toggle("Calm effects", "calm");
+    toggle("DS mode (phone upright)", "dsMode");
     head("CONTROLS");
     toggle("Left handed", "leftHanded");
     toggle("Big buttons", "bigButtons");
@@ -560,7 +646,7 @@ export function createHud(controls: Controls): Hud {
   const applyLayout = () => {
     root.classList.toggle("fc-left", settings.leftHanded);
     root.classList.toggle("fc-big", settings.bigButtons);
-    hint.textContent = `Drag on the ${settings.leftHanded ? "right" : "left"} to steer`;
+    hint.textContent = split ? "Drag here to steer" : `Drag on the ${settings.leftHanded ? "right" : "left"} to steer`;
   };
   onSettings(applyLayout);
   applyLayout();
@@ -573,6 +659,10 @@ export function createHud(controls: Controls): Hud {
   const rotate = el("div", "fc-rotate", root);
   el("div", "phone", rotate);
   el("div", "", rotate).textContent = "Turn your phone sideways to play";
+  // Or keep it upright and play on two screens.
+  el("div", "or", rotate).textContent = "or";
+  const dsBtn = button(rotate, "PLAY UPRIGHT IN DS MODE", "ds", () => setSetting("dsMode", true));
+  el("small", "", dsBtn).textContent = "Game on top, map and buttons below";
 
   const count = el("div", "fc-count", root);
   let shownScores: [number, number] = [0, 0];
@@ -587,6 +677,11 @@ export function createHud(controls: Controls): Hud {
   return {
     get paused() {
       return paused;
+    },
+    layout(next) {
+      split = next;
+      placeMap();
+      applyLayout();
     },
     get camScale() {
       // Slider 0 is zoomed out, 1 is zoomed in; the middle is the default view.
@@ -634,6 +729,14 @@ export function createHud(controls: Controls): Hud {
       const row = el("div", "row3", t);
       button(row, "HOW TO PLAY", "chip", openHow);
       button(row, "SETTINGS", "chip", openSettings);
+      // DS mode: hold the phone upright for a game screen over a map and buttons screen.
+      const dsChip = button(row, "", "chip", () => {
+        setSetting("dsMode", !settings.dsMode);
+        if (settings.dsMode && !split) this.call("HOLD YOUR PHONE UPRIGHT", "#ffd166");
+      });
+      const dsLabel = () => (dsChip.textContent = `DS MODE: ${settings.dsMode ? "ON" : "OFF"}`);
+      dsLabel();
+      onSettings(() => dsChip.isConnected && dsLabel());
       if (!isFullscreen()) {
         const fs = button(row, "FULL SCREEN", "chip hot", () => {
           openFullscreen();
@@ -673,7 +776,7 @@ export function createHud(controls: Controls): Hud {
       if (m.map !== mapFor || currentWorld() !== mapWorld) {
         mapFor = m.map;
         mapWorld = currentWorld();
-        mapBg = drawMapBackground(MAP_W * dpr, MAP_H * dpr);
+        placeMap();
       }
       if (c.stick.active) {
         stick.style.left = `${c.stick.ox}px`;
@@ -764,7 +867,7 @@ export function createHud(controls: Controls): Hud {
         arrow.style.display = "none";
       }
 
-      drawMap(mctx, mapBg, m, map.width, map.height);
+      drawMap(mctx, mapBg, m, map.width, map.height, !!split);
 
       if (vigTimer > 0) {
         vigTimer -= 1 / 60;
@@ -1090,7 +1193,8 @@ export function requestFullscreen(): boolean {
   if (!req || !(document.fullscreenEnabled ?? true)) return false;
   try {
     const p = req() as unknown as Promise<void> | undefined;
-    p?.then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> })?.lock?.("landscape")).catch(() => {});
+    // DS mode turns freely: upright for two screens, sideways for the wide view.
+    if (!settings.dsMode) p?.then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> })?.lock?.("landscape")).catch(() => {});
     return true;
   } catch {
     return false;
@@ -1136,17 +1240,16 @@ function animalTile(a: AnimalDef, parent: HTMLElement): HTMLElement {
 
 /**
  * The minimap lies on its side: your homeland on the left, the enemy's on
- * the right, so "forward" on the map matches heading out to raid.
+ * the right, so "forward" on the map matches heading out to raid. On DS
+ * mode's bottom screen it stands upright instead, the enemy's land at the top.
  */
-function mapX(z: number, w: number): number {
-  return (0.5 - z / (2 * WORLD_HALF_Z)) * w;
+function mapAt(x: number, z: number, w: number, h: number, upright: boolean): [number, number] {
+  const u = x / (2 * WORLD_HALF_X);
+  const v = z / (2 * WORLD_HALF_Z);
+  return upright ? [(0.5 + u) * w, (0.5 + v) * h] : [(0.5 - v) * w, (0.5 + u) * h];
 }
 
-function mapY(x: number, h: number): number {
-  return (0.5 + x / (2 * WORLD_HALF_X)) * h;
-}
-
-function drawMapBackground(w: number, h: number): HTMLCanvasElement {
+function drawMapBackground(w: number, h: number, upright: boolean): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
@@ -1159,8 +1262,8 @@ function drawMapBackground(w: number, h: number): HTMLCanvasElement {
   const sea = rgb(P.waterShallow);
   for (let py = 0; py < h; py++) {
     for (let px = 0; px < w; px++) {
-      const z = (0.5 - px / w) * 2 * WORLD_HALF_Z;
-      const x = (py / h - 0.5) * 2 * WORLD_HALF_X;
+      const z = (upright ? py / h - 0.5 : 0.5 - px / w) * 2 * WORLD_HALF_Z;
+      const x = (upright ? px / w - 0.5 : py / h - 0.5) * 2 * WORLD_HALF_X;
       const i = (py * w + px) * 4;
       const g = groundHeight(x, z);
       let [r, gr, b] = onBridge(x, z) ? [201, 154, 104] : g > 0.9 ? grass : g > 0 ? sand : sea;
@@ -1204,35 +1307,38 @@ function mapPin(ctx: CanvasRenderingContext2D, x: number, y: number, color: stri
   ctx.fill();
 }
 
-function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match, w: number, h: number): void {
+function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match, w: number, h: number, upright: boolean): void {
   ctx.clearRect(0, 0, w, h);
   ctx.save();
+  // Marks grow with the map, a little less on the big upright one.
+  const s = (Math.max(w, h) / MAP_W) * (upright ? 0.75 : 1);
   ctx.beginPath();
-  ctx.roundRect(0, 0, w, h, 14 * (w / MAP_W));
+  ctx.roundRect(0, 0, w, h, (upright ? 12 : 14) * (Math.max(w, h) / MAP_W) * (upright ? 0.75 : 1));
   ctx.clip();
   ctx.drawImage(bg, 0, 0);
-  const s = w / MAP_W;
+  const at = (x: number, z: number) => mapAt(x, z, w, h, upright);
   for (const st of m.stations) {
     if (st.cd > 0) continue;
+    const [x, y] = at(st.x, st.z);
     ctx.fillStyle = "#ff6b9a";
-    ctx.fillRect(mapX(st.z, w) - 2 * s, mapY(st.x, h) - 2 * s, 4 * s, 4 * s);
+    ctx.fillRect(x - 2 * s, y - 2 * s, 4 * s, 4 * s);
   }
   // Respawn flags as small crosses in their team's color.
   for (const f of m.respawns) {
-    const x = mapX(f.z, w);
-    const y = mapY(f.x, h);
+    const [x, y] = at(f.x, f.z);
     ctx.fillStyle = TEAMS[f.team].color;
     ctx.fillRect(x - 3 * s, y - 1 * s, 6 * s, 2 * s);
     ctx.fillRect(x - 1 * s, y - 3 * s, 2 * s, 6 * s);
   }
   for (const b of m.bases) {
     const r = b.main ? 5 : 3.5;
+    const [bx, by] = at(b.x, b.z);
     ctx.fillStyle = TEAMS[b.team].color;
-    ctx.fillRect(mapX(b.z, w) - r * s, mapY(b.x, h) - r * s, 2 * r * s, 2 * r * s);
+    ctx.fillRect(bx - r * s, by - r * s, 2 * r * s, 2 * r * s);
     // Pips for how many flags this base holds right now (big flags get a pin instead).
     const held = m.flagsPerTeam === 1 ? 0 : m.flags.filter((f) => f.base === b.id && f.state === "home").length;
     ctx.fillStyle = "#ffffff";
-    for (let i = 0; i < held; i++) ctx.fillRect(mapX(b.z, w) - 6 * s + (i % 5) * 2.6 * s, mapY(b.x, h) + (b.team === 0 ? 7 : -9) * s - Math.floor(i / 5) * 2.6 * s, 2 * s, 2 * s);
+    for (let i = 0; i < held; i++) ctx.fillRect(bx - 6 * s + (i % 5) * 2.6 * s, by + (b.team === 0 ? 7 : -9) * s - Math.floor(i / 5) * 2.6 * s, 2 * s, 2 * s);
   }
 
   // Smaller dots when the teams are big, so a crowd still reads.
@@ -1242,9 +1348,10 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
     const me = p.id === 0;
     // A thief carrying one of our flags gets a bigger dot with a white edge.
     const thief = p.carrying >= 0 && p.team === 1;
+    const [px, py] = at(p.x, p.z);
     ctx.fillStyle = TEAMS[p.team].color;
     ctx.beginPath();
-    ctx.arc(mapX(p.z, w), mapY(p.x, h), (me ? 4.5 : thief ? Math.max(dot, 3.4) : dot) * s, 0, Math.PI * 2);
+    ctx.arc(px, py, (me ? 4.5 : thief ? Math.max(dot, 3.4) : dot) * s, 0, Math.PI * 2);
     ctx.fill();
     if (me || thief) {
       ctx.strokeStyle = me ? ME_GLOW : "#ffffff";
@@ -1257,7 +1364,8 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
   for (const f of m.flags) {
     if (f.state === "home" && m.flagsPerTeam !== 1) continue;
     const c = f.state === "carried" ? m.players[f.carrier] : f;
-    mapPin(ctx, mapX(c.z, w), mapY(c.x, h), TEAMS[f.owner].color, s * (f.state === "home" ? 0.9 : 1.1));
+    const [fx, fy] = at(c.x, c.z);
+    mapPin(ctx, fx, fy, TEAMS[f.owner].color, s * (f.state === "home" ? 0.9 : 1.1));
   }
   ctx.restore();
 }
