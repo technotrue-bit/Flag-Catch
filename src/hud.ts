@@ -982,11 +982,9 @@ export function createHud(controls: Controls): Hud {
         void count.offsetWidth;
         count.classList.add("show");
         i++;
-        if (i === 1) announce("ready");
         if (last) {
           // GO! hands over control at once; its pop finishes on its own.
           sfx.go();
-          announce("go");
           onDone();
         } else {
           sfx.count();

@@ -7,8 +7,6 @@
 import { settings } from "./settings";
 
 export type Call =
-  | "ready"
-  | "go"
   | "grab"
   | "theyGrab"
   | "score"
@@ -28,8 +26,6 @@ export type Call =
   | "unlock";
 
 export const LINES: Record<Call, readonly string[]> = {
-  ready: ["Ready?", "Get set!"],
-  go: ["Go!", "Let's go!"],
   grab: ["Got it! Run home!", "Nice grab!", "Flag snatched!"],
   theyGrab: ["They took a flag!", "Stop that thief!", "Our flag's gone!"],
   score: ["You scored!", "Brilliant!", "What a run!"],
@@ -51,8 +47,6 @@ export const LINES: Record<Call, readonly string[]> = {
 
 /** How much each call matters; a busy voice only gives way to a bigger one. */
 export const PRIORITY: Record<Call, number> = {
-  ready: 3,
-  go: 4,
   grab: 3,
   theyGrab: 2,
   score: 4,

@@ -65,7 +65,7 @@ and Home Isle. Players from before unlocks keep the first seven animals.
 - An original looping island tune plays: calm on the menus, with drums in a
   match, then faster and busier for the last 30 seconds (or near 1,000 in
   Hoard).
-- A cheery announcer calls the big moments (grabs, scores, knockouts, the
+- A cheery announcer (quiet during the countdown) calls the big moments (grabs, scores, knockouts, the
   last 30 and 10 seconds, the result) in the phone's own voice, and the
   animals chatter in made up syllables, each at its own pitch: happy when they
   grab, a cheer when they score, a yelp when hit. Busy moments keep only the
