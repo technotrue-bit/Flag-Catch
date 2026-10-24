@@ -6,7 +6,7 @@
  */
 import { ANIMALS, ANIMAL_IDS, type AnimalDef } from "./animals";
 import type { Controls } from "./input";
-import { FLAG_ENEMY, FLAG_FREE, PALETTE, TEAMS } from "./palette";
+import { FLAG_FREE, ME_GLOW, PALETTE, TEAMS } from "./palette";
 import { sfx } from "./audio";
 import { type Difficulty, HOARD_TARGET, ITEMS, type ItemKind, type Match, type Mode, nearestBase, tune } from "./sim";
 import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, groundHeight, landOf, onBridge } from "./terrain";
@@ -692,13 +692,14 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
   for (const p of m.players) {
     if (p.out > 0) continue;
     const me = p.id === 0;
-    // A thief carrying one of our flags shows red.
-    ctx.fillStyle = p.carrying >= 0 && p.team === 1 ? FLAG_ENEMY : TEAMS[p.team].color;
+    // A thief carrying one of our flags gets a bigger dot with a white edge.
+    const thief = p.carrying >= 0 && p.team === 1;
+    ctx.fillStyle = TEAMS[p.team].color;
     ctx.beginPath();
-    ctx.arc(mapX(p.z, w), mapY(p.x, h), (me ? 4.5 : dot) * s, 0, Math.PI * 2);
+    ctx.arc(mapX(p.z, w), mapY(p.x, h), (me ? 4.5 : thief ? Math.max(dot, 3.4) : dot) * s, 0, Math.PI * 2);
     ctx.fill();
-    if (me) {
-      ctx.strokeStyle = "#ffffff";
+    if (me || thief) {
+      ctx.strokeStyle = me ? ME_GLOW : "#ffffff";
       ctx.lineWidth = 2 * s;
       ctx.stroke();
     }

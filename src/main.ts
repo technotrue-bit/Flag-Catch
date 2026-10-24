@@ -12,7 +12,7 @@ import { Fx } from "./fx";
 import { createHud } from "./hud";
 import { createControls } from "./input";
 import { type AnimalRig, type FlagRig, buildAnimal, buildFlag, buildMedicBadge, buildRespawnFlag, toon } from "./models";
-import { FLAG_ENEMY, FLAG_FREE, TEAMS } from "./palette";
+import { FLAG_ENEMY, FLAG_FREE, ME_GLOW, TEAMS } from "./palette";
 import { type Difficulty, ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
 import { MAPS, landOf, mapFor, surfaceHeight } from "./terrain";
 import { type World, buildWorld } from "./world";
@@ -44,6 +44,8 @@ const hud = createHud(controls);
 interface PlayerView {
   rig: AnimalRig;
   ring: THREE.Mesh;
+  /** Your own animal's halo, arrow and lit up materials. */
+  me?: { halo: THREE.Mesh; arrow: THREE.Mesh; mats: THREE.MeshToonMaterial[] };
   /** Shield bubble or Star glow, made on first use. */
   aura?: THREE.Mesh;
   /** The red cross a medic wears. */
@@ -66,11 +68,19 @@ const fireMeshes = new Map<number, THREE.Mesh>();
 const respawnViews = new Map<number, THREE.Group>();
 const ringGeo = new THREE.CircleGeometry(1.2, 24);
 ringGeo.rotateX(-Math.PI / 2);
-// Shared so a crowd of rings costs three materials, not 128.
-const ringMats = [
-  new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.75, depthWrite: false }),
-  ...TEAMS.map((t) => new THREE.MeshBasicMaterial({ color: t.color, transparent: true, opacity: 0.5, depthWrite: false })),
-];
+// A solid team colored band round a soft fill, so red and blue read at a glance.
+const bandGeo = new THREE.RingGeometry(1.0, 1.32, 32);
+bandGeo.rotateX(-Math.PI / 2);
+const haloGeo = new THREE.RingGeometry(1.45, 1.75, 32);
+haloGeo.rotateX(-Math.PI / 2);
+const arrowGeo = new THREE.ConeGeometry(0.42, 0.75, 4);
+arrowGeo.rotateX(Math.PI);
+// Shared so a crowd of rings costs four materials, not 256.
+const ringMats = TEAMS.map((t) => new THREE.MeshBasicMaterial({ color: t.color, transparent: true, opacity: 0.32, depthWrite: false }));
+const bandMats = TEAMS.map((t) => new THREE.MeshBasicMaterial({ color: t.color, transparent: true, opacity: 0.95, depthWrite: false }));
+const haloMat = new THREE.MeshBasicMaterial({ color: ME_GLOW, transparent: true, opacity: 0.9, depthWrite: false });
+// Drawn over trees and hills, so you can always find yourself.
+const arrowMat = new THREE.MeshBasicMaterial({ color: ME_GLOW, depthTest: false, transparent: true });
 const shieldGeo = new THREE.SphereGeometry(1.7, 16, 12);
 const shieldMat = new THREE.MeshBasicMaterial({ color: "#7fd8ff", transparent: true, opacity: 0.28, depthWrite: false });
 const starMat = new THREE.MeshBasicMaterial({ color: "#ffd166", transparent: true, opacity: 0.4, depthWrite: false });
@@ -112,12 +122,38 @@ function rebuildViews(): void {
 function makeView(animal: string, team: number, me: boolean): PlayerView {
   const rig = buildAnimal(animal, TEAMS[team].color);
   scene.add(rig.root);
-  const ring = new THREE.Mesh(ringGeo, ringMats[me ? 0 : team + 1]);
+  const ring = new THREE.Mesh(ringGeo, ringMats[team]);
+  ring.add(new THREE.Mesh(bandGeo, bandMats[team]));
   scene.add(ring);
   const badge = buildMedicBadge();
   badge.position.y = 2.6;
   rig.root.add(badge);
-  return { rig, ring, animal, bank: 0, spin: 0, badge };
+  const view: PlayerView = { rig, ring, animal, bank: 0, spin: 0, badge };
+  if (me) {
+    const halo = new THREE.Mesh(haloGeo, haloMat);
+    ring.add(halo);
+    const arrow = new THREE.Mesh(arrowGeo, arrowMat);
+    arrow.renderOrder = 10;
+    arrow.position.y = 3.4;
+    rig.root.add(arrow);
+    // Your own copies of the toon materials, so only your animal lights up.
+    const mats: THREE.MeshToonMaterial[] = [];
+    const copies = new Map<THREE.Material, THREE.MeshToonMaterial>();
+    rig.root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || !(mesh.material instanceof THREE.MeshToonMaterial)) return;
+      let copy = copies.get(mesh.material);
+      if (!copy) {
+        copy = mesh.material.clone();
+        copy.emissive.set(ME_GLOW);
+        copies.set(mesh.material, copy);
+        mats.push(copy);
+      }
+      mesh.material = copy;
+    });
+    view.me = { halo, arrow, mats };
+  }
+  return view;
 }
 
 function swapAnimal(id: string): void {
@@ -407,6 +443,15 @@ function syncViews(t: number, dt: number): void {
     v.ring.position.set(p.x, surf + 0.05, p.z);
     const air = p.y - surf;
     v.ring.scale.setScalar(Math.max(0.4, 1 - air * 0.06));
+    if (v.me) {
+      // A gentle pulse: the halo breathes, the arrow bobs, the animal glows.
+      const pulse = 0.5 + 0.5 * Math.sin(t * 4);
+      v.me.halo.scale.setScalar(1 + pulse * 0.12);
+      haloMat.opacity = 0.55 + pulse * 0.4;
+      v.me.arrow.position.y = 3.4 + pulse * 0.35;
+      v.me.arrow.rotation.y = t * 2;
+      for (const mat of v.me.mats) mat.emissiveIntensity = 0.18 + pulse * 0.17;
+    }
   }
 
   // Flags wear the color of the base they belong to.

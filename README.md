@@ -16,6 +16,15 @@ Two modes, picked on the start screen:
 
 Land, water and air animals each rule different ground.
 
+## Telling teams apart
+
+Your team is blue and the rivals are red. Every animal stands on a ring in its
+team's color, and the team color is painted on its ride too. Your own animal
+glows, has a pulsing gold halo round its ring, and a gold arrow bobs over its
+head that shows through hills and trees, so you never lose yourself in a crowd.
+On the minimap you are the gold edged dot, and a rival carrying one of your
+flags is a bigger red dot with a white edge.
+
 ## Team sizes and maps
 
 Pick 8, 16, 32 or 64 animals a side on the start screen. Each size gets its own

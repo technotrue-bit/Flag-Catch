@@ -18,11 +18,14 @@ export const PALETTE = {
   ink: "#2b2340",
 };
 
-/** Team colors stay apart for color blind players: warm vs cool plus a shape. */
+/** Your team is blue and the rivals are red, with a shape too for color blind players. */
 export const TEAMS = [
-  { name: "Sunburst", color: "#ff8a4c", light: "#ffc29a", shape: "sun" },
-  { name: "Nightshade", color: "#6c5ce7", light: "#b3a9ff", shape: "moon" },
+  { name: "Blue Team", color: "#3d8bff", light: "#a9ccff", shape: "sun" },
+  { name: "Red Team", color: "#ff4f5e", light: "#ffb3ba", shape: "moon" },
 ] as const;
+
+/** The glow that marks your own animal. */
+export const ME_GLOW = "#ffd166";
 
 export const FLAG_FREE = "#7ee36b";
 export const FLAG_ENEMY = "#ff5a6e";
