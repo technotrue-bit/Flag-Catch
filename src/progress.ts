@@ -15,6 +15,18 @@ export interface Progress {
   wins: number;
   /** Things opened outside the points track (the first seven animals for players from before unlocks). */
   extra: string[];
+  /**
+   * What each device earned, by a random device id. points, played and wins are their sums, so two phones that
+   * both played since the last sync add up instead of one overwriting the other.
+   */
+  dev: Record<string, Tally>;
+}
+
+/** One device's running totals. Each only ever goes up. */
+export interface Tally {
+  points: number;
+  played: number;
+  wins: number;
 }
 
 export interface Unlock {
@@ -49,28 +61,80 @@ export interface Store {
 }
 
 const KEY = "flagcatch.progress";
+const DEVICE_KEY = "flagcatch.device";
 /** Keys only a player from before unlocks would have. */
 const LEGACY = ["flagcatch.size", "flagcatch.mode", "flagcatch.music"];
 const CLASSIC = ["lion", "penguin", "croc", "bird", "eagle", "mammoth", "wolf"];
+/** Enough phones, tablets and browsers for anyone; a save never grows past it. */
+const MAX_DEVICES = 64;
+const ID = /^[a-z0-9]{1,24}$/;
 
 export function fresh(): Progress {
-  return { points: 0, best: {}, played: 0, wins: 0, extra: [] };
+  return { points: 0, best: {}, played: 0, wins: 0, extra: [], dev: {} };
 }
 
-export function load(store: Store | null): Progress {
+const count = (n: unknown): number => (typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
+
+/**
+ * This device's id, made once and kept with the save. It only tells this device's points apart from another's
+ * inside the save; it is never sent anywhere else.
+ */
+export function deviceId(store: Store | null): string {
+  try {
+    const have = store?.getItem(DEVICE_KEY);
+    if (have && ID.test(have)) return have;
+  } catch {
+    // Unreadable: make a new one.
+  }
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(9)), (b) => (b % 36).toString(36)).join("");
+  try {
+    store?.setItem(DEVICE_KEY, id);
+  } catch {
+    // Private mode: the id lasts until the page closes.
+  }
+  return id;
+}
+
+/** Sets points, played and wins to the sums of the device tallies. */
+function total(p: Progress): Progress {
+  const t = Object.values(p.dev);
+  p.points = t.reduce((n, d) => n + d.points, 0);
+  p.played = t.reduce((n, d) => n + d.played, 0);
+  p.wins = t.reduce((n, d) => n + d.wins, 0);
+  return p;
+}
+
+/**
+ * Reads a save from anywhere (this phone or an account), keeping only well formed values. A save from before device
+ * tallies puts its totals under `device`.
+ */
+export function parse(raw: unknown, device: string): Progress {
+  const p = fresh();
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return p;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.best === "object" && r.best !== null && !Array.isArray(r.best)) {
+    for (const [world, score] of Object.entries(r.best)) if (ID.test(world) && count(score) > 0) p.best[world] = count(score);
+  }
+  if (Array.isArray(r.extra)) p.extra = [...new Set(r.extra.filter((x): x is string => typeof x === "string" && ID.test(x)))];
+  const dev = typeof r.dev === "object" && r.dev !== null && !Array.isArray(r.dev) ? (r.dev as Record<string, unknown>) : null;
+  if (dev && Object.keys(dev).length) {
+    for (const [id, d] of Object.entries(dev)) {
+      if (!ID.test(id) || typeof d !== "object" || d === null || Object.keys(p.dev).length >= MAX_DEVICES) continue;
+      const t = d as Record<string, unknown>;
+      p.dev[id] = { points: count(t.points), played: count(t.played), wins: count(t.wins) };
+    }
+  } else {
+    const legacy = { points: count(r.points), played: count(r.played), wins: count(r.wins) };
+    if (legacy.points || legacy.played) p.dev[device] = legacy;
+  }
+  return total(p);
+}
+
+export function load(store: Store | null, device = "local"): Progress {
   if (!store) return fresh();
   try {
     const raw = store.getItem(KEY);
-    if (raw) {
-      const p = JSON.parse(raw) as Partial<Progress>;
-      return {
-        points: Math.max(0, Number(p.points) || 0),
-        best: typeof p.best === "object" && p.best ? p.best : {},
-        played: Number(p.played) || 0,
-        wins: Number(p.wins) || 0,
-        extra: Array.isArray(p.extra) ? p.extra.filter((x) => typeof x === "string") : [],
-      };
-    }
+    if (raw) return parse(JSON.parse(raw), device);
     // Players from before unlocks keep the animals they already had.
     const p = fresh();
     if (LEGACY.some((k) => store.getItem(k) !== null)) p.extra = [...CLASSIC];
@@ -86,6 +150,28 @@ export function save(store: Store | null, p: Progress): void {
   } catch {
     // Private mode: progress lasts until the page closes.
   }
+}
+
+/**
+ * Folds `other` into `into`: each device keeps its highest tally, best scores keep the higher one, extras add up.
+ * Merging the same save twice, or in either order, gives the same result. Returns true when `into` changed.
+ */
+export function merge(into: Progress, other: Progress): boolean {
+  const before = JSON.stringify(into);
+  for (const [id, d] of Object.entries(other.dev)) {
+    const mine = into.dev[id];
+    if (!mine) {
+      if (Object.keys(into.dev).length < MAX_DEVICES) into.dev[id] = { ...d };
+      continue;
+    }
+    mine.points = Math.max(mine.points, d.points);
+    mine.played = Math.max(mine.played, d.played);
+    mine.wins = Math.max(mine.wins, d.wins);
+  }
+  for (const [world, score] of Object.entries(other.best)) into.best[world] = Math.max(into.best[world] ?? 0, score);
+  for (const id of other.extra) if (!into.extra.includes(id)) into.extra.push(id);
+  total(into);
+  return JSON.stringify(into) !== before;
 }
 
 /** Everything open at this many points, plus any extras. */
@@ -117,12 +203,14 @@ export interface Award {
 }
 
 /** Pay out a finished match: your points plus a win or draw bonus. */
-export function award(p: Progress, world: string, myScore: number, result: "win" | "draw" | "loss"): Award {
+export function award(p: Progress, world: string, myScore: number, result: "win" | "draw" | "loss", device = "local"): Award {
   const before = unlocked(p);
   const gained = Math.max(0, Math.round(myScore)) + (result === "win" ? WIN_BONUS : result === "draw" ? DRAW_BONUS : 0);
-  p.points += gained;
-  p.played++;
-  if (result === "win") p.wins++;
+  const mine = (p.dev[device] ??= { points: 0, played: 0, wins: 0 });
+  mine.points += gained;
+  mine.played++;
+  if (result === "win") mine.wins++;
+  total(p);
   const record = myScore > (p.best[world] ?? 0);
   if (record) p.best[world] = Math.round(myScore);
   const opened = [...unlocked(p)].filter((id) => !before.has(id));

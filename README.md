@@ -83,6 +83,13 @@ your best match there. New players start with the Rally Lion, the Turbo Wolf
 and Home Isle. Players from before unlocks keep the first seven animals.
 `?unlock=all` opens everything for testing.
 
+Played on TrueAIGaming.com while signed in, progress also follows your account
+to any device (`src/cloud.ts`). The play page sends the account's copy, the game
+merges it into its own and sends the result back after every payout; the game
+never sees the sign-in. Each device keeps its own running tally inside the save,
+so two phones that both played since the last sync add up instead of one
+overwriting the other. Played on its own or signed out, nothing leaves the phone.
+
 ## Look, sound and feel
 
 - The animals are round, soft toy figures with big eyes and a thin ink outline,
@@ -275,7 +282,7 @@ Test games with `?per` or `?time` don't pay points.
 - `src/sim.ts`: the match, stepped at a fixed 60 Hz from a seed, no Three.js.
 - `src/terrain.ts`: the maps and their three land height field, shared by sim, render and tests.
 - `src/worlds.ts`: the eight worlds' shapes, colors, trees and twists.
-- `src/progress.ts`: points, unlocks and best scores.
+- `src/progress.ts`: points, unlocks and best scores, with per-device tallies and the merge. `src/cloud.ts`: account saves through the TrueAIGaming play page.
 - `src/animals.ts`: per animal speeds by medium and shot stats.
 - `src/critters.ts`: the animal models and their rigs.
 - `src/main.ts`, `src/world.ts`, `src/models.ts`, `src/fx.ts`: rendering.
