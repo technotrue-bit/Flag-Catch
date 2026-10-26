@@ -291,6 +291,8 @@ export interface Hud {
   ): void;
   /** The title screen: PLAY, How to play, Settings and Full screen. */
   showTitle(points: number, onPlay: () => void): void;
+  /** New points total for a title screen already showing (an account save arrived). */
+  titlePoints(points: number): void;
   /** Open the pause menu (a tap on the pause button, or the app going to the background). */
   pause(): void;
   /** What Restart and Quit to menu do. */
@@ -341,6 +343,8 @@ export interface SelectInfo {
   progress: Progress;
   open: Set<string>;
 }
+
+const titleTag = (points: number): string => (points > 0 ? `★ ${fmt(points)} POINTS` : "Steal their flags and bring them home!");
 
 /** A display name for anything on the unlock track. */
 export function unlockName(id: string): string {
@@ -716,7 +720,7 @@ export function createHud(controls: Controls): Hud {
       el("span", "a", logo).textContent = "FLAG";
       el("span", "flag", logo);
       el("span", "b", logo).textContent = "CATCH";
-      el("div", "tag", t).textContent = points > 0 ? `★ ${fmt(points)} POINTS` : "Steal their flags and bring them home!";
+      el("div", "tag", t).textContent = titleTag(points);
       const play = el("div", "big", t);
       play.textContent = "PLAY";
       play.addEventListener("click", (e) => {
@@ -747,6 +751,10 @@ export function createHud(controls: Controls): Hud {
       }
       el("div", "foot", t).textContent = "A TrueAIGaming.com game";
       t.addEventListener("pointerdown", (e) => e.stopPropagation());
+    },
+    titlePoints(points) {
+      const tag = root.querySelector<HTMLElement>(".fc-title .tag");
+      if (tag) tag.textContent = titleTag(points);
     },
     update(m, c, camYaw) {
       scoreA.textContent = String(m.scores[0]);

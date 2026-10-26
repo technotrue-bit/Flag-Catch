@@ -16,6 +16,7 @@ import { type FlagRig, buildFlag, buildMedicBadge, buildRespawnFlag, toon, waveF
 import { FLAG_ENEMY, FLAG_FREE, ME_GLOW, TEAMS } from "./palette";
 import { type Difficulty, HOARD_TARGET, ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
 import * as progressStore from "./progress";
+import { startCloud } from "./cloud";
 import { MAPS, WATER_Y, groundHeight, landOf, mapFor, surfaceHeight } from "./terrain";
 import { WORLDS } from "./worlds";
 import { type World, buildWorld } from "./world";
@@ -39,7 +40,8 @@ const SIZE_KEY = "flagcatch.size";
 const ANIMAL_KEY = "flagcatch.animal";
 const WORLD_KEY = "flagcatch.world";
 // Points and unlocks; ?unlock=all opens everything for testing.
-const progress = progressStore.load(store);
+const device = progressStore.deviceId(store);
+const progress = progressStore.load(store, device);
 const unlockAll = params.get("unlock") === "all";
 const isOpen = (id: string) => progressStore.unlocked(progress, unlockAll).has(id);
 // Saved at once, so a first visit is never mistaken for a player from before unlocks.
@@ -980,9 +982,10 @@ function frame(now: number): void {
     // Pay out points (not for test games with a forced clock or team size).
     const [a, b] = match.scores;
     const award =
-      timeParam || params.has("per") ? null : progressStore.award(progress, worldId, match.players[0].score, a > b ? "win" : a === b ? "draw" : "loss");
+      timeParam || params.has("per") ? null : progressStore.award(progress, worldId, match.players[0].score, a > b ? "win" : a === b ? "draw" : "loss", device);
     if (award) {
       progressStore.save(store, progress);
+      cloud.push();
       if (award.opened.length) window.setTimeout(() => phase === "results" && cue("unlock"), 2600);
       else if (award.record) window.setTimeout(() => phase === "results" && cue("best"), 2200);
     }
@@ -1078,6 +1081,17 @@ function showTitle(): void {
     showSelect();
   });
 }
+
+// Signed in on TrueAIGaming: the account's save joins this one, and each payout goes back to it.
+const cloud = startCloud(
+  "flag-catch",
+  () => progress,
+  (data) => {
+    if (!progressStore.merge(progress, progressStore.parse(data, device))) return;
+    progressStore.save(store, progress);
+    if (phase === "title") hud.titlePoints(progress.points);
+  },
+);
 
 // Restart and Quit from the pause menu.
 hud.setPauseActions({
