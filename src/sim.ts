@@ -641,6 +641,77 @@ export function setAnimal(p: Player, animalId: string): void {
   }
 }
 
+/** What changes as a match plays, as plain data. A match made with the same options takes it back with `restoreMatch`. */
+export interface MatchState {
+  v: 1;
+  rng: number;
+  players: Array<Omit<Player, "def"> & { def: string }>;
+  match: Pick<
+    Match,
+    | "wind"
+    | "strikes"
+    | "nextStrike"
+    | "strikeTeam"
+    | "stations"
+    | "points"
+    | "time"
+    | "timeLeft"
+    | "over"
+    | "flags"
+    | "fires"
+    | "respawns"
+    | "nextRespawnId"
+    | "scores"
+    | "nextFireId"
+    | "planCd"
+    | "overtime"
+  >;
+}
+
+export function matchState(m: Match): MatchState {
+  const { wind, strikes, nextStrike, strikeTeam, stations, points, time, timeLeft, over, flags, fires, respawns, nextRespawnId, scores, nextFireId, planCd, overtime } = m;
+  const state: MatchState = {
+    v: 1,
+    rng: m.rng.state?.a ?? 1,
+    players: m.players.map((p) => ({ ...p, def: p.def.id })),
+    match: { wind, strikes, nextStrike, strikeTeam, stations, points, time, timeLeft, over, flags, fires, respawns, nextRespawnId, scores, nextFireId, planCd, overtime },
+  };
+  // A copy, so the live match goes on without changing what was saved.
+  return JSON.parse(JSON.stringify(state)) as MatchState;
+}
+
+/**
+ * Puts a saved state back into `m`, a fresh match made with the options the saved one had. Returns false and leaves
+ * `m` as it was when the state doesn't fit it (another team size, or a save from an older game).
+ */
+export function restoreMatch(m: Match, raw: unknown): boolean {
+  const s = raw as Partial<MatchState> | null;
+  if (!s || s.v !== 1 || typeof s.rng !== "number" || !Array.isArray(s.players) || typeof s.match !== "object" || s.match === null) return false;
+  const ms = s.match;
+  if (s.players.length !== m.players.length || !Array.isArray(ms.flags) || ms.flags.length !== m.flags.length) return false;
+  if (!Array.isArray(ms.stations) || ms.stations.length !== m.stations.length) return false;
+  if (typeof ms.timeLeft !== "number" || !Number.isFinite(ms.timeLeft) || ms.over) return false;
+  for (let i = 0; i < s.players.length; i++) {
+    const p = s.players[i];
+    if (!p || p.id !== i || p.team !== m.players[i].team || !ANIMALS[p.def]) return false;
+  }
+  m.players.forEach((p, i) => {
+    const fresh = { ...p };
+    const saved = s.players![i];
+    Object.assign(p, saved, { def: ANIMALS[saved.def] });
+    // A number that didn't survive the trip (Infinity comes back as null) takes a fresh player's value.
+    for (const k of Object.keys(fresh) as Array<keyof Player>) {
+      if (typeof fresh[k] === "number" && !Number.isFinite(p[k] as number)) (p as unknown as Record<string, unknown>)[k] = fresh[k];
+    }
+  });
+  Object.assign(m, ms);
+  if (m.rng.state) m.rng.state.a = s.rng | 0;
+  m.turn = [];
+  m.turnBack = [...m.players].reverse();
+  m.events = [];
+  return true;
+}
+
 /** Advance one fixed step. `human` drives player 0; CPUs think for themselves. */
 export function step(m: Match, human: Input): void {
   m.events.length = 0;
