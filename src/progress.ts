@@ -60,7 +60,7 @@ export interface Store {
   setItem(key: string, value: string): void;
 }
 
-const KEY = "flagcatch.progress";
+export const PROGRESS_KEY = "flagcatch.progress";
 const DEVICE_KEY = "flagcatch.device";
 /** Keys only a player from before unlocks would have. */
 const LEGACY = ["flagcatch.size", "flagcatch.mode", "flagcatch.music"];
@@ -133,7 +133,7 @@ export function parse(raw: unknown, device: string): Progress {
 export function load(store: Store | null, device = "local"): Progress {
   if (!store) return fresh();
   try {
-    const raw = store.getItem(KEY);
+    const raw = store.getItem(PROGRESS_KEY);
     if (raw) return parse(JSON.parse(raw), device);
     // Players from before unlocks keep the animals they already had.
     const p = fresh();
@@ -146,7 +146,7 @@ export function load(store: Store | null, device = "local"): Progress {
 
 export function save(store: Store | null, p: Progress): void {
   try {
-    store?.setItem(KEY, JSON.stringify(p));
+    store?.setItem(PROGRESS_KEY, JSON.stringify(p));
   } catch {
     // Private mode: progress lasts until the page closes.
   }

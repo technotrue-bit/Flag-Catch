@@ -14,7 +14,23 @@ import { createControls } from "./input";
 import { type AnimalRig, buildAnimal } from "./critters";
 import { type FlagRig, buildFlag, buildMedicBadge, buildRespawnFlag, toon, waveFlag } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, ME_GLOW, TEAMS } from "./palette";
-import { type Difficulty, HOARD_TARGET, ITEMS, type Input, type Match, type Mode, NO_INPUT, STEP, createMatch, setAnimal, step, wrapAngle } from "./sim";
+import {
+  type Difficulty,
+  HOARD_TARGET,
+  ITEMS,
+  type Input,
+  type Match,
+  type MatchState,
+  type Mode,
+  NO_INPUT,
+  STEP,
+  createMatch,
+  matchState,
+  restoreMatch,
+  setAnimal,
+  step,
+  wrapAngle,
+} from "./sim";
 import * as progressStore from "./progress";
 import { startCloud } from "./cloud";
 import { MAPS, WATER_Y, groundHeight, landOf, mapFor, surfaceHeight } from "./terrain";
@@ -931,6 +947,7 @@ function frame(now: number): void {
       acc -= STEP;
     }
     alpha = acc / STEP;
+    if (now - sessionAt > SESSION_EVERY_MS) saveSession();
   } else alpha = 1;
   const me = match.players[0];
   if (me.stun <= 0) camYaw += wrapAngle(me.heading - camYaw) * Math.min(1, dt * camTurnRate(settings));
@@ -964,6 +981,7 @@ function frame(now: number): void {
   }
   if (phase === "play" && match.over) {
     phase = "results";
+    clearSession();
     music.stop();
     window.setTimeout(() => {
       if (phase === "results") music.play(0);
@@ -1009,6 +1027,7 @@ function frame(now: number): void {
 requestAnimationFrame(frame);
 
 function freshMatch(): void {
+  clearSession();
   const lastMap = match.map;
   const lastWorld = match.world;
   match = newMatch(match.rng() * 1e9);
@@ -1105,10 +1124,14 @@ hud.setPauseActions({
   },
 });
 
-// Going to the home screen or another app pauses the match.
+// Going to the home screen or another app pauses the match and keeps it, in case the phone closes the page.
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && (phase === "play" || phase === "countdown")) hud.pause();
+  if (document.hidden && (phase === "play" || phase === "countdown")) {
+    hud.pause();
+    saveSession();
+  }
 });
+window.addEventListener("pagehide", () => saveSession());
 
 // Phones only start sound after a touch, so wake audio on the first one.
 for (const kind of ["pointerup", "touchend", "keydown"]) {
@@ -1140,7 +1163,118 @@ function startCountdown(snap: boolean): void {
   });
 }
 
-showTitle();
+/**
+ * The match you're in, kept every few seconds and whenever the page is hidden, so a reload (or iPhone Safari
+ * dropping the tab) puts you back in it, paused. Cleared when the match ends or a new one starts.
+ */
+const SESSION_KEY = "flagcatch.match";
+const SESSION_EVERY_MS = 4000;
+/** Older than this, a match left behind is let go and the game opens on the title. */
+const SESSION_MAX_MS = 24 * 3600 * 1000;
+interface Session {
+  v: 1;
+  at: number;
+  setup: { animal: string; per: number; mode: Mode; world: string; medic: boolean; difficulty: Difficulty };
+  state: MatchState;
+  stats: MatchStats;
+  said: typeof said;
+}
+let sessionAt = 0;
+
+function saveSession(): void {
+  if ((phase !== "play" && phase !== "countdown") || match.over) return;
+  sessionAt = performance.now();
+  const s: Session = {
+    v: 1,
+    at: Date.now(),
+    setup: { animal: humanAnimal, per: perTeam, mode, world: worldId, medic: humanMedic, difficulty },
+    state: matchState(match),
+    stats,
+    said,
+  };
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  } catch {
+    // Storage full or refused: the match just isn't kept.
+  }
+}
+
+function clearSession(): void {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Nothing to clear.
+  }
+}
+
+/** Puts back a kept match and opens it paused. False when there is none (or it no longer fits this game). */
+function resumeSession(): boolean {
+  let s: Partial<Session> | null = null;
+  try {
+    s = JSON.parse(localStorage.getItem(SESSION_KEY) ?? "null") as Partial<Session> | null;
+  } catch {
+    s = null;
+  }
+  const u = s?.setup;
+  const fits =
+    !!s &&
+    s.v === 1 &&
+    typeof s.at === "number" &&
+    Date.now() - s.at < SESSION_MAX_MS &&
+    !!u &&
+    !!ANIMALS[u.animal] &&
+    WORLDS.some((w) => w.id === u.world) &&
+    (u.mode === "capture" || u.mode === "hoard" || u.mode === "playful") &&
+    (u.difficulty === "easy" || u.difficulty === "medium" || u.difficulty === "hard") &&
+    Number.isInteger(u.per) &&
+    u.per >= 1 &&
+    u.per <= 64;
+  if (!s || !u || !fits) {
+    clearSession();
+    return false;
+  }
+  const was = { humanAnimal, perTeam, mode, worldId, humanMedic, difficulty };
+  humanAnimal = u.animal;
+  perTeam = u.per;
+  mode = u.mode;
+  worldId = u.world;
+  humanMedic = !!u.medic;
+  difficulty = u.difficulty;
+  const next = newMatch(1);
+  if (!restoreMatch(next, s.state)) {
+    ({ humanAnimal, perTeam, mode, worldId, humanMedic, difficulty } = was);
+    // newMatch moved the terrain to the kept match's map; put the title's back.
+    newMatch(1);
+    clearSession();
+    return false;
+  }
+  if (next.map !== match.map || next.world !== match.world) {
+    world.dispose();
+    match = next;
+    world = buildWorld(scene, match);
+  } else match = next;
+  rebuildViews();
+  stats = freshStats();
+  for (const k of Object.keys(stats) as Array<keyof MatchStats>) {
+    const n = s.stats?.[k];
+    if (typeof n === "number" && Number.isFinite(n)) stats[k] = n;
+  }
+  said.thirty = !!s.said?.thirty;
+  said.ten = !!s.said?.ten;
+  said.almost = !!s.said?.almost;
+  shownMine = match.players[0].score;
+  camYaw = match.players[0].heading;
+  lastLand = landOf(match.players[0].z);
+  snapshot();
+  placeCamera(1);
+  phase = "play";
+  music.play(1);
+  acc = 0;
+  hud.pause();
+  return true;
+}
+
+if (!resumeSession()) showTitle();
 
 function tryLandscape(): void {
   const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
