@@ -152,6 +152,10 @@ const bombMat = toon("#3b3550");
 const missileGeo = new THREE.ConeGeometry(0.3, 1.1, 4);
 missileGeo.rotateX(Math.PI / 2);
 const missileMat = toon("#f4f1e8");
+// A flyer's confetti: little paper squares in party colors.
+const confettiGeo = new THREE.BoxGeometry(0.5, 0.08, 0.38);
+const CONFETTI = ["#ff6b9a", "#ffd166", "#46b4e8", "#7ee36b", "#b3a9ff", "#ffffff"];
+const confettiMats = CONFETTI.map((c) => toon(c));
 const fireMeshes = new Map<number, THREE.Mesh>();
 const respawnViews = new Map<number, THREE.Group>();
 const ringGeo = new THREE.CircleGeometry(1.2, 24);
@@ -319,6 +323,7 @@ function humanInput(): Input {
     dive: controls.dive,
     useItem: controls.itemQueued,
     plant: controls.plantQueued,
+    fire: controls.fire,
   };
   controls.throwQueued = false;
   controls.itemQueued = false;
@@ -463,9 +468,32 @@ function handleEvents(): void {
         fx.burst(e.x, 0.2, e.z, ["#ffffff", "#bff0f5"], 10, 3.5, 14, 0.18);
         break;
       case "boom":
-        sfx.pop(pan, near);
-        fx.burst(e.x, e.y + 0.5, e.z, ["#ffd166", "#ff9f1c", "#3b3550", "#ffffff"], 40, 10, 16, 0.32);
-        if (e.player === 0) shake = Math.max(shake, 0.2);
+        // A flyer's big bomb: a wide ring shows how far it reaches.
+        sfx.boom(pan, near);
+        fx.burst(e.x, e.y + 0.5, e.z, ["#ffd166", "#ff9f1c", "#3b3550", "#ffffff"], 70, 14, 16, 0.4);
+        flash(e.x, e.y + 0.3, e.z, "blast");
+        if (near > 0.5) shake = Math.max(shake, e.player === 0 ? 0.35 : 0.2);
+        break;
+      case "spray":
+        // Seven puffs a second per flyer: only yours and close ones are heard.
+        if (mine || near > 0.45) sfx.spray(pan, mine ? 1 : near);
+        fx.burst(e.x, e.y, e.z, CONFETTI, 2, 3, 6, 0.2);
+        break;
+      case "sting":
+        fx.burst(e.x, e.y, e.z, ["#ff6b9a", "#ffd166", "#46b4e8", "#7ee36b", "#ffffff"], 4, 3, 6, 0.14);
+        break;
+      case "bombReady":
+        if (mine) {
+          sfx.item(0, 0.7);
+          hud.call("BOMB READY!", "#ffd166");
+        }
+        break;
+      case "overheat":
+        if (mine) {
+          sfx.fizzle(0, 1);
+          hud.call("TOO HOT! COOLING", "#ff9f1c");
+          buzz(60);
+        }
         break;
       case "item":
         if (mine) {
@@ -727,11 +755,21 @@ function syncViews(t: number, dt: number): void {
     let mesh = fireMeshes.get(f.id);
     const missile = f.homing !== undefined && f.homing !== -1;
     if (!mesh) {
-      mesh = new THREE.Mesh(f.bomb ? bombGeo : missile ? missileGeo : fireGeo, f.bomb ? bombMat : missile ? missileMat : fireMat);
+      mesh = f.confetti
+        ? new THREE.Mesh(confettiGeo, confettiMats[f.id % confettiMats.length])
+        : new THREE.Mesh(f.bomb ? bombGeo : missile ? missileGeo : fireGeo, f.bomb ? bombMat : missile ? missileMat : fireMat);
       scene.add(mesh);
       fireMeshes.set(f.id, mesh);
     }
     mesh.position.set(f.x, f.y, f.z);
+    if (f.confetti) {
+      // Confetti tumbles as it flies.
+      mesh.rotation.x += dt * 17;
+      mesh.rotation.z += dt * 11;
+      // A drift of paper bits behind each shot, so the stream reads from behind.
+      if (Math.random() < 0.5) fx.burst(f.x, f.y, f.z, CONFETTI, 1, 1.2, 3, 0.2);
+      continue;
+    }
     mesh.rotation.y = Math.atan2(f.vx, f.vz);
     if (missile) mesh.rotation.z += dt * 6;
     else mesh.rotation.x += dt * 12;

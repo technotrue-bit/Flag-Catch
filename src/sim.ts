@@ -2,7 +2,7 @@
  * The match simulation. No Three.js here: plain numbers stepped at a fixed
  * 60 Hz, so a seed replays the same match and the tests can run it headless.
  */
-import { ANIMALS, type AnimalDef, type Style } from "./animals";
+import { ANIMALS, type AnimalDef, type Style, flies } from "./animals";
 import { mulberry32, type RNG } from "./rng";
 import {
   BASE_Z,
@@ -49,10 +49,21 @@ export const tune = {
   diveBreath: 4,
   diveDepth: 1.1,
   diveSpeed: 0.8,
-  /** Bombs pop everyone this close to where they land. */
-  bombRadius: 3,
-  /** A flyer must be this high over the ground to drop a bomb. */
-  bombHeight: 2.5,
+  /** A flyer's bomb pops everyone this close to where it lands, twice as hard inside bombCore, and takes bombReload seconds to load. */
+  bombRadius: 6,
+  bombCore: 2.5,
+  bombReload: 30,
+  /**
+   * A flyer's confetti gun: shots a second, their speed and life, and how many
+   * confetti hits make one hit. Firing heats it up; gunHeat seconds of fire
+   * overheat it, and it then cools for gunCool seconds before it fires again.
+   */
+  confettiRate: 7,
+  confettiSpeed: 26,
+  confettiLife: 0.55,
+  confettiStings: 5,
+  gunHeat: 7,
+  gunCool: 3,
   /** Power ups: how long Shield and Star last, Turbo too, and how fast it goes. */
   itemTime: 7,
   turboTime: 5,
@@ -66,8 +77,10 @@ export const tune = {
   missileSpeed: 24,
   missileTurn: 3.5,
   superJump: 22,
-  /** Flyers stop climbing this high over the ground. */
-  flyCeiling: 11,
+  /** Flyers cruise this high over the ground or water: low enough to grab flags and items, and to be hit. */
+  flyHeight: 2.2,
+  /** Flyers never slow below this share of their top speed. */
+  flyMinSpeed: 0.35,
   /** Hits an animal can take; the last one knocks it out. */
   maxHits: 3,
   /** A hit that doesn't knock you out only makes you flinch. */
@@ -218,9 +231,11 @@ export interface Input {
   useItem?: boolean;
   /** Pressed: a medic plants a respawn flag. */
   plant?: boolean;
+  /** Held: a flyer fires its confetti gun. */
+  fire?: boolean;
 }
 
-export const NO_INPUT: Input = { dirX: 0, dirZ: 0, jump: false, throwPressed: false, dive: false, useItem: false, plant: false };
+export const NO_INPUT: Input = { dirX: 0, dirZ: 0, jump: false, throwPressed: false, dive: false, useItem: false, plant: false, fire: false };
 
 export interface Player {
   id: number;
@@ -299,6 +314,17 @@ export interface Player {
   sz: number;
   /** Lava burns at most this often. */
   burnCd: number;
+  /** Flyers: seconds until the bomb is loaded; below 0, how long it has sat ready. */
+  bombCd: number;
+  /** Flyers: the confetti gun's heat (0 to 1), seconds left cooling after overheating, and until the next shot. */
+  heat: number;
+  overheat: number;
+  gunCd: number;
+  /** CPU flyers: holding the trigger. */
+  firing: boolean;
+  /** Confetti hits taken toward the next hit, and seconds before they wear off. */
+  stings: number;
+  stingT: number;
 }
 
 /**
@@ -344,6 +370,8 @@ export interface Firecracker {
   life: number;
   /** Dropped by a flyer: falls straight and bursts on landing. */
   bomb: boolean;
+  /** A flyer's confetti: flies straight and fast, and stings instead of popping. */
+  confetti?: boolean;
   /** A paper missile chasing this player id; -1 for an ordinary shot. */
   homing?: number;
 }
@@ -359,6 +387,10 @@ export interface RespawnFlag {
 
 export type SimEvent =
   | { kind: "throw"; x: number; y: number; z: number; player: number }
+  | { kind: "spray"; x: number; y: number; z: number; player: number }
+  | { kind: "sting"; x: number; y: number; z: number; player: number; by: number }
+  | { kind: "bombReady"; player: number }
+  | { kind: "overheat"; player: number }
   | { kind: "pop"; x: number; y: number; z: number; player: number; by: number }
   | { kind: "fizzle"; x: number; y: number; z: number }
   | { kind: "grab"; x: number; y: number; z: number; player: number }
@@ -629,6 +661,13 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     sx: 0,
     sz: 0,
     burnCd: 0,
+    bombCd: 0,
+    heat: 0,
+    overheat: 0,
+    gunCd: 0,
+    firing: false,
+    stings: 0,
+    stingT: 0,
   };
 }
 
@@ -767,7 +806,7 @@ export function step(m: Match, human: Input): void {
 
 function speedFor(p: Player): number {
   const boost = (p.turboT > 0 ? tune.turboBoost : 1) * (p.starT > 0 ? tune.starBoost : 1);
-  if (p.medium === "air") return p.def.airSpeed * boost;
+  if (p.medium === "air" || flies(p.def)) return p.def.airSpeed * boost;
   if (p.medium === "water") return p.def.waterSpeed * (p.diving ? tune.diveSpeed : 1) * boost;
   return p.def.landSpeed * boost;
 }
@@ -793,6 +832,10 @@ function movePlayer(m: Match, p: Player, input: Input): void {
   p.starT = Math.max(0, p.starT - STEP);
   p.turboT = Math.max(0, p.turboT - STEP);
   if (p.item) p.itemHeld += STEP;
+  if (p.stings > 0) {
+    p.stingT -= STEP;
+    if (p.stingT <= 0) p.stings = 0;
+  }
   const stunned = p.stun > 0;
   if (stunned) p.stun = Math.max(0, p.stun - STEP);
 
@@ -802,12 +845,15 @@ function movePlayer(m: Match, p: Player, input: Input): void {
     const want = Math.atan2(input.dirX, input.dirZ);
     const diff = wrapAngle(want - p.heading);
     const control = p.onSurface || p.def.cls === "air" ? 1 : 0.6;
-    const maxTurn = p.def.turnRate * control * STEP * (0.5 + 0.5 * mag);
+    // Flyers bank round hard whatever the push, so even cruising slowly they can turn onto a flag.
+    const maxTurn = p.def.turnRate * control * STEP * (flies(p.def) ? 1 : 0.5 + 0.5 * mag);
     p.heading = wrapAngle(p.heading + clamp(diff, -maxTurn, maxTurn));
   }
   // Pointing behind you slows you down while you swing round, like a stylus pull.
   const facing = mag > 0.05 ? Math.cos(wrapAngle(Math.atan2(input.dirX, input.dirZ) - p.heading)) : 0;
-  const target = speedFor(p) * mag * Math.max(0.35, facing);
+  const push = mag * Math.max(0.35, facing);
+  // Flyers never stop: with the stick let go they cruise on at their slowest.
+  const target = speedFor(p) * (flies(p.def) ? tune.flyMinSpeed + (1 - tune.flyMinSpeed) * push : push);
   const rate = target > p.speed ? tune.accel : tune.accel * 1.4;
   p.speed += clamp(target - p.speed, -rate * STEP, rate * STEP);
 
@@ -845,8 +891,31 @@ function movePlayer(m: Match, p: Player, input: Input): void {
   p.x = nx;
   p.z = nz;
 
-  // Jump, hold to float, flyers climb.
+  // Jump, hold to float. Flyers fly on their own instead, and Jump drops their bomb.
   const jumpDown = !stunned && input.jump;
+  const flyer = flies(p.def);
+  if (flyer) {
+    fly(m, p);
+    if (jumpDown && !p.jumpWasHeld) dropBomb(m, p);
+    p.jumpWasHeld = jumpDown;
+    stepGun(m, p, !stunned && (!!input.fire || input.throwPressed));
+  } else landJump(m, p, jumpDown);
+  const surf = surfaceHeight(p.x, p.z);
+  const water = isWater(p.x, p.z);
+  if (!flyer) settle(m, p, surf, water);
+  p.medium = !p.onSurface && p.y - surf > 1.2 ? "air" : water ? "water" : "land";
+  const lava = p.medium === "water" && p.onSurface && isLava(p.x, p.z);
+  p.burnCd = Math.max(0, p.burnCd - STEP);
+  if (lava && p.burnCd <= 0) burn(m, p);
+  stepDive(m, p, !stunned && !!input.dive && water && !lava && p.onSurface);
+
+  if (!flyer && !stunned && !p.diving && input.throwPressed && p.throwCd <= 0) throwFire(m, p);
+  if (!stunned && input.useItem && p.item) useItem(m, p);
+  if (!stunned && input.plant && p.medic) plantRespawn(m, p);
+}
+
+/** Jump, and hold it to float a moment longer. */
+function landJump(m: Match, p: Player, jumpDown: boolean): void {
   if (jumpDown && !p.jumpWasHeld && p.onSurface) {
     if (p.diving) {
       // Leap straight out of a dive.
@@ -858,28 +927,17 @@ function movePlayer(m: Match, p: Player, input: Input): void {
     m.events.push({ kind: "jump", player: p.id });
   }
   let g = tune.gravity;
-  if (p.def.climb > 0 && !p.onSurface) {
-    // Flyers fly for as long as Jump is held, up to a ceiling, and glide
-    // down slowly once it's let go.
-    const height = p.y - surfaceHeight(p.x, p.z);
-    if (jumpDown) {
-      if (height < tune.flyCeiling) p.vy = Math.min(p.vy + p.def.climb * STEP, 7);
-      else p.vy = Math.min(p.vy, 0);
-      g = height < tune.flyCeiling ? g * 0.35 : 0;
-    } else if (p.vy < 0) {
-      g *= 0.25;
-      p.vy = Math.max(p.vy, -6);
-    }
-  } else if (!p.onSurface && jumpDown && p.floatLeft > 0) {
+  if (!p.onSurface && jumpDown && p.floatLeft > 0) {
     p.floatLeft -= STEP;
     if (p.vy < 2) g *= 0.3;
   }
   p.jumpWasHeld = jumpDown;
   p.vy -= g * STEP;
   p.y += p.vy * STEP;
+}
 
-  const surf = surfaceHeight(p.x, p.z);
-  const water = isWater(p.x, p.z);
+/** Land on the ground or the water, and stick to it over small bumps. */
+function settle(m: Match, p: Player, surf: number, water: boolean): void {
   if (p.y <= surf) {
     if (!p.onSurface && water && p.vy < -4) m.events.push({ kind: "splash", x: p.x, z: p.z, player: p.id });
     p.y = surf;
@@ -892,15 +950,103 @@ function movePlayer(m: Match, p: Player, input: Input): void {
   } else if (p.y - surf > 0.6) {
     p.onSurface = false;
   }
-  p.medium = !p.onSurface && p.y - surf > 1.2 ? "air" : water ? "water" : "land";
-  const lava = p.medium === "water" && p.onSurface && isLava(p.x, p.z);
-  p.burnCd = Math.max(0, p.burnCd - STEP);
-  if (lava && p.burnCd <= 0) burn(m, p);
-  stepDive(m, p, !stunned && !!input.dive && water && !lava && p.onSurface);
+}
 
-  if (!stunned && !p.diving && input.throwPressed && p.throwCd <= 0) throwFire(m, p);
-  if (!stunned && input.useItem && p.item) useItem(m, p);
-  if (!stunned && input.plant && p.medic) plantRespawn(m, p);
+/**
+ * Flyers hold their cruising height over land and sea, rising and dipping
+ * with the ground; a pop or a Super Jump knocks them about, and they settle
+ * back down to it.
+ */
+function fly(m: Match, p: Player): void {
+  const surf = surfaceHeight(p.x, p.z);
+  const gap = surf + tune.flyHeight - p.y;
+  // Above the line from a leap: fall back gently. Otherwise ease onto it.
+  if (gap < -0.5 && p.vy > -6) p.vy = Math.max(-6, p.vy - tune.gravity * 0.5 * STEP);
+  else p.vy += (clamp(gap * 6, -6, 9) - p.vy) * Math.min(1, 12 * STEP);
+  p.y += p.vy * STEP;
+  if (p.y < surf + 0.2) {
+    p.y = surf + 0.2;
+    p.vy = Math.max(0, p.vy);
+  }
+  // Taking off, after a respawn.
+  if (p.onSurface) m.events.push({ kind: "jump", player: p.id });
+  p.onSurface = false;
+  p.floatLeft = 0;
+}
+
+/** A flyer's bomb, once it's loaded: falls from under it, carrying a little of its speed. */
+function dropBomb(m: Match, p: Player): void {
+  if (p.bombCd > 0) return;
+  p.bombCd = tune.bombReload;
+  const bomb: Firecracker = {
+    id: m.nextFireId++,
+    owner: p.id,
+    team: p.team,
+    x: p.x,
+    y: p.y - 0.4,
+    z: p.z,
+    vx: Math.sin(p.heading) * p.speed * 0.7,
+    vy: -3,
+    vz: Math.cos(p.heading) * p.speed * 0.7,
+    skidding: false,
+    life: 5,
+    bomb: true,
+  };
+  m.fires.push(bomb);
+  m.events.push({ kind: "throw", x: bomb.x, y: bomb.y, z: bomb.z, player: p.id });
+}
+
+/**
+ * The confetti gun fires while the trigger is held, tune.confettiRate shots
+ * a second with a little spread. Holding it heats the gun; after
+ * tune.gunHeat seconds of fire it overheats and won't fire again until it
+ * has cooled for tune.gunCool seconds. Let go early and it cools as fast.
+ */
+function stepGun(m: Match, p: Player, trigger: boolean): void {
+  const wasLoading = p.bombCd > 0;
+  p.bombCd = Math.max(-60, p.bombCd - STEP);
+  if (wasLoading && p.bombCd <= 0) m.events.push({ kind: "bombReady", player: p.id });
+  p.gunCd = Math.max(0, p.gunCd - STEP);
+  if (p.overheat > 0) {
+    p.overheat = Math.max(0, p.overheat - STEP);
+    p.heat = p.overheat / tune.gunCool;
+    return;
+  }
+  const firing = trigger && !p.diving && p.out <= 0;
+  if (!firing) {
+    p.heat = Math.max(0, p.heat - STEP / tune.gunCool);
+    return;
+  }
+  p.heat += STEP / tune.gunHeat;
+  if (p.heat >= 1) {
+    p.heat = 1;
+    p.overheat = tune.gunCool;
+    m.events.push({ kind: "overheat", player: p.id });
+    return;
+  }
+  if (p.gunCd > 0) return;
+  p.gunCd = 1 / tune.confettiRate;
+  const a = p.heading + (m.rng() - 0.5) * 0.14;
+  const fx = Math.sin(a);
+  const fz = Math.cos(a);
+  const speed = tune.confettiSpeed + Math.max(0, p.speed);
+  const shot: Firecracker = {
+    id: m.nextFireId++,
+    owner: p.id,
+    team: p.team,
+    x: p.x + fx * 1.2,
+    y: p.y + 0.3,
+    z: p.z + fz * 1.2,
+    vx: fx * speed,
+    vy: -2,
+    vz: fz * speed,
+    skidding: false,
+    life: tune.confettiLife,
+    bomb: false,
+    confetti: true,
+  };
+  m.fires.push(shot);
+  m.events.push({ kind: "spray", x: shot.x, y: shot.y, z: shot.z, player: p.id });
 }
 
 /** Lava stings: one hit, and a hop back toward the nearest dry ground. */
@@ -990,28 +1136,7 @@ function stepDive(m: Match, p: Player, want: boolean): void {
 }
 
 function throwFire(m: Match, p: Player): void {
-  const d = p.def;
-  p.throwCd = tune.throwCooldown * d.shotCooldown;
-  if (d.bomber && !p.onSurface && p.y - surfaceHeight(p.x, p.z) > tune.bombHeight) {
-    // Bombs away: falls from under the flyer, carrying a little of its speed.
-    const bomb: Firecracker = {
-      id: m.nextFireId++,
-      owner: p.id,
-      team: p.team,
-      x: p.x,
-      y: p.y - 0.4,
-      z: p.z,
-      vx: Math.sin(p.heading) * p.speed * 0.7,
-      vy: -3,
-      vz: Math.cos(p.heading) * p.speed * 0.7,
-      skidding: false,
-      life: 5,
-      bomb: true,
-    };
-    m.fires.push(bomb);
-    m.events.push({ kind: "throw", x: bomb.x, y: bomb.y, z: bomb.z, player: p.id });
-    return;
-  }
+  p.throwCd = tune.throwCooldown * p.def.shotCooldown;
   launch(m, p, 0);
 }
 
@@ -1056,6 +1181,10 @@ function stepFires(m: Match): void {
     if (f.bomb) {
       if (f.y <= surf + 0.3) explode(m, f, surf);
       else if (inWorld(f.x, f.z) && f.life > 0) keep.push(f);
+      continue;
+    }
+    if (f.confetti) {
+      if (f.y > surf && f.life > 0 && inWorld(f.x, f.z) && !stingAny(m, f)) keep.push(f);
       continue;
     }
     const missile = f.homing !== undefined && f.homing !== -1;
@@ -1137,8 +1266,30 @@ function explode(m: Match, f: Firecracker, surf: number): void {
     if (p.team === f.team || p.stun > 0 || p.diving) continue;
     const dx = p.x - f.x;
     const dz = p.z - f.z;
-    if (dx * dx + dz * dz < tune.bombRadius * tune.bombRadius && Math.abs(p.y - surf) < 3) pop(m, p, f.owner, dx, dz);
+    const d2 = dx * dx + dz * dz;
+    if (d2 < tune.bombRadius * tune.bombRadius && Math.abs(p.y - surf) < 3) pop(m, p, f.owner, dx, dz, d2 < tune.bombCore * tune.bombCore ? 2 : 1);
   }
+}
+
+/** A confetti shot stings the first enemy it reaches; enough stings make a hit. Returns whether it hit anyone. */
+function stingAny(m: Match, f: Firecracker): boolean {
+  for (const p of m.turn) {
+    if (p.team === f.team || p.out > 0 || p.diving) continue;
+    const dx = p.x - f.x;
+    const dz = p.z - f.z;
+    if (dx * dx + dz * dz > 1.2 * 1.2 || f.y < p.y - 0.4 || f.y > p.y + 2.4) continue;
+    // Flinching or shielded: the confetti bounces off.
+    if (p.stun > 0 || protectedFrom(p)) return true;
+    p.stings++;
+    p.stingT = 2;
+    m.events.push({ kind: "sting", x: f.x, y: f.y, z: f.z, player: p.id, by: f.owner });
+    if (p.stings >= tune.confettiStings) {
+      p.stings = 0;
+      pop(m, p, f.owner, f.vx, f.vz);
+    }
+    return true;
+  }
+  return false;
 }
 
 function protectedFrom(p: Player): boolean {
@@ -1243,7 +1394,7 @@ function respawn(m: Match, p: Player): void {
 /** True where a medic may plant: dry ground, outside the enemy's bases. */
 export function canPlant(m: Match, p: Player): boolean {
   if (!p.medic || p.medicCd > 0 || p.out > 0) return false;
-  if (isWater(p.x, p.z) || !p.onSurface) return false;
+  if (isWater(p.x, p.z) || (!p.onSurface && !flies(p.def))) return false;
   return !m.bases.some((b) => b.team !== p.team && Math.hypot(b.x - p.x, b.z - p.z) < m.baseRadius + 6);
 }
 
@@ -1565,7 +1716,7 @@ function cpuInput(m: Match, p: Player): Input {
     p.dodgeCd = 0.7;
     if (m.rng() < sk.dodge) {
       const low = shot.skidding || shot.y - surfaceHeight(shot.x, shot.z) < 1.4;
-      if (low && p.onSurface && p.def.cls !== "water") p.dodgeJump = 0.15;
+      if (low && p.onSurface && p.def.cls === "land") p.dodgeJump = 0.15;
       else {
         // Step off the shot's line, to whichever side is already closer.
         const v = Math.hypot(shot.vx, shot.vz) || 1;
@@ -1614,9 +1765,11 @@ function cpuInput(m: Match, p: Player): Input {
   // Lava Loop: steer round the lava rather than into it.
   if (m.world.liquid === "lava" && p.medium !== "air") [dx, dz] = avoidLava(p, dx, dz);
 
-  // Throw when a target lines up; better CPUs aim where it's going.
+  // Throw when a target lines up; better CPUs aim where it's going. Flyers spray confetti instead.
+  const flyer = flies(p.def);
   let throwPressed = false;
-  if (p.throwCd <= 0 && !p.diving) {
+  const fire = flyer && cpuGun(m, p, sk);
+  if (!flyer && p.throwCd <= 0 && !p.diving) {
     for (const o of m.players) {
       if (o.team === p.team || o.stun > 0 || o.diving) continue;
       const ox = o.x - p.x;
@@ -1638,19 +1791,73 @@ function cpuInput(m: Match, p: Player): Input {
       break;
     }
   }
-  if (p.def.cls === "air" && (d > 18 || p.goalTag === "bomb")) {
-    // Flyers take to the air for long trips: tap off the ground, then hold.
-    jump = p.onSurface ? !p.jumpWasHeld : true;
-    if (p.def.bomber && !p.onSurface) throwPressed = enemyBelow(m, p);
-  } else if (!jump) {
+  // Flyers fly themselves; for them Jump drops the bomb.
+  if (flyer) jump = cpuBomb(m, p, sk);
+  else if (!jump) {
     // Hop small rises and channels now and then.
     jump = p.onSurface ? groundHeight(p.x + fwdX * 3, p.z + fwdZ * 3) - p.y > 1.2 || m.rng() < 0.004 : p.vy > 0;
   }
   // Swimmers duck under incoming firecrackers, or to sneak a flag home.
-  const dive = p.def.dive && ((threatened(m, p) && m.rng() < sk.dodge + 0.2) || (p.carrying >= 0 && p.breath > 2.5));
+  const dive = !flyer && p.def.dive && ((threatened(m, p) && m.rng() < sk.dodge + 0.2) || (p.carrying >= 0 && p.breath > 2.5));
   const useItem = p.item !== null && (sk.itemSmart ? cpuWantsItem(m, p, d) : p.itemHeld > 2 + ((p.id % (m.players.length / 2)) % 5));
   const plant = p.medic && cpuWantsPlant(m, p);
-  return { dirX: dx * throttle, dirZ: dz * throttle, jump: jump && !dive, throwPressed, dive, useItem, plant };
+  return { dirX: dx * throttle, dirZ: dz * throttle, jump: jump && !dive, throwPressed, dive, useItem, plant, fire };
+}
+
+/**
+ * A CPU flyer's trigger finger. It opens up once an enemy lines up ahead and
+ * keeps spraying while they stay roughly in front. Good CPUs let go before
+ * the gun overheats and wait for it to cool a little; Easy ones hold on until
+ * it locks up.
+ */
+function cpuGun(m: Match, p: Player, sk: Skill): boolean {
+  if (p.overheat > 0 || (sk.itemSmart && p.heat > 0.8)) return (p.firing = false);
+  if (sk.itemSmart && !p.firing && p.heat > 0.35) return false;
+  let keen = 0;
+  for (const o of m.players) {
+    if (o.team === p.team || o.stun > 0 || o.diving || o.out > 0) continue;
+    const od = Math.hypot(o.x - p.x, o.z - p.z);
+    if (od > 15 || od < 0.8 || o.y > p.y + 1.5 || o.y < p.y - 3) continue;
+    let ax = o.x;
+    let az = o.z;
+    if (sk.leads) {
+      const t = od / tune.confettiSpeed;
+      ax += (Math.sin(o.heading) * o.speed + o.kx) * t;
+      az += (Math.cos(o.heading) * o.speed + o.kz) * t;
+    }
+    const off = Math.abs(wrapAngle(Math.atan2(ax - p.x, az - p.z) - p.heading));
+    if (off > sk.aimTol * (p.firing ? 3 : 1.6)) continue;
+    keen = o.carrying >= 0 ? 2 : o.hp === 1 ? 1.4 : 1;
+    break;
+  }
+  if (keen === 0) return (p.firing = false);
+  if (!p.firing) p.firing = m.rng() < sk.throwRate * keen * m.aggro * 2;
+  return p.firing;
+}
+
+/**
+ * When a CPU flyer lets its bomb go. It lands a beat ahead, so the flyer
+ * looks there. Easy CPUs drop it on the first enemy they pass; better ones
+ * save it for a crowd, a thief, the guards on the flag they're after, or
+ * once it has sat loaded a while.
+ */
+function cpuBomb(m: Match, p: Player, sk: Skill): boolean {
+  if (p.bombCd > 0 || p.stun > 0) return false;
+  const lx = p.x + Math.sin(p.heading) * p.speed * 0.18;
+  const lz = p.z + Math.cos(p.heading) * p.speed * 0.18;
+  const surf = surfaceHeight(lx, lz);
+  const r = tune.bombRadius * 0.8;
+  let n = 0;
+  let thief = false;
+  for (const o of m.players) {
+    if (o.team === p.team || o.stun > 0 || o.diving || o.out > 0 || Math.abs(o.y - surf) > 3) continue;
+    if (Math.hypot(o.x - lx, o.z - lz) > r) continue;
+    n++;
+    if (o.carrying >= 0) thief = true;
+  }
+  if (n === 0) return false;
+  if (!sk.itemSmart) return true;
+  return n >= 2 || thief || p.goalTag === "bomb" || p.goalTag === "steal" || p.bombCd < -12;
 }
 
 /** The closest heading to (dx, dz) that keeps lava out of the next few meters. */
@@ -1728,9 +1935,6 @@ function threatened(m: Match, p: Player): boolean {
   return m.fires.some((f) => f.team !== p.team && Math.hypot(f.x - p.x, f.z - p.z) < 7);
 }
 
-function enemyBelow(m: Match, p: Player): boolean {
-  return m.players.some((o) => o.team !== p.team && o.stun <= 0 && !o.diving && Math.hypot(o.x - p.x, o.z - p.z) < 3.5);
-}
 
 /**
  * Team plans. Every second or so each team shares out jobs the way a real
@@ -2021,10 +2225,10 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
     if (stealBest) {
       const [x, z] = raidSpot(p, stealBest);
       add("steal", 76 * (1 + 0.2 * push(m, p, sk)), x, z);
-      // Bombers clear the guards off a flag from above before anyone grabs it.
-      if (p.def.bomber) {
+      // Flyers with a bomb loaded clear the guards off a flag from above before anyone grabs it; bombers most keenly.
+      if (flies(p.def) && p.bombCd <= 0) {
         const guard = nearest(p, enemies.filter((o) => Math.hypot(o.x - stealBest!.x, o.z - stealBest!.z) < 10 * s), Infinity);
-        if (guard && near(stealBest) < 40 * s) add("bomb", 80, guard.x, guard.z);
+        if (guard && near(stealBest) < 40 * s) add("bomb", p.def.style === "bomber" ? 80 : 74, guard.x, guard.z);
       }
     }
   }

@@ -1,8 +1,9 @@
 /**
  * Thumbs and keys. The left thumb points where to go: drag from wherever it
  * lands, and the animal heads that way relative to the camera, like the
- * original's stylus. The right thumb has Jump, Throw and Item. Left handed
- * players can swap the sides in Settings.
+ * original's stylus. The right thumb has Jump, Throw and Item; for flyers
+ * those are Bomb and Fire (held for the confetti gun). Left handed players can
+ * swap the sides in Settings.
  */
 import { settings } from "./settings";
 
@@ -12,6 +13,9 @@ export interface Controls {
   steerY: number;
   jump: boolean;
   throwQueued: boolean;
+  /** Throw held down (Fire for flyers' confetti gun); keys and button combine. */
+  fire: boolean;
+  setButtonFire(down: boolean): void;
   /** Set by a tap on Item (or E); the game clears it once used. */
   itemQueued: boolean;
   /** Set by a tap on the medic's FLAG button (or R); cleared once used. */
@@ -39,6 +43,11 @@ export function createControls(surface: HTMLElement): Controls {
     steerY: 0,
     jump: false,
     throwQueued: false,
+    fire: false,
+    setButtonFire(down: boolean) {
+      buttonFire = down;
+      c.fire = keyFire || buttonFire;
+    },
     itemQueued: false,
     plantQueued: false,
     setButtonJump(down: boolean) {
@@ -56,6 +65,8 @@ export function createControls(surface: HTMLElement): Controls {
   let stickId: number | null = null;
   let keyJump = false;
   let buttonJump = false;
+  let keyFire = false;
+  let buttonFire = false;
   let keyDive = false;
   let buttonDive = false;
   const keys = new Set<string>();
@@ -139,6 +150,8 @@ export function createControls(surface: HTMLElement): Controls {
     }
     keyJump = keys.has("Space");
     c.jump = keyJump || buttonJump;
+    keyFire = keys.has("KeyJ") || keys.has("KeyK") || keys.has("Enter");
+    c.fire = keyFire || buttonFire;
     keyDive = keys.has("ShiftLeft") || keys.has("ShiftRight") || keys.has("KeyL");
     c.dive = keyDive || buttonDive;
   }

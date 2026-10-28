@@ -51,7 +51,8 @@ describe("match sim", () => {
   });
 
   it("CPU teams steal, pop and bank flags in a full match", () => {
-    const { m, log } = run(2, 90);
+    // Long enough for the full match, overtime included if it ends tied.
+    const { m, log } = run(2, opts.duration + tune.overtime + 1);
     expect(log).toContain("grab");
     expect(log).toContain("throw");
     expect(log).toContain("bank");
@@ -310,7 +311,7 @@ describe("match sim", () => {
     expect(mammoth).toBeLessThan(lion * 0.6);
   });
 
-  it("the CPU uses dives, bombs and flight over a long match", () => {
+  it("the CPU uses dives, bombs, confetti and flight over a long match", () => {
     const m = createMatch({ ...opts, seed: 8, humanAnimal: "eagle", perTeam: 6, duration: 240 });
     m.players[0].cpu = true;
     const kinds = new Set<string>();
@@ -320,6 +321,7 @@ describe("match sim", () => {
     }
     expect(kinds.has("dive")).toBe(true);
     expect(kinds.has("boom")).toBe(true);
+    expect(kinds.has("sting")).toBe(true);
   });
 });
 
@@ -549,14 +551,132 @@ describe("health, knockouts and medics", () => {
     expect(m.respawns.length).toBe(0);
   });
 
-  it("flyers keep flying while Jump is held, and glide down once it's let go", () => {
+  it("flyers fly on their own, and the stick sets their direction and speed", () => {
     const m = quiet({ humanAnimal: "eagle" });
     const me = m.players[0];
-    for (let i = 0; i < 6 / STEP; i++) step(m, { ...NO_INPUT, jump: true });
+    // Hands off: up it goes, and it cruises on at its slowest.
+    for (let i = 0; i < 3 / STEP; i++) step(m, NO_INPUT);
     expect(me.onSurface).toBe(false);
-    expect(me.y - surfaceHeight(me.x, me.z)).toBeGreaterThan(tune.flyCeiling - 2);
-    for (let i = 0; i < 8 / STEP && !me.onSurface; i++) step(m, NO_INPUT);
-    expect(me.onSurface).toBe(true);
+    expect(me.y - surfaceHeight(me.x, me.z)).toBeCloseTo(tune.flyHeight, 0);
+    expect(me.speed).toBeCloseTo(me.def.airSpeed * tune.flyMinSpeed, 1);
+    // Full stick: full speed, heading where it points.
+    for (let i = 0; i < 3 / STEP; i++) step(m, { ...NO_INPUT, dirX: 1, dirZ: 0 });
+    expect(me.speed).toBeCloseTo(me.def.airSpeed, 1);
+    expect(Math.abs(me.heading - Math.PI / 2)).toBeLessThan(0.05);
+    // Half stick: somewhere in between, and still flying.
+    for (let i = 0; i < 2 / STEP; i++) step(m, { ...NO_INPUT, dirX: 0.5, dirZ: 0 });
+    expect(me.speed).toBeGreaterThan(me.def.airSpeed * tune.flyMinSpeed + 1);
+    expect(me.speed).toBeLessThan(me.def.airSpeed - 1);
+    expect(me.onSurface).toBe(false);
+  });
+
+  it("every flyer flies itself; nobody else does", () => {
+    for (const id of ANIMAL_IDS) {
+      const m = quiet({ humanAnimal: id });
+      for (let i = 0; i < 2 / STEP; i++) step(m, NO_INPUT);
+      expect(m.players[0].onSurface, id).toBe(ANIMALS[id].cls !== "air");
+    }
+  });
+
+  it("a flyer's bomb takes 30 seconds to load again", () => {
+    const m = quiet({ humanAnimal: "bat" });
+    const me = m.players[0];
+    const bombs = () => m.fires.filter((f) => f.bomb).length;
+    for (let i = 0; i < 1 / STEP; i++) step(m, NO_INPUT);
+    step(m, { ...NO_INPUT, jump: true });
+    expect(bombs()).toBe(1);
+    step(m, NO_INPUT);
+    step(m, { ...NO_INPUT, jump: true });
+    expect(bombs()).toBeLessThanOrEqual(1);
+    let dropped = 0;
+    const ready: number[] = [];
+    for (let i = 0; i < 31 / STEP; i++) {
+      // Keep tapping: only one more bomb comes, once it has loaded.
+      const before = m.fires.filter((f) => f.bomb).map((f) => f.id);
+      step(m, { ...NO_INPUT, jump: i % 2 === 0 });
+      for (const e of m.events) if (e.kind === "bombReady") ready.push(i * STEP);
+      dropped += m.fires.filter((f) => f.bomb && !before.includes(f.id)).length;
+    }
+    expect(dropped).toBe(1);
+    expect(ready[0]).toBeGreaterThan(tune.bombReload - 1.2);
+    expect(me.bombCd).toBeGreaterThan(0);
+  });
+
+  it("the bomb's middle counts twice", () => {
+    const m = createMatch({ ...opts, humanAnimal: "eagle" });
+    const target = m.players.find((o) => o.team !== m.players[0].team)!;
+    freezeOthers(m, [0, target.id]);
+    target.cpu = false;
+    m.fires.push({ id: m.nextFireId++, owner: 0, team: 0, x: target.x + 0.5, y: target.y + 2, z: target.z, vx: 0, vy: -3, vz: 0, skidding: false, life: 5, bomb: true });
+    for (let i = 0; i < 60; i++) step(m, NO_INPUT);
+    expect(target.hp).toBe(tune.maxHits - 2);
+  });
+
+  it("the confetti gun sprays while held, overheats after 7 seconds and cools down", () => {
+    const m = quiet({ humanAnimal: "eagle" });
+    const me = m.players[0];
+    const shots: number[] = [];
+    let overheated = -1;
+    for (let i = 0; i < 12 / STEP; i++) {
+      step(m, { ...NO_INPUT, fire: true });
+      for (const e of m.events) {
+        if (e.kind === "spray") shots.push(i * STEP);
+        if (e.kind === "overheat") overheated = i * STEP;
+      }
+    }
+    expect(overheated).toBeGreaterThan(tune.gunHeat - 0.1);
+    expect(overheated).toBeLessThan(tune.gunHeat + 0.1);
+    const before = shots.filter((t) => t < overheated).length;
+    expect(before).toBeGreaterThan(tune.gunHeat * tune.confettiRate * 0.9);
+    // Nothing while it cools, then it fires again.
+    expect(shots.some((t) => t > overheated + 0.05 && t < overheated + tune.gunCool - 0.05)).toBe(false);
+    expect(shots.some((t) => t > overheated + tune.gunCool)).toBe(true);
+    // Let go: it cools off on its own.
+    for (let i = 0; i < tune.gunCool / STEP + 2; i++) step(m, NO_INPUT);
+    expect(me.heat).toBe(0);
+  });
+
+  it("confetti stings, and enough stings make a hit", () => {
+    const m = createMatch({ ...opts, humanAnimal: "eagle", perTeam: 8 });
+    const me = m.players[0];
+    const foe = m.players.find((o) => o.team !== me.team)!;
+    freezeOthers(m, [0, foe.id]);
+    foe.cpu = false;
+    for (let i = 0; i < 1 / STEP; i++) step(m, NO_INPUT);
+    // Put the foe on open ground a few meters ahead, the flyer lined up on it.
+    const spot = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((k) => fromLayout(k * 4 - 16, 6)).find(([x, z]) => !isWater(x, z) && !isWater(x, z + 6))!;
+    [foe.x, foe.z] = spot;
+    foe.y = surfaceHeight(foe.x, foe.z);
+    foe.onSurface = true;
+    let stings = 0;
+    let hits = 0;
+    for (let i = 0; i < 1.5 / STEP; i++) {
+      me.x = foe.x;
+      me.z = foe.z - 7;
+      me.y = surfaceHeight(me.x, me.z) + tune.flyHeight;
+      me.heading = 0;
+      step(m, { ...NO_INPUT, fire: true });
+      for (const e of m.events) {
+        if (e.kind === "sting") stings++;
+        if (e.kind === "hit" && e.player === foe.id) hits++;
+      }
+    }
+    expect(stings).toBeGreaterThanOrEqual(tune.confettiStings);
+    expect(hits).toBeGreaterThanOrEqual(1);
+  });
+
+  it("flyers can still grab a flag from the air", () => {
+    const m = quiet({ humanAnimal: "bat" });
+    const me = m.players[0];
+    const flag = m.flags.find((f) => f.team !== me.team)!;
+    for (let i = 0; i < 1 / STEP; i++) step(m, NO_INPUT);
+    for (let i = 0; i < 40 / STEP && me.carrying < 0; i++) {
+      const dx = flag.x - me.x;
+      const dz = flag.z - me.z;
+      const d = Math.hypot(dx, dz) || 1;
+      step(m, { ...NO_INPUT, dirX: dx / d, dirZ: dz / d });
+    }
+    expect(me.carrying).toBe(flag.id);
   });
 });
 

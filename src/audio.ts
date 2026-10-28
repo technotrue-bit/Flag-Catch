@@ -240,6 +240,17 @@ export const sfx = {
     tone("square", 320, 60, 0.25, pan, 0.18 * near);
     tone("sine", 1200, 2400, 0.08, pan, 0.12 * near, 0.03);
   },
+  /** One puff of the confetti gun: short and soft, as it fires seven a second. */
+  spray(pan: number, near: number) {
+    hiss(0.05, 4200, pan, 0.07 * near);
+    tone("triangle", 1500, 1900, 0.04, pan, 0.03 * near);
+  },
+  /** A flyer's big bomb: a deeper thump than a pop. */
+  boom(pan: number, near: number) {
+    hiss(0.55, 600, pan, 0.75 * near);
+    tone("square", 220, 40, 0.4, pan, 0.22 * near);
+    tone("sine", 900, 1800, 0.1, pan, 0.1 * near, 0.04);
+  },
   fizzle(pan: number, near: number) {
     hiss(0.2, 3200, pan, 0.08 * near);
   },
