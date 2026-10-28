@@ -1153,6 +1153,7 @@ const cloud = startCloud(
     progressStore.save(store, progress);
     if (phase === "title") hud.titlePoints(progress.points);
   },
+  (name) => hud.setPlayerName(name),
 );
 
 // Restart and Quit from the pause menu.

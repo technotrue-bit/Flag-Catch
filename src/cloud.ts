@@ -15,7 +15,26 @@ export interface Cloud {
   push(): void;
 }
 
-export function startCloud(game: string, get: () => unknown, apply: (data: unknown) => void): Cloud {
+/** Longest name shown on the map (site handles go up to 24). */
+export const NAME_MAX = 24;
+
+/** A site username fit to draw: trimmed, no control characters, at most NAME_MAX letters. Anything else gives null. */
+export function cleanName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const name = Array.from(raw.replace(/[\p{C}]/gu, "").trim()).slice(0, NAME_MAX).join("").trim();
+  return name || null;
+}
+
+/**
+ * `onName` hears the signed-in player's site username ("tag:player"), so the minimap can label them. Signed out, it
+ * never fires and the game says "You".
+ */
+export function startCloud(
+  game: string,
+  get: () => unknown,
+  apply: (data: unknown) => void,
+  onName: (name: string) => void = () => {},
+): Cloud {
   if (window.parent === window) return { push() {} };
   let site: string | null = null;
   const push = () => {
@@ -23,8 +42,14 @@ export function startCloud(game: string, get: () => unknown, apply: (data: unkno
   };
   window.addEventListener("message", (e: MessageEvent) => {
     if (e.source !== window.parent || !isSite(e.origin)) return;
-    const m = e.data as { type?: unknown; game?: unknown; data?: unknown } | null;
-    if (!m || m.type !== "tag:load" || m.game !== game) return;
+    const m = e.data as { type?: unknown; game?: unknown; data?: unknown; name?: unknown } | null;
+    if (!m || m.game !== game) return;
+    if (m.type === "tag:player") {
+      const name = cleanName(m.name);
+      if (name) onName(name);
+      return;
+    }
+    if (m.type !== "tag:load") return;
     site = e.origin;
     if (m.data != null) apply(m.data);
     push();

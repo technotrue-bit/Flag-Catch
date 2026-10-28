@@ -296,6 +296,8 @@ export interface Hud {
   showTitle(points: number, onPlay: () => void): void;
   /** New points total for a title screen already showing (an account save arrived). */
   titlePoints(points: number): void;
+  /** Your site username, shown by your marker on the minimap ("You" until it comes). */
+  setPlayerName(name: string): void;
   /** Open the pause menu (a tap on the pause button, or the app going to the background). */
   pause(): void;
   /** What Restart and Quit to menu do. */
@@ -393,6 +395,8 @@ export function createHud(controls: Controls): Hud {
   let mapWorld: WorldDef | null = null;
   /** DS mode's two screens, or null for the normal layout. */
   let split: DsLayout | null = null;
+  /** The label by your marker on the minimap. */
+  let myName = "You";
   /**
    * Size the map for the layout: a small one on its side in the corner, or
    * in DS mode an upright one filling the middle of the bottom screen.
@@ -771,6 +775,9 @@ export function createHud(controls: Controls): Hud {
       el("div", "foot", t).textContent = "A TrueAIGaming.com game";
       t.addEventListener("pointerdown", (e) => e.stopPropagation());
     },
+    setPlayerName(name) {
+      myName = name;
+    },
     titlePoints(points) {
       const tag = root.querySelector<HTMLElement>(".fc-title .tag");
       if (tag) tag.textContent = titleTag(points);
@@ -923,7 +930,7 @@ export function createHud(controls: Controls): Hud {
         arrow.style.display = "none";
       }
 
-      drawMap(mctx, mapBg, m, map.width, map.height, !!split);
+      drawMap(mctx, mapBg, m, map.width, map.height, !!split, myName);
 
       if (vigTimer > 0) {
         vigTimer -= 1 / 60;
@@ -1366,7 +1373,7 @@ function mapPin(ctx: CanvasRenderingContext2D, x: number, y: number, color: stri
   ctx.fill();
 }
 
-function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match, w: number, h: number, upright: boolean): void {
+function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match, w: number, h: number, upright: boolean, name: string): void {
   ctx.clearRect(0, 0, w, h);
   ctx.save();
   // Marks grow with the map, a little less on the big upright one.
@@ -1403,17 +1410,17 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
   // Smaller dots when the teams are big, so a crowd still reads.
   const dot = m.players.length > 40 ? 1.6 : m.players.length > 20 ? 2.2 : 3;
   for (const p of m.players) {
-    if (p.out > 0) continue;
-    const me = p.id === 0;
+    // You are drawn last, on top of everything (see drawMe).
+    if (p.out > 0 || p.id === 0) continue;
     // A thief carrying one of our flags gets a bigger dot with a white edge.
     const thief = p.carrying >= 0 && p.team === 1;
     const [px, py] = at(p.x, p.z);
     ctx.fillStyle = TEAMS[p.team].color;
     ctx.beginPath();
-    ctx.arc(px, py, (me ? 4.5 : thief ? Math.max(dot, 3.4) : dot) * s, 0, Math.PI * 2);
+    ctx.arc(px, py, (thief ? Math.max(dot, 3.4) : dot) * s, 0, Math.PI * 2);
     ctx.fill();
-    if (me || thief) {
-      ctx.strokeStyle = me ? ME_GLOW : "#ffffff";
+    if (thief) {
+      ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 2 * s;
       ctx.stroke();
     }
@@ -1426,7 +1433,95 @@ function drawMap(ctx: CanvasRenderingContext2D, bg: HTMLCanvasElement, m: Match,
     const [fx, fy] = at(c.x, c.z);
     mapPin(ctx, fx, fy, TEAMS[f.owner].color, s * (f.state === "home" ? 0.9 : 1.1));
   }
+  const me = m.players[0];
+  if (me && me.out <= 0) drawMe(ctx, at, me, w, h, s, name);
   ctx.restore();
+}
+
+/**
+ * Your marker, so you find yourself in a crowd of team dots: a gold ring that pulses out, a bigger dot in your team's
+ * color with a white edge, a gold arrow the way you face, and your name in a pill under it (over it near the bottom
+ * edge, and kept inside the map).
+ */
+function drawMe(
+  ctx: CanvasRenderingContext2D,
+  at: (x: number, z: number) => [number, number],
+  me: Match["players"][number],
+  w: number,
+  h: number,
+  s: number,
+  name: string,
+): void {
+  const [x, y] = at(me.x, me.z);
+  const r = 4.2 * s;
+  // Pulse: a ring grows and fades every 1.2 s.
+  const t = (performance.now() % 1200) / 1200;
+  ctx.beginPath();
+  ctx.arc(x, y, r + (2 + 9 * t) * s, 0, Math.PI * 2);
+  ctx.strokeStyle = ME_GLOW;
+  ctx.globalAlpha = 0.9 * (1 - t);
+  ctx.lineWidth = 2.2 * s;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  // Facing arrow, worked out on the map so it is right on its side and upright.
+  const [ax, ay] = at(me.x + Math.sin(me.heading), me.z + Math.cos(me.heading));
+  const len = Math.hypot(ax - x, ay - y) || 1;
+  const dx = (ax - x) / len;
+  const dy = (ay - y) / len;
+  const tip = r + 5.5 * s;
+  const back = r + 0.5 * s;
+  const wide = 3.6 * s;
+  ctx.beginPath();
+  ctx.moveTo(x + dx * tip, y + dy * tip);
+  ctx.lineTo(x + dx * back - dy * wide, y + dy * back + dx * wide);
+  ctx.lineTo(x + dx * back + dy * wide, y + dy * back - dx * wide);
+  ctx.closePath();
+  ctx.fillStyle = ME_GLOW;
+  ctx.fill();
+  ctx.strokeStyle = "#2b2340";
+  ctx.lineWidth = 1 * s;
+  ctx.stroke();
+  // The dot.
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = TEAMS[me.team].color;
+  ctx.fill();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.8 * s;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, r + 1.6 * s, 0, Math.PI * 2);
+  ctx.strokeStyle = ME_GLOW;
+  ctx.lineWidth = 1.4 * s;
+  ctx.stroke();
+  // Name pill, its text shrunk to fit a long name inside the map.
+  const face = (px: number) => `800 ${px}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+  let font = 8.5 * s;
+  ctx.font = face(font);
+  let tw = ctx.measureText(name).width;
+  const room = w * 0.85 - 7 * s;
+  if (tw > room) {
+    font *= room / tw;
+    ctx.font = face(font);
+    tw = ctx.measureText(name).width;
+  }
+  const pw = tw + 7 * s;
+  const ph = font + 5 * s;
+  const gap = r + 4 * s;
+  const below = y + gap + ph <= h - 2 * s;
+  const px = Math.max(2 * s, Math.min(w - 2 * s - pw, x - pw / 2));
+  const py = below ? y + gap : y - gap - ph;
+  ctx.beginPath();
+  ctx.roundRect(px, py, pw, ph, ph / 2);
+  ctx.fillStyle = "rgba(43,35,64,.88)";
+  ctx.fill();
+  ctx.strokeStyle = ME_GLOW;
+  ctx.lineWidth = 1.2 * s;
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(name, px + 3.5 * s, py + ph / 2 + 0.5 * s);
 }
 
 function buildTunePanel(parent: HTMLElement): HTMLElement {
