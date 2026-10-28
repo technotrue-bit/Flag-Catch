@@ -665,6 +665,47 @@ describe("health, knockouts and medics", () => {
     expect(hits).toBeGreaterThanOrEqual(1);
   });
 
+  it("confetti locks on, so it reaches a moving target that isn't dead ahead", () => {
+    const m = createMatch({ ...opts, humanAnimal: "eagle", perTeam: 8 });
+    const me = m.players[0];
+    const foe = m.players.find((o) => o.team !== me.team && !o.def.dive && o.def.cls !== "air")!;
+    freezeOthers(m, [0, foe.id]);
+    foe.cpu = false;
+    for (let i = 0; i < 1 / STEP; i++) step(m, NO_INPUT);
+    const flat = (x: number, z: number) => [-14, -7, 0, 2].every((dz) => !isWater(x, z + dz) && Math.abs(surfaceHeight(x, z + dz) - surfaceHeight(x, z)) < 1.5);
+    const spot = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((k) => fromLayout(k * 4 - 16, 6)).find(([x, z]) => flat(x, z))!;
+    [foe.x, foe.z] = spot;
+    let stings = 0;
+    for (let i = 0; i < 1.5 / STEP; i++) {
+      // 12 m away and a quarter of a radian off to one side, while the foe walks across.
+      foe.x = spot[0] + Math.sin(i * STEP * 3) * 1.5;
+      foe.sx = Math.cos(i * STEP * 3) * 4.5;
+      foe.y = surfaceHeight(foe.x, foe.z);
+      me.x = spot[0] - Math.sin(0.25) * 12;
+      me.z = spot[1] - Math.cos(0.25) * 12;
+      me.y = surfaceHeight(me.x, me.z) + tune.flyHeight;
+      me.heading = 0;
+      step(m, { ...NO_INPUT, fire: true });
+      for (const e of m.events) if (e.kind === "sting" && e.by === me.id) stings++;
+    }
+    expect(stings).toBeGreaterThanOrEqual(tune.confettiStings);
+  });
+
+  it("confetti flies straight instead of dropping like a firecracker", () => {
+    const m = createMatch({ ...opts, humanAnimal: "eagle", perTeam: 8 });
+    const me = m.players[0];
+    freezeOthers(m, [0]);
+    for (const p of m.players) if (p.team !== me.team) p.out = 999;
+    for (let i = 0; i < 1 / STEP; i++) step(m, NO_INPUT);
+    step(m, { ...NO_INPUT, fire: true });
+    const shot = m.fires.find((f) => f.confetti)!;
+    const { y, vy } = shot;
+    step(m, NO_INPUT);
+    step(m, NO_INPUT);
+    expect(shot.vy).toBe(vy);
+    expect(shot.y).toBeCloseTo(y + vy * 2 * STEP, 5);
+  });
+
   it("flyers can still grab a flag from the air", () => {
     const m = quiet({ humanAnimal: "bat" });
     const me = m.players[0];

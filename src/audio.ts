@@ -245,6 +245,10 @@ export const sfx = {
     hiss(0.05, 4200, pan, 0.07 * near);
     tone("triangle", 1500, 1900, 0.04, pan, 0.03 * near);
   },
+  /** A confetti shot landing on someone: a short bright tick. */
+  sting(pan: number, near: number) {
+    tone("square", 1900, 2400, 0.03, pan, 0.06 * near);
+  },
   /** A flyer's big bomb: a deeper thump than a pop. */
   boom(pan: number, near: number) {
     hiss(0.55, 600, pan, 0.75 * near);

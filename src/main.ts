@@ -479,9 +479,14 @@ function handleEvents(): void {
         if (mine || near > 0.45) sfx.spray(pan, mine ? 1 : near);
         fx.burst(e.x, e.y, e.z, CONFETTI, 2, 3, 6, 0.2);
         break;
-      case "sting":
-        fx.burst(e.x, e.y, e.z, ["#ff6b9a", "#ffd166", "#46b4e8", "#7ee36b", "#ffffff"], 4, 3, 6, 0.14);
+      case "sting": {
+        // Each confetti hit: a pop of paper, a flinch and, for your shots, a tick.
+        fx.burst(e.x, e.y, e.z, CONFETTI, 12, 5, 8, 0.18);
+        views[e.player].squash = Math.max(views[e.player].squash, 0.85);
+        if (e.by === 0) sfx.sting(pan, 1);
+        else if (mine) sfx.sting(pan, 0.6);
         break;
+      }
       case "bombReady":
         if (mine) {
           sfx.item(0, 0.7);
