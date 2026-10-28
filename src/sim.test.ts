@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ANIMALS, ANIMAL_IDS } from "./animals";
-import { type Difficulty, type Firecracker, HOARD_TARGET, type Input, type Match, NO_INPUT, SKILLS, STEP, createMatch, giveItem, rivalSkill, step, tune } from "./sim";
+import { type Difficulty, type Firecracker, HOARD_TARGET, type Input, type Match, NO_INPUT, SKILLS, STEP, createMatch, giveItem, matchState, restoreMatch, rivalSkill, step, tune } from "./sim";
 import { PLAN_IDS } from "./plans";
 import { BRIDGES, MAPS, ZONE_EDGE, fromLayout, groundHeight, isWater, landOf, mapScale, setMap, surfaceHeight } from "./terrain";
 
@@ -985,5 +985,37 @@ describe("team plans and specialties", () => {
     }
     expect(staged).toBeGreaterThan(0);
     expect(went).toBe(true);
+  });
+});
+
+describe("saves across the bots update", () => {
+  it("a match saved before team plans loads and plays on with fresh plans", () => {
+    const o = { ...opts, seed: 21 };
+    const m = createMatch(o);
+    for (let i = 0; i < 60 * 20; i++) step(m, NO_INPUT);
+    const s = matchState(m) as unknown as { match: Record<string, unknown>; players: Record<string, unknown>[] };
+    // What a save from before the update looks like: no plans, none of the new run fields.
+    delete s.match.brains;
+    for (const p of s.players) for (const k of ["runFor", "runOn", "runX", "runZ", "run2X", "run2Z", "runStage", "approach", "decoy", "weave", "pressed"]) delete p[k];
+    const back = createMatch(o);
+    expect(restoreMatch(back, JSON.parse(JSON.stringify(s)))).toBe(true);
+    expect(back.time).toBeCloseTo(m.time);
+    for (const b of back.brains) expect(PLAN_IDS).toContain(b.plan);
+    for (let i = 0; i < 60 * 30; i++) step(back, NO_INPUT);
+    for (const p of back.players) expect(Number.isFinite(p.x) && Number.isFinite(p.z)).toBe(true);
+  });
+
+  it("a match saved after the update comes back with its own plans", () => {
+    const o = { ...opts, seed: 22 };
+    const m = createMatch(o);
+    for (let i = 0; i < 60 * 20; i++) step(m, NO_INPUT);
+    const back = createMatch(o);
+    expect(restoreMatch(back, matchState(m))).toBe(true);
+    expect(back.brains.map((b) => b.plan)).toEqual(m.brains.map((b) => b.plan));
+    for (let i = 0; i < 60 * 10; i++) {
+      step(m, NO_INPUT);
+      step(back, NO_INPUT);
+    }
+    expect(back.players.map((p) => [p.x, p.z])).toEqual(m.players.map((p) => [p.x, p.z]));
   });
 });
