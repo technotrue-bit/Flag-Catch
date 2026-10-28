@@ -76,7 +76,7 @@ function readInsets(): Insets {
   if (!probe) {
     probe = document.createElement("div");
     probe.style.cssText =
-      "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)";
+      "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding:var(--fc-sa-top) var(--fc-sa-right) var(--fc-sa-bottom) var(--fc-sa-left)";
     document.body.appendChild(probe);
   }
   const cs = getComputedStyle(probe);
