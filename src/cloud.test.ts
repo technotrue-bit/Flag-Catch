@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { isSite, startCloud } from "./cloud";
+import { cleanName, isSite, NAME_MAX, startCloud } from "./cloud";
 
 type Listener = (e: { source: unknown; origin: string; data: unknown }) => void;
 
@@ -55,6 +55,25 @@ describe("account saves bridge", () => {
     f.send({ type: "tag:load", game: "other", data: { points: 1 } });
     expect(applied).toEqual([]);
     expect(f.posted.length).toBe(1);
+  });
+
+  it("hears the player's username from the site only, cleaned up", () => {
+    const f = fakeFrame();
+    const names: string[] = [];
+    startCloud("flag-catch", () => ({}), () => {}, (n) => names.push(n));
+    f.send({ type: "tag:player", game: "flag-catch", name: "  devin\u0000_423 " });
+    f.send({ type: "tag:player", game: "flag-catch", name: "sneaky" }, "https://evil.example");
+    f.send({ type: "tag:player", game: "other", name: "other" });
+    f.send({ type: "tag:player", game: "flag-catch", name: 42 });
+    f.send({ type: "tag:player", game: "flag-catch", name: "   " });
+    expect(names).toEqual(["devin_423"]);
+    expect(f.posted.length).toBe(1);
+  });
+
+  it("keeps names short enough for the map", () => {
+    expect(cleanName("a".repeat(40))).toBe("a".repeat(NAME_MAX));
+    expect(cleanName("😀".repeat(20))).toBe("😀".repeat(NAME_MAX));
+    expect(cleanName(null)).toBeNull();
   });
 
   it("does nothing when not in a frame", () => {
