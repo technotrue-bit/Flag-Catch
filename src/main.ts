@@ -83,6 +83,16 @@ app.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, 1, 0.3, 400);
 
+/** The plans the CPU teams opened with last match, kept across visits, so the next match opens differently. Read before the first newMatch below. */
+let lastPlans: string[] = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem("flagcatch.lastPlans") ?? "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(0, 2) : [];
+  } catch {
+    return [];
+  }
+})();
+
 let match: Match = newMatch(Number(params.get("seed") ?? 1));
 let world: World = buildWorld(scene, match);
 const fx = new Fx(scene);
@@ -192,16 +202,6 @@ const WAKE = ["#ffffff", "#d8f6f7"];
 const EMBERS = ["#ffb347", "#ff7a2f"];
 // Animals beyond the fog are hidden, which matters with 128 of them.
 const DRAW_RANGE = 230;
-
-/** The plans the CPU teams opened with last match, kept across visits, so the next match opens differently. */
-let lastPlans: string[] = (() => {
-  try {
-    const v = JSON.parse(localStorage.getItem("flagcatch.lastPlans") ?? "[]");
-    return Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(0, 2) : [];
-  } catch {
-    return [];
-  }
-})();
 
 function newMatch(seed: number): Match {
   const map = mapFor(perTeam);
