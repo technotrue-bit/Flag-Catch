@@ -39,7 +39,10 @@ its pick tile:
   off on their way home instead of trailing behind.
 - Guardians (Skate Mammoth, Ski Croc) walk a patrol ring round their base
   and bodyguard their own carriers.
-- The Sky Eagle bombs the guards off a flag from above.
+- The Sky Eagle bombs the guards off a flag from above; every flyer with a
+  bomb loaded will, and CPU flyers save it for a crowd or a thief and spray
+  confetti at whoever lines up ahead, easing off before the gun overheats
+  (Easy ones hold on until it does).
 - All rounders (Rally Lion, Bowl Goldfish) fill whatever the team is short of.
 
 Every second or so each team shares out the jobs: two or three hunters per
@@ -190,8 +193,16 @@ plants a respawn flag where you stand, once every 30 seconds, anywhere but on
 the enemy's bases. Each medic keeps two up at a time, and an enemy who drives
 into one knocks it down. One in eight CPU animals is a medic.
 
-Flyers fly for as long as Jump is held, up to a ceiling, and glide down slowly
-when it's let go.
+Flyers (Sky Eagle, Glide Fish, Night Bat) fly on their own, low over land and
+water alike: the stick steers and sets the speed, from a slow cruise with it let
+go to full speed pushed all the way. They carry two weapons instead of
+firecrackers. BOMB (the Jump button, or Space) drops a bomb that pops everyone
+within 6 m, twice as hard within 2.5 m, and takes 30 seconds to load again.
+FIRE (the Throw button, or J held) sprays a confetti machine gun, seven shots a
+second; five confetti hits make one hit. Holding it heats the gun, and after 7
+seconds of fire it overheats and cools for 3 seconds. The buttons show the
+bomb's reload and the gun's heat. Flying low, flyers still grab flags and items
+and can still be hit.
 
 ## CPU brains and difficulty
 
@@ -245,8 +256,8 @@ sizes from 8v8 to 64v64. Thirteen animals to pick from:
   Bowl Goldfish (rolls in a fishbowl, as good on land as in water) and Pogo
   Frog (giant pogo jumps). The divers hold Dive in water to slip under
   firecrackers until their breath runs out.
-- Air: Sky Eagle (Throw while high up drops a bomb), Glide Fish (swims, dives
-  and flies) and Night Bat (fastest flyer, quick throws, fragile). Hold Jump to fly.
+- Air: Sky Eagle (the bomber), Glide Fish (turns well) and Night Bat (fastest
+  flyer, fragile). They fly on their own, with a bomb and a confetti gun.
 
 CPU animals are mirrored slot by slot across the teams, and the rival in your
 slot rides your animal, so neither side starts with the better line up.
@@ -271,10 +282,10 @@ Test games with `?per` or `?time` don't pay points.
 ## Controls
 
 - Phone: put your thumb down anywhere on the left half and the stick stays
-  there; slide within its ring to steer. Jump (hold to float, the eagle
-  climbs), Throw and Item on the right. Swimmers get a Dive button in water; its
+  there; slide within its ring to steer. Jump (hold to float), Throw and Item
+  on the right; flyers get BOMB and FIRE (hold) in place of Jump and Throw. Swimmers get a Dive button in water; its
   ring drains with their breath.
-- Keyboard: WASD or arrows, Space jumps (hold to fly), J throws, E uses your item, R plants a respawn flag as a medic, Shift or L dives.
+- Keyboard: WASD or arrows, Space jumps (flyers: bomb), J throws (flyers: hold to fire), E uses your item, R plants a respawn flag as a medic, Shift or L dives.
 - Pinch and double tap never zoom the page. Zoom the camera from Settings.
 
 ## Layout

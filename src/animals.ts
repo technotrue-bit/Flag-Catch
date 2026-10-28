@@ -1,7 +1,8 @@
 /**
  * Animal stats, in the original's unlock order plus our Turbo Wolf. Each
  * class rules its own ground: land animals are fast on land, water animals
- * fast in water (and can dive), flyers are medium everywhere and climb.
+ * fast in water (and can dive), flyers fly on their own, low over land
+ * and sea alike, and carry a bomb and a confetti gun instead of firecrackers.
  * Speeds are meters per second.
  */
 export type AnimalClass = "land" | "water" | "air";
@@ -32,18 +33,14 @@ export interface AnimalDef {
   /** Radians per second at full stick. */
   turnRate: number;
   jumpSpeed: number;
-  /** Seconds of hold-to-float after a jump. Flyers get much more. */
+  /** Seconds of hold-to-float after a jump. */
   floatTime: number;
-  /** Upward push while holding jump in the air (flyers only climb). */
-  climb: number;
   /** Firecracker multipliers: launch speed, arc lift and cooldown. */
   shotSpeed: number;
   shotLift: number;
   shotCooldown: number;
   /** Can hold Dive in water to slip under firecrackers. */
   dive: boolean;
-  /** Throwing while high in the air drops a bomb straight down instead. */
-  bomber: boolean;
   /** Stun and knockback multiplier when popped; under 1 shrugs it off faster. */
   toughness: number;
   /** One line for the pick screen. */
@@ -59,12 +56,10 @@ const BASE = {
   turnRate: 3.4,
   jumpSpeed: 9,
   floatTime: 0.55,
-  climb: 0,
   shotSpeed: 1,
   shotLift: 1,
   shotCooldown: 1,
   dive: false,
-  bomber: false,
   toughness: 1,
 };
 
@@ -126,9 +121,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
     turnRate: 3.0,
     jumpSpeed: 8,
     floatTime: 3.2,
-    climb: 26,
-    bomber: true,
-    perk: "Hold Jump to fly, Throw in the air drops bombs",
+    perk: "Flies itself; drops bombs, sprays confetti",
   }),
   mammoth: animal({
     id: "mammoth",
@@ -206,12 +199,10 @@ export const ANIMALS: Record<string, AnimalDef> = {
     landSpeed: 7,
     waterSpeed: 13.5,
     airSpeed: 11.5,
-    turnRate: 3.3,
+    turnRate: 3.9,
     jumpSpeed: 10,
     floatTime: 2.6,
-    climb: 20,
-    dive: true,
-    perk: "Swims, dives and flies",
+    perk: "Flies low and steady, turns well",
   }),
   bat: animal({
     id: "bat",
@@ -224,10 +215,8 @@ export const ANIMALS: Record<string, AnimalDef> = {
     turnRate: 3.6,
     jumpSpeed: 8.5,
     floatTime: 3.6,
-    climb: 30,
-    shotCooldown: 0.7,
     toughness: 1.2,
-    perk: "Fastest flyer, quick throws, fragile",
+    perk: "Fastest flyer, but fragile",
   }),
   frog: animal({
     id: "frog",
@@ -246,3 +235,8 @@ export const ANIMALS: Record<string, AnimalDef> = {
 };
 
 export const ANIMAL_IDS = Object.keys(ANIMALS);
+
+/** Flyers are always in the air: the stick steers and sets the speed, Jump drops a bomb and Throw fires the confetti gun. */
+export function flies(def: AnimalDef): boolean {
+  return def.cls === "air";
+}

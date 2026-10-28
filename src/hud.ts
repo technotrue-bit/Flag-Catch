@@ -44,6 +44,9 @@ const CSS = `
 @keyframes fcglow{50%{box-shadow:0 5px 0 rgba(43,35,64,.28),0 0 18px 4px rgba(255,209,102,.9)}}
 .fc-medic{width:64px;height:64px;right:max(222px,calc(env(safe-area-inset-right) + 212px));bottom:max(36px,calc(env(safe-area-inset-bottom) + 26px));background:#3cbf7a;font-size:11px;text-align:center;line-height:1.05;flex-direction:column;display:none}
 .fc-medic b{font-size:20px;line-height:1}
+.fc-btn.fly{flex-direction:column;line-height:1;text-align:center}
+.fc-btn.fly small{font-size:.62em;letter-spacing:.5px;opacity:.9}
+.fc-btn.fly b{font-size:1.45em}
 .fc-hearts{position:absolute;top:calc(max(10px,env(safe-area-inset-top)) + 42px);left:max(10px,env(safe-area-inset-left));display:flex;gap:3px;font-size:20px;line-height:1;filter:drop-shadow(0 2px 0 rgba(43,35,64,.25))}
 .fc-hearts i{font-style:normal;color:#e8455b;transition:transform .15s}
 .fc-hearts i.gone{color:rgba(43,35,64,.25);transform:scale(.8)}
@@ -428,6 +431,10 @@ export function createHud(controls: Controls): Hud {
   const item = el("div", "fc-btn fc-item", pad);
   item.textContent = "ITEM";
   let shownItem: ItemKind | null | undefined;
+  let shownJump = "JUMP";
+  let shownThrow = "THROW";
+  let shownJumpBg = "";
+  let shownThrowBg = "";
   const power = el("div", "fc-power", root);
   // Shows only for swimmers in water; the ring drains with their breath.
   const dive = el("div", "fc-btn fc-dive", pad);
@@ -447,7 +454,11 @@ export function createHud(controls: Controls): Hud {
   const press = (node: HTMLElement, down: () => void, up: () => void) => {
     node.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
-      node.setPointerCapture?.(e.pointerId);
+      try {
+        node.setPointerCapture?.(e.pointerId);
+      } catch {
+        // A pointer the browser has already let go of; the press still counts.
+      }
       node.classList.add("down");
       down();
     });
@@ -459,7 +470,14 @@ export function createHud(controls: Controls): Hud {
     node.addEventListener("pointercancel", release);
   };
   press(jump, () => controls.setButtonJump(true), () => controls.setButtonJump(false));
-  press(thr, () => (controls.throwQueued = true), () => {});
+  press(
+    thr,
+    () => {
+      controls.throwQueued = true;
+      controls.setButtonFire(true);
+    },
+    () => controls.setButtonFire(false),
+  );
   press(dive, () => controls.setButtonDive(true), () => controls.setButtonDive(false));
   press(item, () => (controls.itemQueued = true), () => {});
   press(medicBtn, () => (controls.plantQueued = true), () => {});
@@ -604,7 +622,7 @@ export function createHud(controls: Controls): Hud {
     });
   }
 
-  /** The rules in six tiles, matching the colors of the buttons. */
+  /** The rules in tiles, matching the colors of the buttons. */
   function openHow(): void {
     const wasPaused = paused;
     paused = true;
@@ -617,7 +635,8 @@ export function createHud(controls: Controls): Hud {
       ["STEER", "#9b7be8", `Drag anywhere on the ${left} side and your animal heads that way.`],
       ["FLAGS", FLAG_FREE, "Grab a flag from the enemy base and bring it home to score."],
       ["THROW", "#ff6b5b", "Throw firecrackers. Three hits knock a rival out for a moment."],
-      ["JUMP", "#46b4e8", "Hop over trouble. Flyers stay up while you hold it."],
+      ["JUMP", "#46b4e8", "Hop over trouble."],
+      ["FLYERS", "#7a5cc4", "Fly on their own: steer and speed up with the stick. BOMB hits wide and reloads in 30 s. Hold FIRE for confetti; it cools down after 7 s."],
       ["ITEM", "#ff6b9a", "Drive through a gift box for a power up, then tap ITEM."],
       ["DIVE", "#2fb5b0", "Swimmers can dive under the water to slip past."],
     ];
@@ -827,6 +846,33 @@ export function createHud(controls: Controls): Hud {
         medicLabel.textContent = ready ? "FLAG" : String(Math.ceil(me.medicCd));
         medicBtn.style.opacity = ready ? "1" : "0.75";
       }
+      // Flyers: Jump is the bomb, with its reload ring, and Throw the confetti gun, with its heat.
+      const flyer = me.def.cls === "air";
+      let jumpLook = "JUMP";
+      let thrLook = "THROW";
+      let jumpBg = "";
+      let thrBg = "";
+      if (flyer) {
+        const left = Math.max(0, me.bombCd);
+        const loaded = Math.round((1 - left / tune.bombReload) * 36) * 10;
+        jumpLook = left > 0 ? `<small>BOMB</small><b>${Math.ceil(left)}</b>` : "BOMB";
+        jumpBg = left > 0 ? `conic-gradient(#7a5cc4 ${loaded}deg, #8fa3b8 ${loaded}deg)` : "#7a5cc4";
+        const heat = Math.round(me.heat * 36) * 10;
+        thrLook = me.overheat > 0 ? `<small>COOL</small><b>${Math.ceil(me.overheat)}</b>` : "<small>CONFETTI</small>FIRE";
+        thrBg = me.overheat > 0 ? `conic-gradient(#e8455b ${heat}deg, #8fa3b8 ${heat}deg)` : heat > 0 ? `conic-gradient(#ffb347 ${heat}deg, #ff6b9a ${heat}deg)` : "#ff6b9a";
+      }
+      if (jumpLook !== shownJump) {
+        shownJump = jumpLook;
+        jump.innerHTML = jumpLook;
+        jump.classList.toggle("fly", flyer);
+      }
+      if (thrLook !== shownThrow) {
+        shownThrow = thrLook;
+        thr.innerHTML = thrLook;
+        thr.classList.toggle("fly", flyer);
+      }
+      if (jumpBg !== shownJumpBg) jump.style.background = shownJumpBg = jumpBg;
+      if (thrBg !== shownThrowBg) thr.style.background = shownThrowBg = thrBg;
       const canDive = me.def.dive && (me.medium === "water" || me.diving);
       dive.style.display = canDive ? "flex" : "none";
       if (canDive) {
