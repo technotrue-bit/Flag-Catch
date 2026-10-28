@@ -961,7 +961,12 @@ function watchScore(): void {
 }
 
 let baseFov = 60;
+/** The window size the view was last laid out for. */
+let laidW = 0;
+let laidH = 0;
 function resize(): void {
+  laidW = window.innerWidth;
+  laidH = window.innerHeight;
   // DS mode (phone upright) shrinks the view to the top screen.
   const split = applyDs(app);
   const w = split ? split.top.w : window.innerWidth;
@@ -989,6 +994,9 @@ let last = performance.now();
 function frame(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  // On TrueAIGaming.com the game's frame can take its new size after the
+  // phone's turn events have fired, so check the size every frame too.
+  if (window.innerWidth !== laidW || window.innerHeight !== laidH) resize();
   if (hitStop > 0) {
     hitStop -= dt;
   } else if (phase === "play" && !hud.paused) {
