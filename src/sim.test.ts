@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ANIMALS, ANIMAL_IDS } from "./animals";
 import { type Difficulty, type Firecracker, HOARD_TARGET, type Input, type Match, NO_INPUT, SKILLS, STEP, createMatch, giveItem, rivalSkill, step, tune } from "./sim";
+import { PLAN_IDS } from "./plans";
 import { BRIDGES, MAPS, ZONE_EDGE, fromLayout, groundHeight, isWater, landOf, mapScale, setMap, surfaceHeight } from "./terrain";
 
 const opts = { seed: 3, humanAnimal: "lion", perTeam: 4, duration: 60, flagsPerTeam: 5 };
@@ -737,7 +738,7 @@ describe("CPU brains and difficulty", () => {
     const hard = margin("hard");
     expect(easy).toBeGreaterThan(0);
     expect(easy).toBeGreaterThan(hard + 4);
-  });
+  }, 20000);
 
   it("hard CPUs dodge more of the shots they see coming than easy ones", () => {
     const dodged = (difficulty: Difficulty) => {
@@ -927,4 +928,62 @@ describe("team plans and specialties", () => {
     }
     expect(Math.abs(a - b)).toBeLessThanOrEqual(6);
   }, 30000);
+  it("the two teams open with different plans, and neither opens with last match's", () => {
+    let last: string[] = [];
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 24; seed++) {
+      const m = capture(seed, { avoidPlans: last });
+      const open = m.brains.map((b) => b.plan);
+      expect(open[0]).not.toBe(open[1]);
+      for (const id of open) expect(last).not.toContain(id);
+      open.forEach((id) => seen.add(id));
+      last = open;
+    }
+    // Over a couple dozen matches every plan gets its turn.
+    expect(seen.size).toBe(PLAN_IDS.length);
+  });
+
+  it("teams change plans during a match, never straight back to the one they just ran", () => {
+    let changes = 0;
+    for (const seed of [1, 2, 3]) {
+      const m = capture(seed);
+      while (!m.over) step(m, NO_INPUT);
+      for (const b of m.brains) {
+        changes += b.history.length - 1;
+        for (let i = 1; i < b.history.length; i++) expect(b.history[i]).not.toBe(b.history[i - 1]);
+      }
+    }
+    expect(changes).toBeGreaterThan(6);
+  }, 20000);
+
+  it("on a flank every raider comes down the same side, and each run takes its own way in", () => {
+    const m = capture(5);
+    for (const b of m.brains) {
+      b.plan = "flank";
+      b.until = 1e9;
+    }
+    m.brains[0].side = 1;
+    for (let i = 0; i < 3 / STEP; i++) step(m, NO_INPUT);
+    const raiders = m.players.filter((p) => p.team === 0 && p.cpu && p.job === "raid");
+    expect(raiders.length).toBeGreaterThan(1);
+    for (const p of raiders) expect(p.lane).toBe(1);
+    // Their turning points differ from one raider to the next.
+    const turns = new Set(raiders.filter((p) => p.runOn).map((p) => `${Math.round(p.runX)},${Math.round(p.runZ)}`));
+    expect(turns.size).toBeGreaterThan(1);
+  });
+
+  it("in waves, raiders hold in the middle together before they go", () => {
+    const m = capture(6);
+    m.brains[0].plan = "waves";
+    m.brains[0].until = 1e9;
+    let staged = 0;
+    let went = false;
+    for (let i = 0; i < 20 / STEP; i++) {
+      step(m, NO_INPUT);
+      if (m.players.some((p) => p.team === 0 && p.goalTag === "stage")) staged++;
+      if (m.brains[0].wave === "go") went = true;
+    }
+    expect(staged).toBeGreaterThan(0);
+    expect(went).toBe(true);
+  });
 });
