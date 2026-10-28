@@ -25,6 +25,7 @@ import {
   surfaceHeight,
 } from "./terrain";
 import { type WorldDef, worldById } from "./worlds";
+import { PLANS, type TeamBrain, newBrain, pickPlan, switchPlan } from "./plans";
 
 export const STEP = 1 / 60;
 
@@ -331,6 +332,20 @@ export interface Player {
   /** Confetti hits taken toward the next hit, and seconds before they wear off. */
   stings: number;
   stingT: number;
+  /** CPU runs: what the current run is for, the bend it takes on the way, and the angle it comes in at. */
+  runFor: string;
+  runOn: boolean;
+  runX: number;
+  runZ: number;
+  run2X: number;
+  run2Z: number;
+  runStage: number;
+  approach: number;
+  /** CPU: goes in first and loud to pull the guards away from the real thieves. */
+  decoy: boolean;
+  /** CPU: its own sway while it runs under fire, so no two run alike, and whether enemies were close at its last look. */
+  weave: number;
+  pressed: boolean;
 }
 
 /**
@@ -499,6 +514,8 @@ export interface Match {
   planCd: [number, number];
   /** Tied at the buzzer: play on until the next capture, or until overtime runs out. */
   overtime: boolean;
+  /** Each team's game plan and way of moving this match. */
+  brains: [TeamBrain, TeamBrain];
 }
 
 export interface MatchOptions {
@@ -516,6 +533,8 @@ export interface MatchOptions {
   difficulty?: Difficulty;
   /** Which world; defaults to Home Isle. */
   world?: string;
+  /** Plans the teams opened with last match; neither team opens with them again. */
+  avoidPlans?: readonly string[];
 }
 
 export function createMatch(opts: MatchOptions): Match {
@@ -570,6 +589,13 @@ export function createMatch(opts: MatchOptions): Match {
       flags.push({ id: flags.length, owner: team, team, state: "home", x, y: surfaceHeight(x, z), z, carrier: -1, slot, base: b.id, timer: 0 });
     }
   }
+  // Each CPU its own sway, and each team its own opening plan, never the other team's or last match's.
+  for (const p of players) p.weave = rng() * Math.PI * 2;
+  const avoid = opts.avoidPlans ?? [];
+  const level = { behind: 0, late: 0, tactics: 0 };
+  const plan0 = pickPlan(rng, level, avoid);
+  const plan1 = pickPlan(rng, level, [...avoid, plan0]);
+  const brains: [TeamBrain, TeamBrain] = [newBrain(rng, plan0, 0), newBrain(rng, plan1, 0)];
   const spots = map.gigantic ? [...STATION_SPOTS, ...GIGANTIC_STATION_SPOTS] : STATION_SPOTS;
   const stations: Station[] = spots.map(([u, v], id) => {
     const [x, z] = fromLayout(u, v);
@@ -608,6 +634,7 @@ export function createMatch(opts: MatchOptions): Match {
     nextFireId: 0,
     planCd: [0, 0],
     overtime: false,
+    brains,
   };
 }
 
@@ -676,6 +703,17 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     firing: false,
     stings: 0,
     stingT: 0,
+    runFor: "",
+    runOn: false,
+    runX: x,
+    runZ: z,
+    run2X: x,
+    run2Z: z,
+    runStage: 0,
+    approach: 0,
+    decoy: false,
+    weave: 0,
+    pressed: false,
   };
 }
 
@@ -712,16 +750,17 @@ export interface MatchState {
     | "nextFireId"
     | "planCd"
     | "overtime"
+    | "brains"
   >;
 }
 
 export function matchState(m: Match): MatchState {
-  const { wind, strikes, nextStrike, strikeTeam, stations, points, time, timeLeft, over, flags, fires, respawns, nextRespawnId, scores, nextFireId, planCd, overtime } = m;
+  const { wind, strikes, nextStrike, strikeTeam, stations, points, time, timeLeft, over, flags, fires, respawns, nextRespawnId, scores, nextFireId, planCd, overtime, brains } = m;
   const state: MatchState = {
     v: 1,
     rng: m.rng.state?.a ?? 1,
     players: m.players.map((p) => ({ ...p, def: p.def.id })),
-    match: { wind, strikes, nextStrike, strikeTeam, stations, points, time, timeLeft, over, flags, fires, respawns, nextRespawnId, scores, nextFireId, planCd, overtime },
+    match: { wind, strikes, nextStrike, strikeTeam, stations, points, time, timeLeft, over, flags, fires, respawns, nextRespawnId, scores, nextFireId, planCd, overtime, brains },
   };
   // A copy, so the live match goes on without changing what was saved.
   return JSON.parse(JSON.stringify(state)) as MatchState;
@@ -751,7 +790,11 @@ export function restoreMatch(m: Match, raw: unknown): boolean {
       if (typeof fresh[k] === "number" && !Number.isFinite(p[k] as number)) (p as unknown as Record<string, unknown>)[k] = fresh[k];
     }
   });
-  Object.assign(m, ms);
+  const { brains, ...rest } = ms;
+  Object.assign(m, rest);
+  // A save from before team plans keeps the fresh match's plans.
+  const known = (b: TeamBrain | undefined) => !!b && b.plan in PLANS && Array.isArray(b.history) && Number.isFinite(b.until);
+  if (Array.isArray(brains) && brains.length === 2 && known(brains[0]) && known(brains[1])) m.brains = brains;
   if (m.rng.state) m.rng.state.a = s.rng | 0;
   m.turn = [];
   m.turnBack = [...m.players].reverse();
@@ -1467,6 +1510,8 @@ function respawn(m: Match, p: Player): void {
   p.breath = tune.diveBreath;
   p.shieldT = tune.spawnShield;
   p.grabCd = 0.5;
+  // Back in the game on a fresh run.
+  p.runFor = "";
   m.events.push({ kind: "respawn", x, y: p.y, z, player: p.id });
 }
 
@@ -1754,6 +1799,7 @@ function cpuInput(m: Match, p: Player): Input {
   if (p.thinkCd <= 0) {
     p.thinkCd = sk.react * (0.8 + m.rng() * 0.4);
     const [gx, gz] = cpuGoal(m, p, sk);
+    p.pressed = sk.dodge > 0.2 && threatened(m, p);
     const bridges = p.def.cls === "land" || (m.world.liquid === "lava" && p.def.cls !== "air");
     // Never aim past the edge of the world.
     const [cx, cz] = [clamp(gx, 3 - WORLD_HALF_X, WORLD_HALF_X - 3), clamp(gz, 3 - WORLD_HALF_Z, WORLD_HALF_Z - 3)];
@@ -1779,6 +1825,14 @@ function cpuInput(m: Match, p: Player): Input {
     }
     dx += ax * sk.tactics;
     dz += az * sk.tactics;
+    const l = Math.hypot(dx, dz) || 1;
+    dx /= l;
+    dz /= l;
+  }
+  // Shots flying about on a long run: jink side to side, each CPU to its own beat, so it's harder to hit and no two run alike.
+  if (d > 8 && p.pressed && p.carrying < 0 && p.dodgeT <= 0) {
+    const sway = Math.sin(m.time * (2.2 + (p.weave % 1.3)) + p.weave) * 0.3 * sk.dodge;
+    [dx, dz] = [dx + dz * sway, dz - dx * sway];
     const l = Math.hypot(dx, dz) || 1;
     dx /= l;
     dz /= l;
@@ -2058,8 +2112,79 @@ function planEvery(sk: Skill): number {
   return 0.6 + (3 - sk.coord) * 0.5;
 }
 
+/** Rethinks the team's plan when its time is up, or straight away (for teams that read the game) when someone scores. */
+function rethink(m: Match, team: Team, sk: Skill): void {
+  const b = m.brains[team];
+  const enemy: Team = team === 0 ? 1 : 0;
+  // A goal against makes a team that reads the game rethink at once.
+  const conceded = m.scores[enemy] > b.seen[enemy];
+  // A plan that just scored keeps going a while longer.
+  if (m.scores[team] > b.seen[team] && sk.tactics > 0.3) b.until = Math.max(b.until, m.time + 20);
+  if (m.time < b.until && !(conceded && sk.tactics > 0.3)) {
+    b.seen = [m.scores[0], m.scores[1]];
+    return;
+  }
+  const own = m.mode === "hoard" ? m.points[team] / 150 : m.scores[team];
+  const theirs = m.mode === "hoard" ? m.points[enemy] / 150 : m.scores[enemy];
+  const late = m.mode === "hoard" ? Math.max(m.points[0], m.points[1]) / HOARD_TARGET : m.overtime ? 1 : 1 - Math.min(1, m.timeLeft / 150);
+  // Not what it's doing now or just did, and not what the other team is up to.
+  const avoid = [b.plan, ...b.history.slice(-3), m.brains[enemy].plan];
+  // Good teams read what the other side is up to and answer it; it takes a little while to see.
+  const other = m.brains[enemy];
+  const vs = m.rng() < sk.tactics && m.time - other.since > 8 ? other.plan : undefined;
+  switchPlan(b, m.rng, pickPlan(m.rng, { behind: theirs - own, late, tactics: sk.tactics, vs }, avoid), m.time, m.scores);
+}
+
+/** Where a wave of raiders meets before going in together: the far side of the middle, somewhere new each time. */
+function stagePoint(m: Match, team: Team, lane: number): [number, number] {
+  const flip = team === 0 ? 1 : -1;
+  for (let i = 0; i < 4; i++) {
+    const x = flip * (lane * 0.3 + (m.rng() - 0.5) * 0.4) * WORLD_HALF_X;
+    const z = -flip * ZONE_EDGE * (0.35 + m.rng() * 0.35);
+    if (!isWater(x, z) && !isLava(x, z) && inWorld(x, z)) return [x, z];
+  }
+  return [0, 0];
+}
+
+/** Waves and decoys: raiders hold in the middle until the wave is big enough, or the decoys have pulled the guards out. */
+function stepWave(m: Match, team: Team, sk: Skill, raiders: Player[]): void {
+  const b = m.brains[team];
+  const plan = PLANS[b.plan];
+  // Loose teams can't time a wave; they just go.
+  if ((plan.wave <= 0 && plan.decoy <= 0) || sk.coord < 1 || !raiders.length) {
+    b.wave = "go";
+    return;
+  }
+  const s = mapScale();
+  const enemy: Team = team === 0 ? 1 : 0;
+  const prize = m.flags.find((f) => f.team === enemy && f.state !== "carried");
+  if (b.wave === "gather") {
+    if (b.waveT === m.time || (b.stageX === 0 && b.stageZ === 0)) [b.stageX, b.stageZ] = stagePoint(m, team, plan.lanes === "one" ? b.side : 0);
+    const waiting = raiders.filter((p) => !p.decoy);
+    const there = waiting.filter((p) => p.out <= 0 && Math.hypot(p.x - b.stageX, p.z - b.stageZ) < 14 * s).length;
+    const decoysIn = !!prize && raiders.some((p) => p.decoy && p.out <= 0 && Math.hypot(p.x - prize.x, p.z - prize.z) < 30 * s);
+    const ready = plan.decoy > 0 ? decoysIn : there >= Math.max(2, Math.ceil(waiting.length * plan.wave));
+    if (ready || m.time - b.waveT > 7 || m.players.some((p) => p.team === team && p.carrying >= 0)) {
+      b.wave = "go";
+      b.waveT = m.time;
+    }
+  } else if (
+    m.time - b.waveT > 8 &&
+    !m.players.some((p) => p.team === team && p.carrying >= 0) &&
+    // The wave is spent (everyone knocked out or back on our side): regroup for the next.
+    !raiders.some((p) => p.out <= 0 && p.z * (team === 0 ? 1 : -1) < 0)
+  ) {
+    b.wave = "gather";
+    b.waveT = m.time;
+    [b.stageX, b.stageZ] = stagePoint(m, team, plan.lanes === "one" ? b.side : 0);
+  }
+}
+
 function planTeam(m: Match, team: Team): void {
   const sk = m.skill[team];
+  rethink(m, team, sk);
+  const brain = m.brains[team];
+  const plan = PLANS[brain.plan];
   const s = mapScale();
   const enemy: Team = team === 0 ? 1 : 0;
   const side = m.players.filter((p) => p.team === team);
@@ -2078,32 +2203,35 @@ function planTeam(m: Match, team: Team): void {
   thieves.sort((a, b) => toHome(a) - toHome(b));
   for (const o of thieves) {
     const urgent = toHome(o) < 45 * s && sk.tactics > 0.5;
-    const k = n <= 3 ? 1 : n <= 5 ? 2 : urgent ? 3 : 2;
+    const k = (n <= 3 ? 1 : n <= 5 ? 2 : urgent ? 3 + (sk.coord >= 2 ? 1 : 0) : 2) + (n > 4 ? plan.hunters : 0);
     for (let i = 0; i < k; i++) slots.push({ job: "hunt", target: o.id, x: o.x, z: o.z });
+    // Guards lean towards the side thieves keep coming from.
+    const home = m.bases[team];
+    brain.threatX = brain.threatX * 0.97 + clamp(o.x - home.x, -20 * s, 20 * s) * 0.03;
   }
   // Our dropped flags: someone runs over and touches them home.
   for (const f of m.flags) if (f.state === "dropped" && f.team === team) slots.push({ job: "save", target: f.id, x: f.x, z: f.z });
   // Our carriers get bodyguards.
   const carriers = side.filter((p) => p.carrying >= 0);
-  const escorts = n <= 3 ? 0 : n <= 6 ? 1 : 2;
+  const escorts = n <= 3 ? 0 : (n <= 6 ? 1 : 2) + plan.escorts;
   for (const c of carriers) for (let i = 0; i < escorts; i++) slots.push({ job: "escort", target: c.id, x: c.x, z: c.z });
   // Guards, only for bases with a flag at home to guard.
   const held = m.bases.filter((b) => b.team === team && m.flags.some((f) => f.state === "home" && f.base === b.id));
   if (held.length && n > 2) {
-    const g = Math.max(1, Math.round(n * 0.22 * (1 - 0.6 * push) * (m.mode === "hoard" ? 1.4 : 1)));
+    const g = Math.max(1, Math.round(n * plan.guard * (1 - 0.6 * push) * (m.mode === "hoard" ? 1.4 : 1)));
     for (let i = 0; i < g; i++) {
       const b = held[i % held.length];
       slots.push({ job: "guard", target: b.id, x: b.x, z: b.z });
     }
   }
-  // Everyone else raids while there's a flag to take; past a cap the rest hold the middle.
+  // Everyone else raids while there's a flag to take; past the plan's cap the rest hold the middle.
   const prize = m.flags.find((f) => f.team === enemy && f.state !== "carried");
   const rest = free.length - slots.length;
   if (prize) {
-    const cap = Math.max(2, Math.ceil(n * 0.5)) - (human ? 1 : 0);
+    const cap = Math.max(2, Math.ceil(n * plan.raid)) - (human ? 1 : 0);
     for (let i = 0; i < Math.min(rest, cap); i++) slots.push({ job: "raid", target: -1, x: prize.x, z: prize.z });
   } else if (carriers.length) {
-    for (let i = 0; i < Math.min(rest, 1); i++) slots.push({ job: "escort", target: carriers[0].id, x: carriers[0].x, z: carriers[0].z });
+    for (let i = 0; i < Math.min(rest, 1 + plan.escorts); i++) slots.push({ job: "escort", target: carriers[0].id, x: carriers[0].x, z: carriers[0].z });
   }
   while (slots.length < free.length) slots.push({ job: "support", target: -1, x: 0, z: 0 });
 
@@ -2131,14 +2259,24 @@ function planTeam(m: Match, team: Team): void {
     best.jobTarget = slot.target;
   }
 
-  // Lanes: raiders and the middle fan out across the map, guards round the ring.
+  // Lanes: raiders come in the way the plan says, the middle fans out, guards round the ring.
   const flip = team === 0 ? 1 : -1;
-  const spread = (job: Job) => {
-    const list = free.filter((p) => p.job === job).sort((a, b) => a.x * flip - b.x * flip || a.id - b.id);
-    list.forEach((p, i) => (p.lane = list.length === 1 ? 0 : Math.round(-1 + (2 * i) / (list.length - 1))));
-  };
-  spread("raid");
-  spread("support");
+  const byX = (job: Job) => free.filter((p) => p.job === job).sort((a, b) => a.x * flip - b.x * flip || a.id - b.id);
+  const raiders = byX("raid");
+  const decoys = plan.decoy > 0 ? Math.max(1, Math.round(raiders.length * plan.decoy)) : 0;
+  // Decoys: the raiders nearest the enemy flag go in first, down the other side.
+  const order = prize ? [...raiders].sort((a, b) => Math.hypot(a.x - prize.x, a.z - prize.z) - Math.hypot(b.x - prize.x, b.z - prize.z)) : raiders;
+  for (const p of free) p.decoy = false;
+  order.slice(0, decoys).forEach((p) => (p.decoy = raiders.length > 1));
+  raiders.forEach((p, i) => {
+    const k = raiders.length;
+    if (p.decoy) p.lane = -brain.side;
+    else if (plan.lanes === "one") p.lane = brain.side;
+    else if (plan.lanes === "both") p.lane = i < k / 2 ? -1 : 1;
+    else p.lane = k === 1 ? 0 : Math.round(-1 + (2 * i) / (k - 1));
+  });
+  const mids = byX("support");
+  mids.forEach((p, i) => (p.lane = mids.length === 1 ? 0 : Math.round(-1 + (2 * i) / (mids.length - 1))));
   for (const b of held) {
     const guards = free.filter((p) => p.job === "guard" && p.jobTarget === b.id).sort((a, c) => a.id - c.id);
     guards.forEach((p, i) => (p.lane = i / guards.length));
@@ -2146,6 +2284,7 @@ function planTeam(m: Match, team: Team): void {
   for (const c of carriers) {
     free.filter((p) => p.job === "escort" && p.jobTarget === c.id).forEach((p, i) => (p.lane = i));
   }
+  stepWave(m, team, sk, raiders);
 }
 
 /** Where a hunter heads to cut a thief off: the first spot on their run home it can reach first. */
@@ -2183,15 +2322,16 @@ function escortSpot(m: Match, p: Player, c: Player): [number, number] {
   return [c.x + (hx / len) * 7 + (hz / len) * 3 * side, c.z + (hz / len) * 7 - (hx / len) * 3 * side];
 }
 
-/** A guard walks a ring in front of its base, so it's always on the move and covers every side. */
+/** A guard walks a ring in front of its base, so it's always on the move and covers every side. Each team walks it its own way. */
 function patrolSpot(m: Match, p: Player, b: Base): [number, number] {
   const s = mapScale();
+  const brain = m.brains[b.team];
   const flip = b.team === 0 ? 1 : -1;
-  // Turned round the middle for the north team, so both sides patrol alike.
-  const cx = b.x;
+  // Turned round the middle for the north team, so both sides patrol alike; shifted towards where thieves come from.
+  const cx = b.x + brain.threatX * 0.5;
   const cz = b.z - flip * 5 * s;
-  const r = 9 * s;
-  const a = m.time * 0.35 + p.lane * Math.PI * 2 + 0.7;
+  const r = 9 * s * PLANS[brain.plan].ring;
+  const a = m.time * brain.patrolPace * brain.patrolDir + p.lane * Math.PI * 2 + 0.7;
   let x = cx + flip * Math.cos(a) * r;
   let z = cz + flip * Math.sin(a) * r * 0.7;
   if (p.def.cls !== "air" && (isWater(x, z) || isLava(x, z))) {
@@ -2201,23 +2341,109 @@ function patrolSpot(m: Match, p: Player, b: Base): [number, number] {
   return [x, z];
 }
 
-/** The middle: each on its own lane, sweeping forward and back. */
+/** The middle: each on its own lane, sweeping forward and back to the team's own rhythm; pushier plans sit further up. */
 function sweepSpot(m: Match, p: Player): [number, number] {
+  const brain = m.brains[p.team];
   const flip = p.team === 0 ? 1 : -1;
   const x = p.lane * WORLD_HALF_X * 0.35;
-  const z = (-0.15 + Math.sin(m.time * 0.22 + p.lane * 1.7) * 0.55) * ZONE_EDGE;
+  const up = 0.15 + 0.2 * (PLANS[brain.plan].press - 0.5);
+  const z = (-up + Math.sin(m.time * brain.sweepRate + brain.sweepPhase + p.lane * 1.7) * brain.sweepReach) * ZONE_EDGE;
   return [flip * x, flip * z];
 }
 
-/** Raiders on a side lane swing out wide and come at the flag from their flank. */
+/** Raiders on a side lane swing out wide and come at the flag from their flank, each run a little differently. */
 function raidSpot(p: Player, f: Flag): [number, number] {
   const s = mapScale();
-  if (p.lane === 0 || Math.hypot(f.x - p.x, f.z - p.z) < 24 * s) return [f.x, f.z];
+  if (Math.hypot(f.x - p.x, f.z - p.z) < 24 * s) return [f.x, f.z];
   const flip = p.team === 0 ? 1 : -1;
-  const x = f.x + flip * p.lane * 14 * s;
+  const x = f.x + flip * (p.lane * 14 + p.approach * 5) * s;
   const z = f.z + flip * 12 * s;
   if (p.def.cls !== "air" && (isWater(x, z) || isLava(x, z) || !inWorld(x, z))) return [f.x, f.z];
   return [x, z];
+}
+
+/** Can this animal pass here (on foot, swimming or flying)? */
+function passable(p: Player, x: number, z: number): boolean {
+  if (!inWorld(x, z)) return false;
+  if (p.def.cls === "air") return true;
+  return !isLava(x, z) && (p.def.cls === "water" || !isWater(x, z));
+}
+
+/** A spot this animal can stand on, pulled in towards (x0, z0) until it's passable; null if none. */
+function landing(p: Player, x0: number, z0: number, x: number, z: number): [number, number] | null {
+  for (let k = 1; k >= 0.2; k *= 0.6) {
+    const tx = x0 + (x - x0) * k;
+    const tz = z0 + (z - z0) * k;
+    if (passable(p, tx, tz)) return [tx, tz];
+  }
+  return null;
+}
+
+/**
+ * Each run (a raid, or a flag carried home) takes its own way. A raid goes
+ * through up to two turning points: one in the middle of the island, picked
+ * fresh every run so it crosses by either bridge, and one in front of the
+ * enemy base, out on its lane (all down one side for a flank, both sides for
+ * a split), so it comes at the flag from somewhere new. Carriers bend off the
+ * straight line home, away from the enemies when they can read the game.
+ */
+function planRun(m: Match, p: Player, gx: number, gz: number, sk: Skill): void {
+  const s = mapScale();
+  const brain = m.brains[p.team];
+  const plan = PLANS[brain.plan];
+  const flip = p.team === 0 ? 1 : -1;
+  p.runOn = false;
+  p.runStage = 0;
+  p.approach = (m.rng() - 0.5) * 2.2;
+  const dx = gx - p.x;
+  const dz = gz - p.z;
+  if (Math.hypot(dx, dz) < 30 * s) return;
+  const wide = Math.max(0.3, plan.wide) * brain.wideJitter;
+  if (p.carrying >= 0) {
+    // Bend round the side with fewer enemies, when it can tell; otherwise either way.
+    let left = 0;
+    let right = 0;
+    for (const o of m.players) {
+      if (o.team === p.team || o.out > 0 || Math.hypot(o.x - p.x, o.z - p.z) > 40 * s) continue;
+      if ((o.x - p.x) * flip > 0) right++;
+      else left++;
+    }
+    let lean = sk.tactics > 0.3 && left !== right ? (left > right ? 1 : -1) : m.rng() < 0.5 ? -1 : 1;
+    lean *= 0.5 + m.rng() * 0.8;
+    const t = 0.35 + m.rng() * 0.35;
+    const spot = landing(p, p.x + dx * t, p.z + dz * t, p.x + dx * t + flip * lean * 14 * s * wide, p.z + dz * t);
+    if (spot) [p.runX, p.runZ, p.runOn] = [spot[0], spot[1], true];
+    return;
+  }
+  const side = p.lane !== 0 ? p.lane : m.rng() * 2 - 1;
+  // In front of the enemy base, out on the lane.
+  const out = clamp(side * (0.6 + 0.4 * m.rng()) * 17 * s * wide, -26 * s, 26 * s);
+  const front = landing(p, gx, gz + flip * 22 * s, gx + flip * out, gz + flip * (18 + m.rng() * 10) * s);
+  if (front) [p.run2X, p.run2Z] = front;
+  else [p.run2X, p.run2Z] = [gx, gz];
+  // Still at home: cross the middle somewhere new first.
+  if (p.z * flip > ZONE_EDGE * 0.6) {
+    const mid = landing(p, 0, 0, flip * (side * 0.5 + (m.rng() - 0.5)) * 26 * s, (m.rng() - 0.5) * 16 * s);
+    if (mid) {
+      [p.runX, p.runZ, p.runOn] = [mid[0], mid[1], true];
+      return;
+    }
+  }
+  [p.runX, p.runZ, p.runOn, p.runStage] = [p.run2X, p.run2Z, true, 1];
+}
+
+/** The next spot on this run: its turning point until it gets there, then the goal itself. */
+function along(m: Match, p: Player, tag: string, gx: number, gz: number, sk: Skill): [number, number] {
+  if (p.runFor !== tag) {
+    p.runFor = tag;
+    planRun(m, p, gx, gz, sk);
+  }
+  if (p.runOn && Math.hypot(p.runX - p.x, p.runZ - p.z) < 7 * mapScale()) {
+    // On to the next turning point, if the run has one.
+    if (p.runStage === 0 && p.carrying < 0 && (p.run2X !== p.runX || p.run2Z !== p.runZ) && (p.run2X !== gx || p.run2Z !== gz)) [p.runX, p.runZ, p.runStage] = [p.run2X, p.run2Z, 1];
+    else p.runOn = false;
+  }
+  return p.runOn ? [p.runX, p.runZ] : [gx, gz];
 }
 
 interface Option {
@@ -2259,10 +2485,14 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
       }
     }
     p.goalTag = "carry";
-    return [best.x, best.z];
+    return along(m, p, `carry${p.carrying}`, best.x, best.z, sk);
   }
 
   const job = p.job;
+  const brain = m.brains[p.team];
+  const plan = PLANS[brain.plan];
+  // A new raid starts a new run.
+  if (job !== "raid") p.runFor = "";
   const enemies = m.players.filter((o) => o.team !== p.team && o.stun <= 0 && o.out <= 0);
 
   // The steal target: the nearest prize, or with tactics the one fewest guard.
@@ -2302,8 +2532,16 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
     add("guard", 64, x, z);
   } else if (job === "raid") {
     if (stealBest) {
-      const [x, z] = raidSpot(p, stealBest);
-      add("steal", 76 * (1 + 0.2 * push(m, p, sk)), x, z);
+      const waiting = brain.wave === "gather" && !p.decoy && (plan.wave > 0 || plan.decoy > 0) && sk.coord >= 1 && near(stealBest) > 35 * s;
+      if (waiting) {
+        // Hold in the middle for the wave (or the decoys), milling about rather than standing.
+        const a = m.time * 0.9 + p.weave;
+        add("stage", 76, brain.stageX + Math.sin(a) * 4 * s, brain.stageZ + Math.cos(a) * 4 * s);
+        p.runFor = "";
+      } else {
+        const [x, z] = along(m, p, "raid", ...raidSpot(p, stealBest), sk);
+        add("steal", 76 * (1 + 0.2 * push(m, p, sk)), x, z);
+      }
       // Flyers with a bomb loaded clear the guards off a flag from above before anyone grabs it; bombers most keenly.
       if (flies(p.def) && p.bombCd <= 0) {
         const guard = nearest(p, enemies.filter((o) => Math.hypot(o.x - stealBest!.x, o.z - stealBest!.z) < 10 * s), Infinity);
@@ -2338,7 +2576,13 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
     let score = -Infinity;
     if (post && Math.hypot(o.x - post.x, o.z - post.z) < 30 * s) score = 76 - 2 * far(o);
     else if (carrier && carrier.carrying >= 0 && Math.hypot(o.x - carrier.x, o.z - carrier.z) < 14) score = 80 - d;
-    else if (d < 22) score = (job === "support" ? 62 : job === "raid" ? 40 : 34) + (o.hp === 1 ? 10 : 0) - d * 1.2;
+    else if (d < 22) {
+      // Pushy plans pick more fights in the middle; decoys pick them at the enemy's door. Good CPUs take on
+      // anyone in reach, not just whoever is nearest, so the middle is a real fight.
+      const loud = p.decoy && stealBest && near(stealBest) < 30 * s ? 34 : 0;
+      const reach = sk.tactics > 0.3 ? 0.3 : 1.2;
+      score = (job === "support" ? 62 + 12 * (plan.press - 0.5) : job === "raid" ? 40 + loud : 34) + (o.hp === 1 ? 10 : 0) - d * reach;
+    }
     if (score === -Infinity || !shared(o, 2)) continue;
     // Too close to throw: step back to get a clear shot.
     const [lx, lz] = d < 2.5 ? [p.x + ((p.x - o.x) / (d || 1)) * 6, p.z + ((p.z - o.z) / (d || 1)) * 6] : lead(o);

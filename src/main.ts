@@ -193,13 +193,23 @@ const EMBERS = ["#ffb347", "#ff7a2f"];
 // Animals beyond the fog are hidden, which matters with 128 of them.
 const DRAW_RANGE = 230;
 
+/** The plans the CPU teams opened with last match, kept across visits, so the next match opens differently. */
+let lastPlans: string[] = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem("flagcatch.lastPlans") ?? "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(0, 2) : [];
+  } catch {
+    return [];
+  }
+})();
+
 function newMatch(seed: number): Match {
   const map = mapFor(perTeam);
   // Hoard ends at the points target; the 15 minute cap only stops a stalemate.
   const duration = mode === "hoard" ? 900 : timeParam || map.duration;
   // Capture plays for one big flag a side; Hoard needs a pile to fight over.
   const flagsPerTeam = mode === "hoard" ? map.flagsPerTeam : 1;
-  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam, mode, map, humanMedic, difficulty, world: worldId });
+  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam, mode, map, humanMedic, difficulty, world: worldId, avoidPlans: lastPlans });
 }
 
 function rebuildViews(): void {
@@ -1073,7 +1083,17 @@ function freshMatch(): void {
   clearSession();
   const lastMap = match.map;
   const lastWorld = match.world;
-  match = newMatch(match.rng() * 1e9);
+  // A match that was played: its opening plans are the ones to steer clear of next.
+  if (match.time > 0) {
+    lastPlans = match.brains.map((b) => b.history[0]);
+    try {
+      localStorage.setItem("flagcatch.lastPlans", JSON.stringify(lastPlans));
+    } catch {
+      // Private browsing: just this visit, then.
+    }
+  }
+  // A fresh seed every match, so no two start alike; ?seed= pins the run for testing.
+  match = newMatch(params.has("seed") ? match.rng() * 1e9 : Math.floor(Math.random() * 2 ** 31));
   // A new team size or world means a new island.
   if (match.map !== lastMap || match.world !== lastWorld) {
     world.dispose();
