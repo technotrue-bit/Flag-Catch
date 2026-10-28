@@ -755,6 +755,16 @@ export interface MatchState {
 }
 
 export function matchState(m: Match): MatchState {
+  // A copy, so the live match goes on without changing what was saved.
+  return JSON.parse(JSON.stringify(liveMatchState(m))) as MatchState;
+}
+
+/**
+ * The same state, still sharing the live match's objects: only for turning
+ * straight into text, which saves copying it first (it runs every few
+ * seconds mid match).
+ */
+export function liveMatchState(m: Match): MatchState {
   const { wind, strikes, nextStrike, strikeTeam, stations, points, time, timeLeft, over, flags, fires, respawns, nextRespawnId, scores, nextFireId, planCd, overtime, brains } = m;
   const state: MatchState = {
     v: 1,
@@ -762,8 +772,7 @@ export function matchState(m: Match): MatchState {
     players: m.players.map((p) => ({ ...p, def: p.def.id })),
     match: { wind, strikes, nextStrike, strikeTeam, stations, points, time, timeLeft, over, flags, fires, respawns, nextRespawnId, scores, nextFireId, planCd, overtime, brains },
   };
-  // A copy, so the live match goes on without changing what was saved.
-  return JSON.parse(JSON.stringify(state)) as MatchState;
+  return state;
 }
 
 /**
