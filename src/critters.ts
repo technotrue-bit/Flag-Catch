@@ -27,6 +27,21 @@ export interface AnimalRig {
   style: "ride" | "fly" | "hop" | "swim";
   /** Where a carried flag rides. */
   flagMount: THREE.Object3D;
+  /** The whole animal as one still mesh, drawn in place of its moving parts when far off. */
+  far: THREE.Mesh;
+  /** The moving parts `far` stands in for. */
+  near: THREE.Object3D[];
+}
+
+/**
+ * Far off, an animal is a few pixels tall and nobody sees its head turn or
+ * its wheels spin, so it is drawn as one mesh instead of six to twelve. It
+ * still leans, bounces and spins with its body.
+ */
+export function setFar(rig: AnimalRig, far: boolean): void {
+  if (rig.far.visible === far) return;
+  rig.far.visible = far;
+  for (const o of rig.near) o.visible = !far;
 }
 
 const INK = new THREE.Color("#2a2238");
@@ -163,9 +178,12 @@ export function buildAnimal(id: string, team: string): AnimalRig {
   const root = master.root.clone(true);
   const find = (name: string) => root.getObjectByName(name)!;
   const count = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => find(`${prefix}${i}`));
+  const body = find("body") as THREE.Group;
   return {
     root,
-    body: find("body") as THREE.Group,
+    body,
+    far: find("far") as THREE.Mesh,
+    near: nearParts(body),
     head: find("head") as THREE.Group,
     wings: count("wing", master.wings.length),
     wheels: count("wheel", master.wheels.length),
@@ -582,7 +600,28 @@ function makeAnimal(id: string, team: string): AnimalRig {
   bake(head, new Set(wings));
   for (const w of [...wings, ...wheels]) bake(w as THREE.Group, new Set());
   if (pogo) bake(pogo, new Set());
-  return { root, body, head, wings, wheels, pogo, style, flagMount };
+  const far = bakeWhole(root, body);
+  far.name = "far";
+  far.visible = false;
+  body.add(far);
+  return { root, body, head, wings, wheels, pogo, style, flagMount, far, near: nearParts(body) };
+}
+
+function nearParts(body: THREE.Object3D): THREE.Object3D[] {
+  return body.children.filter((c) => c.name !== "far" && c.name !== "flagMount");
+}
+
+/** Every baked mesh under `body`, in its resting pose, merged into one. */
+function bakeWhole(root: THREE.Object3D, body: THREE.Object3D): THREE.Mesh {
+  root.updateMatrixWorld(true);
+  const toBody = body.matrixWorld.clone().invert();
+  const m = new THREE.Matrix4();
+  const parts: THREE.BufferGeometry[] = [];
+  body.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh) parts.push(mesh.geometry.clone().applyMatrix4(m.multiplyMatrices(toBody, mesh.matrixWorld)));
+  });
+  return new THREE.Mesh(mergeGeometries(parts) ?? new THREE.BufferGeometry(), animalMat);
 }
 
 export const animalMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: RAMP });

@@ -28,6 +28,9 @@ export class Fx {
   constructor(scene: THREE.Scene) {
     this.mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: "#ffffff" }), MAX);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // Made now rather than on the first burst: adding colors later changes the
+    // shader, and building a shader mid match stalls a phone.
+    this.mesh.setColorAt(0, this.color);
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     scene.add(this.mesh);

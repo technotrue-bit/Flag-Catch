@@ -11,7 +11,8 @@ import { type Mood, buzz, moodTone, music, sfx, unlockAudio } from "./audio";
 import { Fx } from "./fx";
 import { type MatchStats, createHud } from "./hud";
 import { createControls } from "./input";
-import { type AnimalRig, buildAnimal } from "./critters";
+import { type AnimalRig, buildAnimal, setFar } from "./critters";
+import { Sharpness } from "./quality";
 import { type FlagRig, buildFlag, buildMedicBadge, buildRespawnFlag, toon, waveFlag } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, ME_GLOW, TEAMS } from "./palette";
 import {
@@ -25,7 +26,7 @@ import {
   NO_INPUT,
   STEP,
   createMatch,
-  matchState,
+  liveMatchState,
   restoreMatch,
   setAnimal,
   step,
@@ -76,7 +77,9 @@ if (!isOpen(mode)) mode = "capture";
 
 const app = document.getElementById("app")!;
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+// Sharp as the screen allows (up to 2x), easing off if the phone can't keep 60.
+const sharpness = new Sharpness(Math.min(2, window.devicePixelRatio || 1));
+renderer.setPixelRatio(sharpness.ratio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 app.appendChild(renderer.domElement);
 
@@ -103,7 +106,8 @@ const hud = createHud(controls);
 
 interface PlayerView {
   rig: AnimalRig;
-  ring: THREE.Mesh;
+  /** Where its ground ring sits; the rings themselves are drawn in batches (ringBatches). */
+  ring: THREE.Group;
   /** Your own animal's halo, arrow and lit up materials. */
   me?: { halo: THREE.Mesh; arrow: THREE.Mesh; mats: THREE.MeshToonMaterial[] };
   /** Shield bubble or Star glow, made on first use. */
@@ -180,6 +184,19 @@ arrowGeo.rotateX(Math.PI);
 // Shared so a crowd of rings costs four materials, not 256.
 const ringMats = TEAMS.map((t) => new THREE.MeshBasicMaterial({ color: t.color, transparent: true, opacity: 0.32, depthWrite: false }));
 const bandMats = TEAMS.map((t) => new THREE.MeshBasicMaterial({ color: t.color, transparent: true, opacity: 0.95, depthWrite: false }));
+// One batch per team for the fills and one for the bands: four draws for
+// every ring on the island, where two meshes each cost up to 256.
+const ringBatches = TEAMS.map((_, team) =>
+  [new THREE.InstancedMesh(ringGeo, ringMats[team], 64), new THREE.InstancedMesh(bandGeo, bandMats[team], 64)].map((batch) => {
+    batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    batch.count = 0;
+    batch.frustumCulled = false;
+    // After the sea, so a ring on the water stays bright.
+    batch.renderOrder = 1;
+    scene.add(batch);
+    return batch;
+  }),
+);
 const haloMat = new THREE.MeshBasicMaterial({ color: ME_GLOW, transparent: true, opacity: 0.9, depthWrite: false });
 // Drawn over trees and hills, so you can always find yourself.
 const arrowMat = new THREE.MeshBasicMaterial({ color: ME_GLOW, depthTest: false, transparent: true });
@@ -202,6 +219,8 @@ const WAKE = ["#ffffff", "#d8f6f7"];
 const EMBERS = ["#ffb347", "#ff7a2f"];
 // Animals beyond the fog are hidden, which matters with 128 of them.
 const DRAW_RANGE = 230;
+// Beyond this an animal is drawn as one still mesh (see setFar).
+const LOD_RANGE = 30;
 
 function newMatch(seed: number): Match {
   const map = mapFor(perTeam);
@@ -232,13 +251,47 @@ function rebuildViews(): void {
   fireMeshes.clear();
   for (const g of respawnViews.values()) scene.remove(g);
   respawnViews.clear();
+  warmShaders();
+}
+
+/**
+ * One of everything that only shows up mid match (shots, bubbles, bolts, dizzy
+ * stars, respawn flags), so its shader is built now. A phone stalls for a
+ * moment the first time it draws something new, which read as frame drops.
+ */
+let warmers: THREE.Group | undefined;
+function warmShaders(): void {
+  if (!warmers) {
+    warmers = new THREE.Group();
+    const mats = [fireMat, bombMat, missileMat, ...confettiMats, shieldMat, starMat, boltMat, warnMat, dizzyMat, haloMat, arrowMat];
+    for (const m of mats) warmers.add(new THREE.Mesh(starGeo, m));
+    warmers.add(buildRespawnFlag(TEAMS[0].color));
+    warmers.traverse((o) => (o.frustumCulled = false));
+  }
+  // Drawn once, not just compiled: the first draw is when the browser waits
+  // for the shader to be ready. The next frame draws over it before it shows.
+  // Hidden and off-screen things (flag markers, far animals) are drawn too,
+  // since they would otherwise wait for the moment they first appear.
+  scene.add(warmers);
+  const hidden: THREE.Object3D[] = [];
+  const culled: THREE.Object3D[] = [];
+  const empty: THREE.InstancedMesh[] = [];
+  scene.traverse((o) => {
+    if (!o.visible) { hidden.push(o); o.visible = true; }
+    if (o.frustumCulled) { culled.push(o); o.frustumCulled = false; }
+    if (o instanceof THREE.InstancedMesh && o.count === 0) { empty.push(o); o.count = 1; }
+  });
+  renderer.render(scene, camera);
+  for (const o of hidden) o.visible = false;
+  for (const o of culled) o.frustumCulled = true;
+  for (const o of empty) o.count = 0;
+  scene.remove(warmers);
 }
 
 function makeView(animal: string, team: number, me: boolean): PlayerView {
   const rig = buildAnimal(animal, TEAMS[team].color);
   scene.add(rig.root);
-  const ring = new THREE.Mesh(ringGeo, ringMats[team]);
-  ring.add(new THREE.Mesh(bandGeo, bandMats[team]));
+  const ring = new THREE.Group();
   scene.add(ring);
   const badge = buildMedicBadge();
   badge.position.y = 2.95;
@@ -642,7 +695,8 @@ function syncViews(t: number, dt: number): void {
     const v = views[p.id];
     const r = v.rig;
     // Knocked out animals are off the field until they respawn.
-    const far = Math.hypot(p.x - cx, p.z - cz) > DRAW_RANGE || p.out > 0;
+    const dist = Math.hypot(p.x - cx, p.z - cz);
+    const far = dist > DRAW_RANGE || p.out > 0;
     r.root.visible = v.ring.visible = !far;
     if (v.badge) v.badge.visible = p.medic;
     // Shield bubble or Star glow while one runs.
@@ -661,6 +715,7 @@ function syncViews(t: number, dt: number): void {
       }
     }
     if (far) continue;
+    setFar(r, p.id !== 0 && dist > LOD_RANGE);
     if (p.starT > 0 && Math.random() < 0.5) fx.burst(p.x, p.y + 1, p.z, ["#ffd166", "#ff6b9a", "#7fd8ff", "#7ee36b"], 1, 3, 4, 0.16);
     if (p.turboT > 0 && p.speed > 4 && Math.random() < 0.6) fx.burst(p.x, p.y + 0.4, p.z, ["#ff6b5b", "#ffd166"], 1, 1.5, 3, 0.14);
     const at = drawn(p);
@@ -674,7 +729,7 @@ function syncViews(t: number, dt: number): void {
     v.ring.quaternion.setFromUnitVectors(UP, slope);
     v.ring.position.set(at.x, surfaceHeight(at.x, at.z) + 0.1, at.z);
     // Dust behind wheels on land and a white wake on the water.
-    const near = Math.hypot(p.x - cx, p.z - cz) < 45;
+    const near = dist < 45;
     if (near && p.onSurface && p.speed > 6 && p.y > WATER_Y - 0.3 && Math.random() < dt * p.speed * 1.4) {
       const bx = p.x - Math.sin(p.heading) * 1.1 + (Math.random() - 0.5) * 0.8;
       const bz = p.z - Math.cos(p.heading) * 1.1 + (Math.random() - 0.5) * 0.8;
@@ -695,6 +750,21 @@ function syncViews(t: number, dt: number): void {
       for (const mat of v.me.mats) mat.emissiveIntensity = 0.18 + pulse * 0.17;
     }
   }
+
+  const rings = [0, 0];
+  for (const p of match.players) {
+    const ring = views[p.id].ring;
+    if (!ring.visible) continue;
+    ring.updateMatrix();
+    for (const batch of ringBatches[p.team]) batch.setMatrixAt(rings[p.team], ring.matrix);
+    rings[p.team]++;
+  }
+  ringBatches.forEach((batches, team) => {
+    for (const batch of batches) {
+      batch.count = rings[team];
+      batch.instanceMatrix.needsUpdate = true;
+    }
+  });
 
   // Each flag wears its own team's color wherever it goes. One flag a side
   // means big flags; Hoard's piles use smaller ones so a base doesn't crowd.
@@ -991,8 +1061,10 @@ resize();
 
 let acc = 0;
 let last = performance.now();
+const drawSize = new THREE.Vector2();
 function frame(now: number): void {
-  const dt = Math.min(0.1, (now - last) / 1000);
+  const gap = now - last;
+  const dt = Math.min(0.1, gap / 1000);
   last = now;
   // On TrueAIGaming.com the game's frame can take its new size after the
   // phone's turn events have fired, so check the size every frame too.
@@ -1034,6 +1106,14 @@ function frame(now: number): void {
   }
   hud.update(match, controls, camYaw);
   renderer.render(scene, camera);
+  if (phase === "play" && !hud.paused && !match.over) {
+    const ratio = sharpness.frame(gap);
+    if (ratio !== null) {
+      renderer.setPixelRatio(ratio);
+      renderer.getSize(drawSize);
+      renderer.setSize(drawSize.x, drawSize.y, false);
+    }
+  }
 
   if (phase === "play" && !match.over) {
     // The music turns frantic for the finish.
@@ -1260,7 +1340,7 @@ function saveSession(): void {
     v: 1,
     at: Date.now(),
     setup: { animal: humanAnimal, per: perTeam, mode, world: worldId, medic: humanMedic, difficulty },
-    state: matchState(match),
+    state: liveMatchState(match),
     stats,
     said,
   };

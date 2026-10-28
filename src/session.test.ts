@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mulberry32 } from "./rng";
-import { NO_INPUT, STEP, createMatch, matchState, restoreMatch, step } from "./sim";
+import { NO_INPUT, STEP, createMatch, liveMatchState, matchState, restoreMatch, step } from "./sim";
 import { PREFIX, fill } from "./mirror";
 import { PROGRESS_KEY, award, fresh, load, save, type Store } from "./progress";
 
@@ -54,6 +54,16 @@ describe("saved matches", () => {
     expect(restoreMatch(createMatch(opts), null)).toBe(false);
     expect(restoreMatch(createMatch(opts), { ...saved, v: 2 })).toBe(false);
     expect(restoreMatch(createMatch(opts), { ...saved, match: { ...saved.match, over: true } })).toBe(false);
+  });
+
+  it("the save written mid match (no copy first) is the same text and restores the same", () => {
+    const a = createMatch(opts);
+    for (let i = 0; i < 8 / STEP; i++) step(a, NO_INPUT);
+    const text = JSON.stringify(liveMatchState(a));
+    expect(text).toBe(JSON.stringify(matchState(a)));
+    const back = createMatch(opts);
+    expect(restoreMatch(back, JSON.parse(text))).toBe(true);
+    expect(JSON.stringify(matchState(back))).toBe(text);
   });
 });
 

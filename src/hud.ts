@@ -443,6 +443,9 @@ export function createHud(controls: Controls): Hud {
   const item = el("div", "fc-btn fc-item", pad);
   item.textContent = "ITEM";
   let shownItem: ItemKind | null | undefined;
+  /** The knocked out seconds on show, -1 when up and about. */
+  let shownOut = -1;
+  let mapTick = 0;
   let shownJump = "JUMP";
   let shownThrow = "THROW";
   let shownJumpBg = "";
@@ -791,8 +794,8 @@ export function createHud(controls: Controls): Hud {
       if (tag) tag.textContent = titleTag(points);
     },
     update(m, c, camYaw) {
-      scoreA.textContent = String(m.scores[0]);
-      scoreB.textContent = String(m.scores[1]);
+      setText(scoreA, String(m.scores[0]));
+      setText(scoreB, String(m.scores[1]));
       // A score pill pops when it goes up (in Capture; Hoard ticks every second).
       if (m.mode !== "hoard") {
         if (m.scores[0] > shownScores[0]) bump(teamA);
@@ -800,12 +803,12 @@ export function createHud(controls: Controls): Hud {
       }
       shownScores = [m.scores[0], m.scores[1]];
       if (m.mode === "hoard") {
-        timer.textContent = `FIRST TO ${HOARD_TARGET}`;
+        setText(timer, `FIRST TO ${HOARD_TARGET}`);
         timer.classList.add("goal");
         timer.classList.toggle("low", Math.max(...m.scores) >= HOARD_TARGET * 0.9);
       } else {
         const t = Math.ceil(m.timeLeft);
-        timer.textContent = `${m.overtime ? "OT " : ""}${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+        setText(timer, `${m.overtime ? "OT " : ""}${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`);
         timer.classList.remove("goal");
         timer.classList.toggle("low", t <= 15);
         // The last ten seconds tick out loud.
@@ -847,18 +850,22 @@ export function createHud(controls: Controls): Hud {
       const on = running.find(([, t]) => t > 0);
       power.style.display = on ? "block" : "none";
       if (on) {
-        power.textContent = `${on[0]} ${Math.ceil(on[1])}`;
+        setText(power, `${on[0]} ${Math.ceil(on[1])}`);
         power.style.background = on[2];
       }
       heartIcons.forEach((h, i) => h.classList.toggle("gone", i >= me.hp));
       outCard.style.display = me.out > 0 ? "block" : "none";
-      if (me.out > 0) outCard.innerHTML = `KNOCKED OUT<small>Back in ${Math.ceil(me.out)}</small>`;
+      if (me.out <= 0) shownOut = -1;
+      else if (Math.ceil(me.out) !== shownOut) {
+        shownOut = Math.ceil(me.out);
+        outCard.innerHTML = `KNOCKED OUT<small>Back in ${shownOut}</small>`;
+      }
       medicBtn.style.display = me.medic ? "flex" : "none";
       if (me.medic) {
         const ready = me.medicCd <= 0;
         const fill = Math.round((1 - me.medicCd / tune.medicCooldown) * 360);
         medicBtn.style.background = ready ? "#3cbf7a" : `conic-gradient(#3cbf7a ${fill}deg, #8fa3b8 ${fill}deg)`;
-        medicLabel.textContent = ready ? "FLAG" : String(Math.ceil(me.medicCd));
+        setText(medicLabel, ready ? "FLAG" : String(Math.ceil(me.medicCd)));
         medicBtn.style.opacity = ready ? "1" : "0.75";
       }
       // Flyers: Jump is the bomb, with its reload ring, and Throw the confetti gun, with its heat.
@@ -938,7 +945,9 @@ export function createHud(controls: Controls): Hud {
         arrow.style.display = "none";
       }
 
-      drawMap(mctx, mapBg, m, map.width, map.height, !!split, myName);
+      // The map redraws at 30 a second: dots that small look just as smooth.
+      mapTick = (mapTick + 1) % 2;
+      if (mapTick === 0) drawMap(mctx, mapBg, m, map.width, map.height, !!split, myName);
 
       if (vigTimer > 0) {
         vigTimer -= 1 / 60;
@@ -1278,6 +1287,11 @@ function nope(n: HTMLElement): void {
   void n.offsetWidth;
   n.classList.add("shake");
   sfx.fizzle(0, 0.6);
+}
+
+/** Writes only a change: a write, even of the same text, has the page lay itself out again. */
+function setText(e: HTMLElement, text: string): void {
+  if (e.textContent !== text) e.textContent = text;
 }
 
 function el(tag: string, cls: string, parent?: HTMLElement): HTMLElement {
