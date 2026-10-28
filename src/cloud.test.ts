@@ -72,7 +72,7 @@ describe("account saves bridge", () => {
 
   it("keeps names short enough for the map", () => {
     expect(cleanName("a".repeat(40))).toBe("a".repeat(NAME_MAX));
-    expect(cleanName("😀".repeat(20))).toBe("😀".repeat(NAME_MAX));
+    expect(cleanName("😀".repeat(30))).toBe("😀".repeat(NAME_MAX));
     expect(cleanName(null)).toBeNull();
   });
 
