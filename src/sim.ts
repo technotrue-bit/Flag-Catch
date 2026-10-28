@@ -64,6 +64,12 @@ export const tune = {
   confettiStings: 5,
   gunHeat: 7,
   gunCool: 3,
+  /** How close a confetti shot must pass to sting, and how the gun aims: it locks on to an enemy within this many radians of straight ahead, or angles down to chest height this far ahead. */
+  confettiReach: 1.4,
+  gunLockCone: 0.45,
+  gunAimDist: 10,
+  /** How hard locked-on confetti bends toward its target, per second. */
+  confettiSeek: 8,
   /** Power ups: how long Shield and Star last, Turbo too, and how fast it goes. */
   itemTime: 7,
   turboTime: 5,
@@ -372,6 +378,8 @@ export interface Firecracker {
   bomb: boolean;
   /** A flyer's confetti: flies straight and fast, and stings instead of popping. */
   confetti?: boolean;
+  /** Confetti the gun locked on with curves gently toward this player. */
+  seek?: number;
   /** A paper missile chasing this player id; -1 for an ordinary shot. */
   homing?: number;
 }
@@ -1026,27 +1034,75 @@ function stepGun(m: Match, p: Player, trigger: boolean): void {
   }
   if (p.gunCd > 0) return;
   p.gunCd = 1 / tune.confettiRate;
-  const a = p.heading + (m.rng() - 0.5) * 0.14;
-  const fx = Math.sin(a);
-  const fz = Math.cos(a);
   const speed = tune.confettiSpeed + Math.max(0, p.speed);
+  const x0 = p.x + Math.sin(p.heading) * 1.2;
+  const y0 = p.y + 0.3;
+  const z0 = p.z + Math.cos(p.heading) * 1.2;
+  // The gun locks on to the enemy most nearly ahead and leads them; with
+  // nobody ahead it fires along the heading, angled down to chest height.
+  const lock = gunTarget(m, p, speed);
+  let tx: number;
+  let ty: number;
+  let tz: number;
+  if (lock) {
+    [tx, ty, tz] = lock;
+  } else {
+    tx = p.x + Math.sin(p.heading) * tune.gunAimDist;
+    tz = p.z + Math.cos(p.heading) * tune.gunAimDist;
+    ty = surfaceHeight(tx, tz) + 1;
+  }
+  const a = Math.atan2(tx - x0, tz - z0) + (m.rng() - 0.5) * 0.05;
+  const flat = Math.max(1, Math.hypot(tx - x0, tz - z0));
+  const pitch = Math.atan2(ty - y0, flat);
   const shot: Firecracker = {
     id: m.nextFireId++,
     owner: p.id,
     team: p.team,
-    x: p.x + fx * 1.2,
-    y: p.y + 0.3,
-    z: p.z + fz * 1.2,
-    vx: fx * speed,
-    vy: -2,
-    vz: fz * speed,
+    x: x0,
+    y: y0,
+    z: z0,
+    vx: Math.sin(a) * Math.cos(pitch) * speed,
+    vy: Math.sin(pitch) * speed,
+    vz: Math.cos(a) * Math.cos(pitch) * speed,
     skidding: false,
     life: tune.confettiLife,
     bomb: false,
     confetti: true,
+    seek: lock ? lock[3] : undefined,
   };
   m.fires.push(shot);
   m.events.push({ kind: "spray", x: shot.x, y: shot.y, z: shot.z, player: p.id });
+}
+
+/**
+ * Where a flyer's confetti should go: the chest of the enemy closest to
+ * straight ahead, within tune.gunLockCone of the heading and the shot's
+ * reach, led by how far they'll move before the confetti gets there.
+ */
+function gunTarget(m: Match, p: Player, speed: number): [number, number, number, number] | null {
+  const reach = speed * tune.confettiLife;
+  let best: [number, number, number, number] | null = null;
+  let bestScore = Infinity;
+  for (const o of m.players) {
+    // Skip anyone the confetti would only bounce off.
+    if (o.team === p.team || o.out > 0 || o.diving || o.stun > 0 || protectedFrom(o)) continue;
+    const ox = o.x - p.x;
+    const oz = o.z - p.z;
+    const od = Math.hypot(ox, oz);
+    if (od > reach || od < 0.5 || o.y > p.y + 2 || o.y < p.y - 4) continue;
+    const off = Math.abs(wrapAngle(Math.atan2(ox, oz) - p.heading));
+    if (off > tune.gunLockCone) continue;
+    const score = off + od / reach;
+    if (score >= bestScore) continue;
+    bestScore = score;
+    const t = od / speed;
+    const px = o.x + (o.sx + o.kx) * t;
+    const pz = o.z + (o.sz + o.kz) * t;
+    // A flyer rides the ground's ups and downs, so aim between where it is and where it's heading.
+    const py = flies(o.def) ? (o.y + surfaceHeight(px, pz) + tune.flyHeight) / 2 : o.y;
+    best = [px, py + 0.9, pz, o.id];
+  }
+  return best;
 }
 
 /** Lava stings: one hit, and a hop back toward the nearest dry ground. */
@@ -1172,7 +1228,8 @@ function stepFires(m: Match): void {
   for (const f of m.fires) {
     f.life -= STEP;
     if (!f.skidding) {
-      f.vy -= tune.gravity * STEP;
+      // Confetti is light and fast: it flies straight rather than arcing down.
+      if (!f.confetti) f.vy -= tune.gravity * STEP;
       f.y += f.vy * STEP;
     }
     f.x += f.vx * STEP;
@@ -1184,6 +1241,7 @@ function stepFires(m: Match): void {
       continue;
     }
     if (f.confetti) {
+      if (f.seek !== undefined) seekConfetti(m, f);
       if (f.y > surf && f.life > 0 && inWorld(f.x, f.z) && !stingAny(m, f)) keep.push(f);
       continue;
     }
@@ -1271,13 +1329,34 @@ function explode(m: Match, f: Firecracker, surf: number): void {
   }
 }
 
+/** Locked-on confetti bends toward its target's chest, enough to follow a dodge or a slope but not to turn round. */
+function seekConfetti(m: Match, f: Firecracker): void {
+  const o = m.players[f.seek!];
+  if (o.out > 0 || o.diving) return;
+  const dx = o.x - f.x;
+  const dy = o.y + 0.9 - f.y;
+  const dz = o.z - f.z;
+  const d = Math.hypot(dx, dy, dz) || 1;
+  const speed = Math.hypot(f.vx, f.vy, f.vz);
+  // Gone past them: fly on straight.
+  if ((dx * f.vx + dy * f.vy + dz * f.vz) / (d * speed) < 0.3) return;
+  const k = Math.min(1, tune.confettiSeek * STEP);
+  const vx = f.vx + (dx / d * speed - f.vx) * k;
+  const vy = f.vy + (dy / d * speed - f.vy) * k;
+  const vz = f.vz + (dz / d * speed - f.vz) * k;
+  const n = speed / (Math.hypot(vx, vy, vz) || 1);
+  f.vx = vx * n;
+  f.vy = vy * n;
+  f.vz = vz * n;
+}
+
 /** A confetti shot stings the first enemy it reaches; enough stings make a hit. Returns whether it hit anyone. */
 function stingAny(m: Match, f: Firecracker): boolean {
   for (const p of m.turn) {
     if (p.team === f.team || p.out > 0 || p.diving) continue;
     const dx = p.x - f.x;
     const dz = p.z - f.z;
-    if (dx * dx + dz * dz > 1.2 * 1.2 || f.y < p.y - 0.4 || f.y > p.y + 2.4) continue;
+    if (dx * dx + dz * dz > tune.confettiReach * tune.confettiReach || f.y < p.y - 1 || f.y > p.y + 2.4) continue;
     // Flinching or shielded: the confetti bounces off.
     if (p.stun > 0 || protectedFrom(p)) return true;
     p.stings++;
