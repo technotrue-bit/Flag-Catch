@@ -255,9 +255,9 @@ const ID = new THREE.Matrix4();
  */
 export function treeParts(style: string, trunk: string, leaf: string, leafLight: string, smooth = false): TreePart[] {
   // High graphics rounds the shapes off.
-  const ball = smooth ? new THREE.SphereGeometry(1, 18, 12) : new THREE.SphereGeometry(1, 10, 7);
-  const tube = new THREE.CylinderGeometry(0.5, 0.5, 1, smooth ? 14 : 8);
-  const cone = new THREE.ConeGeometry(1, 1, smooth ? 16 : 9);
+  const ball = smooth ? new THREE.SphereGeometry(1, 13, 9) : new THREE.SphereGeometry(1, 10, 7);
+  const tube = new THREE.CylinderGeometry(0.5, 0.5, 1, smooth ? 10 : 8);
+  const cone = new THREE.ConeGeometry(1, 1, smooth ? 12 : 9);
   switch (style) {
     case "palm": {
       // A leaning, ringed trunk under a crown of drooping fronds and coconuts.

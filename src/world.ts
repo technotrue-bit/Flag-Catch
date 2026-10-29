@@ -46,7 +46,7 @@ export function buildWorld(scene: THREE.Scene, match: Match, look: Scenery = sce
   group.add(sun.target);
   if (look.shadows) {
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(1024, 1024);
     const box = sun.shadow.camera;
     box.left = box.bottom = -SHADOW_REACH;
     box.right = box.top = SHADOW_REACH;
@@ -54,7 +54,7 @@ export function buildWorld(scene: THREE.Scene, match: Match, look: Scenery = sce
     box.far = 240;
     sun.shadow.bias = -0.0012;
     sun.shadow.normalBias = 0.07;
-    sun.shadow.radius = 3;
+    sun.shadow.radius = 2.5;
   }
   const back = new THREE.DirectionalLight(P.skyHorizon, 0.45);
   back.position.set(40, 30, -60);
@@ -118,22 +118,39 @@ export function buildWorld(scene: THREE.Scene, match: Match, look: Scenery = sce
   if (weather) group.add(weather.points);
   const grass = look.grass && GRASSY.has(def.id) ? buildGrass(match, rng, P) : null;
   if (grass) group.add(grass.group);
-  // Each tree part is drawn twice from the same placements: solid, and as a
-  // see-through ghost for the trees standing between the camera and you.
-  for (const part of treeParts(def.tree, P.trunk, P.leaf, P.leafLight, look.smooth)) {
-    for (const ghost of [false, true]) {
-      const mat = seeThrough(part.mat, ghost);
-      owned.push(mat);
-      const inst = new THREE.InstancedMesh(part.geo, mat, Math.max(1, spots.length));
-      inst.count = spots.length;
-      spots.forEach((mtx, i) => inst.setMatrixAt(i, tmp.multiplyMatrices(mtx, part.offset)));
-      inst.instanceMatrix.needsUpdate = true;
-      inst.computeBoundingSphere();
-      inst.castShadow = !ghost;
-      // The ghosts draw after the solid scene, so what's behind shows through.
-      if (ghost) inst.renderOrder = 2;
-      group.add(inst);
-    }
+  // The forest is cut into square patches, so the camera (and the sun's
+  // shadow box) only draws the patches it can see. Each tree part is drawn
+  // twice from the same placements: solid, and as a see-through ghost for
+  // the trees standing between the camera and you; ghosts are only drawn in
+  // the patches round the camera.
+  const patches = new Map<string, THREE.Matrix4[]>();
+  for (const mtx of spots) {
+    const key = `${Math.floor(mtx.elements[12] / TREE_PATCH)},${Math.floor(mtx.elements[14] / TREE_PATCH)}`;
+    let list = patches.get(key);
+    if (!list) patches.set(key, (list = []));
+    list.push(mtx);
+  }
+  const ghosts: Array<{ mesh: THREE.InstancedMesh; x: number; z: number }> = [];
+  const parts = treeParts(def.tree, P.trunk, P.leaf, P.leafLight, look.smooth);
+  const mats = parts.map((part) => [seeThrough(part.mat, false), seeThrough(part.mat, true)]);
+  owned.push(...mats.flat());
+  for (const [key, list] of patches) {
+    const [px, pz] = key.split(",").map(Number);
+    parts.forEach((part, k) => {
+      for (const ghost of [false, true]) {
+        const inst = new THREE.InstancedMesh(part.geo, mats[k][ghost ? 1 : 0], list.length);
+        list.forEach((mtx, i) => inst.setMatrixAt(i, tmp.multiplyMatrices(mtx, part.offset)));
+        inst.instanceMatrix.needsUpdate = true;
+        inst.computeBoundingSphere();
+        inst.castShadow = !ghost;
+        if (ghost) {
+          // The ghosts draw after the solid scene, so what's behind shows through.
+          inst.renderOrder = 2;
+          ghosts.push({ mesh: inst, x: (px + 0.5) * TREE_PATCH, z: (pz + 0.5) * TREE_PATCH });
+        }
+        group.add(inst);
+      }
+    });
   }
 
   // Border posts where each bridge lands in a homeland, in that team's colors.
@@ -206,6 +223,9 @@ export function buildWorld(scene: THREE.Scene, match: Match, look: Scenery = sce
       if (sky && cam) sky.position.copy(cam);
       if (cam && focus) {
         SEE.uEye.value.copy(cam);
+        // A tree can only stand between the camera and you within a few meters of the camera's reach.
+        const reach = GHOST_REACH + TREE_PATCH * 0.71;
+        for (const g of ghosts) g.mesh.visible = Math.hypot(g.x - cam.x, g.z - cam.z) < reach;
         SEE.uFocus.value.copy(focus);
         for (const f of faders) {
           const see = seeAmount(f.at, cam, focus);
@@ -261,7 +281,7 @@ function buildGround(P: WorldPalette, look: Scenery): THREE.Mesh {
   const l = WORLD_HALF_Z * 2 + 30;
   // About a meter per square on Home Isle; coarser on the giants so the
   // ground stays one cheap mesh (the toon look hides the difference).
-  const cell = Math.max(1, Math.sqrt((w * l) / 90000)) / look.groundDetail;
+  const cell = Math.max(1, Math.sqrt((w * l) / 90000));
   const geo = new THREE.PlaneGeometry(w, l, Math.round(w / cell), Math.round(l / cell));
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position as THREE.BufferAttribute;
@@ -592,8 +612,13 @@ function buildWeather(def: WorldDef, look: Scenery): Weather | null {
   };
 }
 
+/** Side of a square patch of forest, in meters. */
+const TREE_PATCH = 56;
+/** Ghost trees are only drawn this close to the camera (it sits about 10 m behind you). */
+const GHOST_REACH = 26;
+
 /** Half the width of the ground the sun's shadows cover around you, in meters. */
-const SHADOW_REACH = 42;
+const SHADOW_REACH = 30;
 
 /** Things that cast and catch the sun's shadows when High graphics has them. */
 function shade(root: THREE.Object3D, look: Scenery): void {
@@ -681,7 +706,7 @@ function seeThrough(base: THREE.Material, ghost: boolean): THREE.Material {
 /** Worlds green enough for grass tufts on High. */
 const GRASSY = new Set(["home", "reef", "bluffs", "lagoon", "storm"]);
 /** Grass beyond this far from the camera isn't drawn (the fog has it by then). */
-const GRASS_RANGE = 85;
+const GRASS_RANGE = 60;
 const GRASS_CHUNK = 24;
 
 interface Grass {

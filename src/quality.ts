@@ -27,10 +27,12 @@ export class Sharpness {
   private calm = 0;
   /** Windows judged since the last step up, while that step is on trial. */
   private trial = -1;
+  /** Frames kept dropping with no sharpness left to give. */
+  private stuck = false;
 
   constructor(
     readonly max: number,
-    readonly min = 1,
+    public min = 1,
     readonly step = 0.25,
   ) {
     this.max = Math.max(min, max);
@@ -54,7 +56,9 @@ export class Sharpness {
       // The step up just tried didn't hold: don't try it again this visit.
       if (this.trial >= 0) this.ceiling = this.ratio - this.step;
       this.trial = -1;
-      return this.set(this.ratio - this.step);
+      const next = this.set(this.ratio - this.step);
+      if (next === null) this.stuck = true;
+      return next;
     }
     if (this.trial >= 0 && ++this.trial >= 3) this.trial = -1;
     this.calm = share <= CALM_SHARE ? this.calm + 1 : 0;
@@ -64,6 +68,16 @@ export class Sharpness {
       return this.set(this.ratio + this.step);
     }
     return null;
+  }
+
+  /**
+   * True once since frames last kept dropping at the lowest sharpness, so the
+   * caller can give up something else instead (High's glow, then its shadows).
+   */
+  struggling(): boolean {
+    const was = this.stuck;
+    this.stuck = false;
+    return was;
   }
 
   private set(r: number): number | null {

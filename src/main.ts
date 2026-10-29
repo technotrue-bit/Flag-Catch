@@ -82,7 +82,22 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 // Shadows, glow and the color grade at High graphics (see look.ts).
 const look = createLook(renderer);
 // Sharp as the Graphics setting and screen allow, easing off if the phone can't keep 60.
-let sharpness = new Sharpness(look.set(settings.graphics));
+let sharpness = newSharpness();
+/**
+ * The frame rate safety net for this Graphics level. High eases sharpness
+ * only down to 1.5 at first; if that isn't enough it gives up its glow, then
+ * half its shadow work (see holdSixty), and only then goes all the way to 1x.
+ */
+function newSharpness(): Sharpness {
+  const top = look.set(settings.graphics);
+  return new Sharpness(top, settings.graphics === "high" ? Math.min(top, 1.5) : 1);
+}
+
+/** Still dropping frames at the lowest sharpness allowed: give up something else. */
+function holdSixty(): void {
+  if (!sharpness.struggling()) return;
+  if (!look.trim()) sharpness.min = 1;
+}
 renderer.setPixelRatio(sharpness.ratio);
 app.appendChild(renderer.domElement);
 
@@ -135,6 +150,9 @@ interface PlayerView {
   lean: number;
   /** Little stars that circle the head of a stunned animal. */
   stars?: THREE.Group;
+  /** Its meshes, which cast the sun's shadows only while near the camera. */
+  casters: THREE.Object3D[];
+  casting: boolean;
 }
 let views: PlayerView[] = [];
 /**
@@ -229,6 +247,10 @@ const EMBERS = ["#ffb347", "#ff7a2f"];
 const DRAW_RANGE = 230;
 // Beyond this an animal is drawn as one still mesh (see setFar).
 const LOD_RANGE = 30;
+// Animals this close to the camera cast the sun's shadows on High.
+const SHADOW_RANGE = 24;
+// And at most this many of them.
+const SHADOW_CASTERS = 10;
 
 function newMatch(seed: number): Match {
   const map = mapFor(perTeam);
@@ -300,15 +322,15 @@ function warmShaders(): void {
 
 function makeView(animal: string, team: number, me: boolean): PlayerView {
   const rig = buildAnimal(animal, TEAMS[team].color);
-  // Animals cast the sun's shadows when High graphics draws them.
-  rig.root.traverse((o) => (o.castShadow = true));
+  const casters: THREE.Object3D[] = [];
+  rig.root.traverse((o) => (o as THREE.Mesh).isMesh && casters.push(o));
   scene.add(rig.root);
   const ring = new THREE.Group();
   scene.add(ring);
   const badge = buildMedicBadge();
   badge.position.y = 2.95;
   rig.root.add(badge);
-  const view: PlayerView = { rig, ring, animal, bank: 0, spin: 0, badge, squash: 0, cheer: 0, grounded: true, fallVy: 0, lastSpeed: 0, lean: 0 };
+  const view: PlayerView = { rig, ring, animal, bank: 0, spin: 0, badge, squash: 0, cheer: 0, grounded: true, fallVy: 0, lastSpeed: 0, lean: 0, casters, casting: false };
   if (me) {
     const halo = new THREE.Mesh(haloGeo, haloMat);
     ring.add(halo);
@@ -700,9 +722,17 @@ function stepFlashes(dt: number): void {
   }
 }
 
+/** How far from the camera each animal is this frame, sorted, to find the nearest casters. */
+let castDists = new Float32Array(0);
 function syncViews(t: number, dt: number): void {
   const cx = camera.position.x;
   const cz = camera.position.z;
+  // Only the nearest few animals cast shadows: a crowd at a base would
+  // otherwise cost the sun's pass a draw for every part of every animal.
+  if (castDists.length !== match.players.length) castDists = new Float32Array(match.players.length);
+  match.players.forEach((p, i) => (castDists[i] = Math.hypot(p.x - cx, p.z - cz)));
+  castDists.sort();
+  const castReach = Math.min(SHADOW_RANGE, castDists[Math.min(castDists.length - 1, SHADOW_CASTERS - 1)] ?? 0);
   for (const p of match.players) {
     const v = views[p.id];
     const r = v.rig;
@@ -731,6 +761,12 @@ function syncViews(t: number, dt: number): void {
     }
     if (far) continue;
     setFar(r, p.id !== 0 && dist > LOD_RANGE);
+    // Shadows from the animals round you; farther ones are too small to miss.
+    const cast = dist <= castReach;
+    if (cast !== v.casting) {
+      v.casting = cast;
+      for (const o of v.casters) o.castShadow = cast;
+    }
     if (p.starT > 0 && Math.random() < 0.5) fx.burst(p.x, p.y + 1, p.z, ["#ffd166", "#ff6b9a", "#7fd8ff", "#7ee36b"], 1, 3, 4, 0.16);
     if (p.turboT > 0 && p.speed > 4 && Math.random() < 0.6) fx.burst(p.x, p.y + 0.4, p.z, ["#ff6b5b", "#ffd166"], 1, 1.5, 3, 0.14);
     const at = drawn(p);
@@ -1129,6 +1165,7 @@ function frame(now: number): void {
   if (phase === "play" && !hud.paused && !match.over) {
     const ratio = sharpness.frame(gap);
     if (ratio !== null) setSharpness(ratio);
+    holdSixty();
   }
 
   if (phase === "play" && !match.over) {
@@ -1193,7 +1230,7 @@ function setSharpness(ratio: number): void {
 /** A new Graphics setting: new passes and sharpness, and the island rebuilt at the new detail. */
 function applyGraphics(): void {
   if (settings.graphics === look.level) return;
-  sharpness = new Sharpness(look.set(settings.graphics));
+  sharpness = newSharpness();
   setSharpness(sharpness.ratio);
   world.dispose();
   world = makeWorld();
@@ -1576,6 +1613,7 @@ function clampInt(v: number, lo: number, hi: number): number {
   scene,
   camera,
   renderer,
+  look,
 };
 
 function loadAnimal(): string {

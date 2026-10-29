@@ -137,10 +137,14 @@ Pick Low, Normal or High under Settings, View. The island rebuilds at once.
   mirrors the sky, with the sun glinting off it; lava with slowly flowing veins;
   a sky dome with a sun; tufts of grass that sway in the breeze on the green
   worlds; rounder trees, more scenery, patchy lawns and beaches; a soft color
-  grade and vignette; and a sharper picture (up to 2.5x).
+  grade and vignette. It draws at the same sharpness as Normal (up to 2x).
 
-On every level the frame rate safety net still draws less sharp if the phone
-can't keep 60.
+On every level the frame rate safety net draws less sharp if the phone can't
+keep 60. On High it first eases down to 1.5x, then gives up the glow, then
+draws shadows every other frame, and only then goes all the way to 1x. To keep
+High light, only the 10 animals nearest the camera cast shadows, the forest is
+cut into patches the camera and the sun skip when out of view, and the glow is
+worked out at half size.
 
 Trees, and the posts and banner over each base, turn see-through while they
 stand between the camera and your animal, so you never lose sight of yourself.
