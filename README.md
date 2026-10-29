@@ -136,7 +136,7 @@ Pick Low, Normal or High under Settings, View. The island rebuilds at once.
   brightest things (the sun, lava, embers); reflective water that ripples and
   mirrors the sky, with the sun glinting off it; lava with slowly flowing veins;
   a sky dome with a sun; tufts of grass that sway in the breeze on the green
-  worlds; rounder trees, more scenery, patchy lawns and beaches; a soft color
+  worlds; more scenery, patchy lawns and beaches; a soft color
   grade and vignette. It draws at the same sharpness as Normal (up to 2x).
 
 On every level the frame rate safety net draws less sharp if the phone can't
@@ -149,6 +149,25 @@ worked out at half size.
 Trees, and the posts and banner over each base, turn see-through while they
 stand between the camera and your animal, so you never lose sight of yourself.
 On High their shadows stay on the ground.
+
+## The globe
+
+The island is drawn as if it sat on a small round world: the land rolls
+gently away from the camera and a horizon forms about a hundred meters out
+(`src/globe.ts`). It's how big crowds stay smooth:
+
+- Animals and whole patches of forest past the horizon aren't drawn at all.
+- Only your animal and the nearest few (and flag carriers close by) get their
+  full moving rig. The rest are drawn in batches, every animal of a kind and
+  team in one draw, still leaning and bouncing; past 55 m they become tiny
+  stand-ins in their main color, all in one draw (`src/crowd.ts`).
+- Border posts, base pads and station pads are merged into one shape per
+  color.
+- The pin over a flag past the horizon rides along the horizon line, so you
+  can still see which way it is.
+
+The curve only changes where things are drawn; the game itself still plays
+on the flat island, and shadows still line up.
 
 ## DS mode
 
@@ -320,6 +339,6 @@ Test games with `?per` or `?time` don't pay points.
 - `src/progress.ts`: points, unlocks and best scores, with per-device tallies and the merge. `src/cloud.ts`: account saves through the TrueAIGaming play page.
 - `src/animals.ts`: per animal speeds by medium and shot stats.
 - `src/critters.ts`: the animal models and their rigs.
-- `src/main.ts`, `src/world.ts`, `src/models.ts`, `src/fx.ts`: rendering. `src/look.ts`: the Graphics levels, shadows and the High passes.
+- `src/main.ts`, `src/world.ts`, `src/models.ts`, `src/fx.ts`: rendering. `src/look.ts`: the Graphics levels, shadows and the High passes. `src/globe.ts`: the curved world and its horizon. `src/crowd.ts`: crowds drawn in batches.
 - `src/hud.ts`, `src/input.ts`, `src/audio.ts`: menus, thumbs, HUD, sound, chimes and animal mood tones.
 - `src/cues.ts`: the cue chimes for big moments. `src/settings.ts`: saved player settings.

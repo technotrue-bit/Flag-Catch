@@ -11,7 +11,9 @@ import { type Mood, buzz, moodTone, music, sfx, unlockAudio } from "./audio";
 import { Fx } from "./fx";
 import { type MatchStats, createHud } from "./hud";
 import { createControls } from "./input";
-import { type AnimalRig, buildAnimal, setFar } from "./critters";
+import { type AnimalRig, buildAnimal } from "./critters";
+import { Crowd, TOKEN_RANGE } from "./crowd";
+import { curveTheWorld, dip, overHorizon, pinDip } from "./globe";
 import { Sharpness } from "./quality";
 import { type FlagRig, buildFlag, buildMedicBadge, buildRespawnFlag, toon, waveFlag } from "./models";
 import { FLAG_ENEMY, FLAG_FREE, ME_GLOW, TEAMS } from "./palette";
@@ -77,6 +79,8 @@ let mode: Mode = params.get("mode") === "hoard" || params.get("mode") === "playf
 if (!isOpen(mode)) mode = "capture";
 
 const app = document.getElementById("app")!;
+// The island is drawn on a small round world (globe.ts); set before any shader is built.
+curveTheWorld();
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 // Shadows, glow and the color grade at High graphics (see look.ts).
@@ -116,6 +120,7 @@ let lastPlans: string[] = (() => {
 
 let match: Match = newMatch(Number(params.get("seed") ?? 1));
 let world: World = makeWorld();
+const crowd = new Crowd(scene);
 /** The island's scenery for this match, at the Graphics setting's detail. */
 function makeWorld(): World {
   look.setBright(match.world.id === "frost");
@@ -153,6 +158,10 @@ interface PlayerView {
   /** Its meshes, which cast the sun's shadows only while near the camera. */
   casters: THREE.Object3D[];
   casting: boolean;
+  /** Its kind and team, naming its crowd batch (see crowd.ts). */
+  key: string;
+  /** Drawn this frame in any form (its rig, a crowd batch or a stand-in). */
+  shown: boolean;
 }
 let views: PlayerView[] = [];
 /**
@@ -245,8 +254,10 @@ const WAKE = ["#ffffff", "#d8f6f7"];
 const EMBERS = ["#ffb347", "#ff7a2f"];
 // Animals beyond the fog are hidden, which matters with 128 of them.
 const DRAW_RANGE = 230;
-// Beyond this an animal is drawn as one still mesh (see setFar).
+// Within this, the nearest NEAR_MAX animals get their full moving rig; the
+// rest are drawn in batches (see crowd.ts).
 const LOD_RANGE = 30;
+const NEAR_MAX = 8;
 // Animals this close to the camera cast the sun's shadows on High.
 const SHADOW_RANGE = 24;
 // And at most this many of them.
@@ -268,6 +279,14 @@ function rebuildViews(): void {
     if (v.aura) scene.remove(v.aura);
   }
   views = match.players.map((p) => makeView(p.def.id, p.team, p.id === 0));
+  // A batch for each kind and team among the others; you are always drawn in full.
+  const kinds = new Map<string, { rig: AnimalRig; count: number }>();
+  for (const v of views.slice(1)) {
+    const k = kinds.get(v.key);
+    if (k) k.count++;
+    else kinds.set(v.key, { rig: v.rig, count: 1 });
+  }
+  crowd.rebuild(kinds);
   for (const f of flagViews) scene.remove(f.root);
   flagViews.length = 0;
   for (const flag of match.flags) {
@@ -330,7 +349,7 @@ function makeView(animal: string, team: number, me: boolean): PlayerView {
   const badge = buildMedicBadge();
   badge.position.y = 2.95;
   rig.root.add(badge);
-  const view: PlayerView = { rig, ring, animal, bank: 0, spin: 0, badge, squash: 0, cheer: 0, grounded: true, fallVy: 0, lastSpeed: 0, lean: 0, casters, casting: false };
+  const view: PlayerView = { rig, ring, animal, bank: 0, spin: 0, badge, squash: 0, cheer: 0, grounded: true, fallVy: 0, lastSpeed: 0, lean: 0, casters, casting: false, key: `${animal}:${team}`, shown: true };
   if (me) {
     const halo = new THREE.Mesh(haloGeo, haloMat);
     ring.add(halo);
@@ -732,17 +751,28 @@ function syncViews(t: number, dt: number): void {
   if (castDists.length !== match.players.length) castDists = new Float32Array(match.players.length);
   match.players.forEach((p, i) => (castDists[i] = Math.hypot(p.x - cx, p.z - cz)));
   castDists.sort();
-  const castReach = Math.min(SHADOW_RANGE, castDists[Math.min(castDists.length - 1, SHADOW_CASTERS - 1)] ?? 0);
+  const nth = (n: number) => castDists[Math.min(castDists.length - 1, n - 1)] ?? 0;
+  const castReach = Math.min(SHADOW_RANGE, nth(SHADOW_CASTERS));
+  const nearReach = Math.min(LOD_RANGE, nth(NEAR_MAX));
+  const eyeY = camera.position.y;
+  crowd.begin();
   for (const p of match.players) {
     const v = views[p.id];
     const r = v.rig;
-    // Knocked out animals are off the field until they respawn.
     const dist = Math.hypot(p.x - cx, p.z - cz);
     // Another animal right at the lens is just a blur of fur: leave it out
     // (and on the pick screen, those near you, so your animal has the stage).
     const atLens = p.id !== 0 && dist < (phase === "select" ? 9 : 1.7);
-    const far = dist > DRAW_RANGE || p.out > 0 || atLens;
-    r.root.visible = v.ring.visible = !far;
+    // Knocked out animals are off the field until they respawn, and anything
+    // past the globe's horizon can't be seen, so isn't drawn.
+    const far = dist > DRAW_RANGE || p.out > 0 || atLens || overHorizon(eyeY, dist, p.y + r.size.y + 0.5);
+    // Your animal, the nearest few and any flag carrier close by move in
+    // full; the rest are drawn in batches, and far off as stand-ins.
+    const full = p.id === 0 || dist <= nearReach || (p.carrying >= 0 && dist < LOD_RANGE);
+    const token = !full && dist > TOKEN_RANGE && p.carrying < 0;
+    v.shown = !far;
+    r.root.visible = !far && full;
+    v.ring.visible = !far;
     if (v.badge) v.badge.visible = p.medic;
     // Shield bubble or Star glow while one runs.
     const powered = p.shieldT > 0 || p.starT > 0;
@@ -760,20 +790,26 @@ function syncViews(t: number, dt: number): void {
       }
     }
     if (far) continue;
-    setFar(r, p.id !== 0 && dist > LOD_RANGE);
+    const at = drawn(p);
+    if (token) {
+      crowd.token(r, at.x, at.y, at.z, at.h);
+      v.ring.position.set(at.x, surfaceHeight(at.x, at.z) + 0.1, at.z);
+      v.ring.quaternion.identity();
+      continue;
+    }
     // Shadows from the animals round you; farther ones are too small to miss.
-    const cast = dist <= castReach;
+    const cast = full && dist <= castReach;
     if (cast !== v.casting) {
       v.casting = cast;
       for (const o of v.casters) o.castShadow = cast;
     }
     if (p.starT > 0 && Math.random() < 0.5) fx.burst(p.x, p.y + 1, p.z, ["#ffd166", "#ff6b9a", "#7fd8ff", "#7ee36b"], 1, 3, 4, 0.16);
     if (p.turboT > 0 && p.speed > 4 && Math.random() < 0.6) fx.burst(p.x, p.y + 0.4, p.z, ["#ff6b5b", "#ffd166"], 1, 1.5, 3, 0.14);
-    const at = drawn(p);
     r.root.position.set(at.x, at.y, at.z);
     r.root.rotation.y = at.h;
     animate(v, p, t, dt);
-    dizzy(v, p, t);
+    if (full) dizzy(v, p, t);
+    else crowd.body(v.key, r);
     const surf = surfaceHeight(p.x, p.z);
     // Tilt the ring to the slope so it never sinks into a hillside.
     slope.set(surfaceHeight(p.x - 0.8, p.z) - surfaceHeight(p.x + 0.8, p.z), 1.6, surfaceHeight(p.x, p.z - 0.8) - surfaceHeight(p.x, p.z + 0.8)).normalize();
@@ -801,6 +837,8 @@ function syncViews(t: number, dt: number): void {
       for (const mat of v.me.mats) mat.emissiveIntensity = 0.18 + pulse * 0.17;
     }
   }
+
+  crowd.end();
 
   const rings = [0, 0];
   for (const p of match.players) {
@@ -834,7 +872,7 @@ function syncViews(t: number, dt: number): void {
       size = big ? 0.72 : 0.5;
       v.root.position.set(mount.x, mount.y - 0.5 * size, mount.z);
       v.root.rotation.set(0, drawn(c).h + Math.PI / 2, 0);
-      v.root.visible = rig.root.visible;
+      v.root.visible = views[f.carrier].shown;
       v.glow.visible = false;
       flutter = Math.min(1, 0.35 + Math.abs(c.speed) / 12);
       // A thin trail of sparkles so a carrier is easy to spot and chase.
@@ -862,7 +900,11 @@ function syncViews(t: number, dt: number): void {
     if (v.marker.visible) {
       const pin = big ? 0.085 : 0.065;
       v.marker.scale.set(pin / size, (pin * 1.25) / size, 1);
-      v.marker.position.y = 4.5 + Math.sin(t * 3 + i) * 0.25 / size;
+      // Pins are drawn flat on the screen, so they dip with the globe here
+      // (but stop at the horizon, so you can still see where a far flag is).
+      const pinAt = v.root.position.y + 4.5 * size;
+      const sink = pinDip(eyeY, Math.hypot(v.root.position.x - cx, v.root.position.z - cz), pinAt);
+      v.marker.position.y = 4.5 + (Math.sin(t * 3 + i) * 0.25 - sink) / size;
     }
   });
 
@@ -1074,7 +1116,7 @@ function watchScore(): void {
   shownMine = me.score;
   if (gain <= 0) return;
   const at = drawn(me);
-  headAt.set(at.x, at.y + 3.2, at.z).project(camera);
+  headAt.set(at.x, at.y + 3.2 - dip(at.x - camera.position.x, at.z - camera.position.z), at.z).project(camera);
   if (headAt.z > 1) return;
   // The view may be the DS top screen rather than the whole window.
   const view = renderer.domElement.getBoundingClientRect();

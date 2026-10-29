@@ -5,7 +5,7 @@
  *   Normal  the classic look, as sharp as the screen allows up to 2x.
  *   High    soft sun shadows, a glow on bright things (the sun, lava, your
  *           arrow), a gentle color grade and vignette, a sky dome with a sun,
- *           reflective water, swaying grass and rounder trees.
+ *           reflective water, swaying grass and patchy ground.
  *
  * The scenery side of High (water, grass, sky, tree detail) is in world.ts,
  * which reads `sceneryFor`; this file owns the renderer and the passes.
@@ -22,8 +22,8 @@ export interface Scenery {
   level: Graphics;
   /** Trees, flowers and props compared with Normal. */
   density: number;
-  /** Rounder trees and rocks. */
-  smooth: boolean;
+  /** Soft patches of lighter and darker ground. */
+  mottle: boolean;
   /** Reflective, rippling water and glowing, flowing lava. */
   richWater: boolean;
   /** A sky dome with a sun in place of the flat backdrop. */
@@ -39,7 +39,7 @@ export function sceneryFor(level: Graphics): Scenery {
   return {
     level,
     density: level === "low" ? 0.55 : high ? 1.15 : 1,
-    smooth: high,
+    mottle: high,
     richWater: high,
     skyDome: high,
     grass: high,
