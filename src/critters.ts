@@ -27,21 +27,16 @@ export interface AnimalRig {
   style: "ride" | "fly" | "hop" | "swim";
   /** Where a carried flag rides. */
   flagMount: THREE.Object3D;
-  /** The whole animal as one still mesh, drawn in place of its moving parts when far off. */
-  far: THREE.Mesh;
-  /** The moving parts `far` stands in for. */
-  near: THREE.Object3D[];
-}
-
-/**
- * Far off, an animal is a few pixels tall and nobody sees its head turn or
- * its wheels spin, so it is drawn as one mesh instead of six to twelve. It
- * still leans, bounces and spins with its body.
- */
-export function setFar(rig: AnimalRig, far: boolean): void {
-  if (rig.far.visible === far) return;
-  rig.far.visible = far;
-  for (const o of rig.near) o.visible = !far;
+  /**
+   * The whole animal in its resting pose as one shape, in its body's space,
+   * without the ink outline (a fraction of a pixel by then). Crowds of
+   * animals farther off are drawn from it, every one of a kind in one batch.
+   */
+  far: THREE.BufferGeometry;
+  /** How big it stands, for the tiny stand-ins drawn far off. */
+  size: THREE.Vector3;
+  /** Its main color, for the same. */
+  tint: THREE.Color;
 }
 
 const INK = new THREE.Color("#2a2238");
@@ -182,8 +177,10 @@ export function buildAnimal(id: string, team: string): AnimalRig {
   return {
     root,
     body,
-    far: find("far") as THREE.Mesh,
-    near: nearParts(body),
+    // One crowd shape per kind and team, shared by every copy.
+    far: master.far,
+    size: master.size,
+    tint: master.tint,
     head: find("head") as THREE.Group,
     wings: count("wing", master.wings.length),
     wheels: count("wheel", master.wheels.length),
@@ -601,18 +598,28 @@ function makeAnimal(id: string, team: string): AnimalRig {
   for (const w of [...wings, ...wheels]) bake(w as THREE.Group, new Set());
   if (pogo) bake(pogo, new Set());
   const far = bakeWhole(root, body);
-  far.name = "far";
-  far.visible = false;
-  body.add(far);
-  return { root, body, head, wings, wheels, pogo, style, flagMount, far, near: nearParts(body) };
+  far.computeBoundingBox();
+  const size = far.boundingBox!.getSize(new THREE.Vector3());
+  return { root, body, head, wings, wheels, pogo, style, flagMount, far, size, tint: mainColor(far) };
 }
 
-function nearParts(body: THREE.Object3D): THREE.Object3D[] {
-  return body.children.filter((c) => c.name !== "far" && c.name !== "flagMount");
+/** The color that covers the most of a shape. */
+function mainColor(geo: THREE.BufferGeometry): THREE.Color {
+  const col = geo.attributes.color as THREE.BufferAttribute;
+  const counts = new Map<number, number>();
+  const c = new THREE.Color();
+  for (let i = 0; i < col.count; i++) {
+    const key = c.fromBufferAttribute(col, i).getHex();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  let best = 0xffffff;
+  let most = 0;
+  for (const [key, n] of counts) if (n > most) [best, most] = [key, n];
+  return new THREE.Color(best);
 }
 
-/** Every baked mesh under `body`, in its resting pose, merged into one. */
-function bakeWhole(root: THREE.Object3D, body: THREE.Object3D): THREE.Mesh {
+/** Every baked part under `body`, in its resting pose and without outlines, merged into one shape. */
+function bakeWhole(root: THREE.Object3D, body: THREE.Object3D): THREE.BufferGeometry {
   root.updateMatrixWorld(true);
   const toBody = body.matrixWorld.clone().invert();
   const m = new THREE.Matrix4();
@@ -620,10 +627,15 @@ function bakeWhole(root: THREE.Object3D, body: THREE.Object3D): THREE.Mesh {
   body.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
+    const at = m.multiplyMatrices(toBody, mesh.matrixWorld);
+    if (mesh.userData.plain) {
+      parts.push((mesh.userData.plain as THREE.BufferGeometry).clone().applyMatrix4(at));
+      return;
+    }
     // Parts kept out of the bake (glowing bits, spinning wheels) come with an
     // index and no colors; give them the same layout as the baked ones, in
     // their own material's color, or the merge fails and the far animal vanishes.
-    let g = mesh.geometry.clone().applyMatrix4(m.multiplyMatrices(toBody, mesh.matrixWorld));
+    let g = mesh.geometry.clone().applyMatrix4(at);
     if (g.index) g = g.toNonIndexed();
     for (const name of Object.keys(g.attributes)) if (name !== "position" && name !== "normal" && name !== "color") g.deleteAttribute(name);
     if (!g.attributes.color) {
@@ -632,7 +644,7 @@ function bakeWhole(root: THREE.Object3D, body: THREE.Object3D): THREE.Mesh {
     }
     parts.push(g);
   });
-  return new THREE.Mesh(mergeGeometries(parts) ?? new THREE.BufferGeometry(), animalMat);
+  return mergeGeometries(parts) ?? new THREE.BufferGeometry();
 }
 
 export const animalMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: RAMP });
@@ -646,6 +658,8 @@ const OUTLINE = 0.035;
  */
 function bake(group: THREE.Group, keep: Set<THREE.Object3D>): void {
   const parts: THREE.BufferGeometry[] = [];
+  /** The same parts without their outlines, for the crowd shape (see bakeWhole). */
+  const plain: THREE.BufferGeometry[] = [];
   const color = new THREE.Color();
   for (const child of [...group.children]) {
     const mesh = child as THREE.Mesh;
@@ -656,12 +670,16 @@ function bake(group: THREE.Group, keep: Set<THREE.Object3D>): void {
     const geo = g.index ? g.toNonIndexed() : g;
     color.set(mesh.userData.color as string);
     parts.push(paint(geo, color));
+    plain.push(geo);
     if (mesh.userData.ink) parts.push(shell(geo));
     group.remove(mesh);
   }
   if (!parts.length) return;
   const merged = mergeGeometries(parts);
-  if (merged) group.add(new THREE.Mesh(merged, animalMat));
+  if (!merged) return;
+  const baked = new THREE.Mesh(merged, animalMat);
+  baked.userData.plain = mergeGeometries(plain);
+  group.add(baked);
 }
 
 function paint(geo: THREE.BufferGeometry, c: THREE.Color): THREE.BufferGeometry {

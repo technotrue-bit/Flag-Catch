@@ -5,7 +5,7 @@
  *   Normal  the classic look, as sharp as the screen allows up to 2x.
  *   High    soft sun shadows, a glow on bright things (the sun, lava, your
  *           arrow), a gentle color grade and vignette, a sky dome with a sun,
- *           reflective water, swaying grass and rounder trees. Sharper too.
+ *           reflective water, swaying grass and patchy ground.
  *
  * The scenery side of High (water, grass, sky, tree detail) is in world.ts,
  * which reads `sceneryFor`; this file owns the renderer and the passes.
@@ -14,7 +14,6 @@ import * as THREE from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import type { Graphics } from "./settings";
 
@@ -23,10 +22,8 @@ export interface Scenery {
   level: Graphics;
   /** Trees, flowers and props compared with Normal. */
   density: number;
-  /** Ground squares per meter compared with Normal. */
-  groundDetail: number;
-  /** Rounder trees and rocks. */
-  smooth: boolean;
+  /** Soft patches of lighter and darker ground. */
+  mottle: boolean;
   /** Reflective, rippling water and glowing, flowing lava. */
   richWater: boolean;
   /** A sky dome with a sun in place of the flat backdrop. */
@@ -41,9 +38,8 @@ export function sceneryFor(level: Graphics): Scenery {
   const high = level === "high";
   return {
     level,
-    density: level === "low" ? 0.55 : high ? 1.35 : 1,
-    groundDetail: high ? 2 : 1,
-    smooth: high,
+    density: level === "low" ? 0.55 : high ? 1.15 : 1,
+    mottle: high,
     richWater: high,
     skyDome: high,
     grass: high,
@@ -54,12 +50,15 @@ export function sceneryFor(level: Graphics): Scenery {
 /** The sharpest pixel ratio each level draws at, before the frame rate safety net. */
 export function maxPixelRatio(level: Graphics, device: number): number {
   const d = device || 1;
-  if (level === "low") return 1;
-  if (level === "high") return Math.min(2.5, Math.max(1.25, d));
-  return Math.min(2, d);
+  // High spends its time on shadows and glow, not on more pixels than Normal:
+  // every full screen pass costs as much again at each step of sharpness.
+  return level === "low" ? 1 : Math.min(2, d);
 }
 
-/** A soft color grade and vignette, drawn last, in screen colors. */
+/**
+ * The last pass: from the scene's linear light to screen colors, then a soft
+ * color grade and vignette. One pass in place of two, which matters at 2x.
+ */
 const GradeShader = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
@@ -83,6 +82,8 @@ const GradeShader = {
     varying vec2 vUv;
     void main() {
       vec4 c = texture2D(tDiffuse, vUv);
+      vec3 lin = max(c.rgb, 0.0);
+      c.rgb = mix(lin * 12.92, 1.055 * pow(lin, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, lin));
       float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
       vec3 col = mix(vec3(l), c.rgb, uSaturation);
       col = (col - 0.5) * uContrast + 0.5;
@@ -103,6 +104,12 @@ export interface Look {
   setPixelRatio(r: number): void;
   /** Snowy worlds are bright all over: only the brightest things glow there. */
   setBright(bright: boolean): void;
+  /**
+   * The phone can't keep 60 even at High's lowest sharpness: give up the next
+   * costliest extra (the glow, then drawing shadows every frame). False when
+   * there is nothing left to give up.
+   */
+  trim(): boolean;
   render(scene: THREE.Scene, camera: THREE.Camera): void;
 }
 
@@ -114,18 +121,25 @@ export function createLook(renderer: THREE.WebGLRenderer): Look {
   const size = new THREE.Vector2(1, 1);
   let bright = false;
   const threshold = () => (bright ? 2.2 : 1.02);
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  /** How many of High's extras have been given up to hold 60 (see trim). */
+  let trims = 0;
+  let frame = 0;
+  // Plain PCF with a blur radius: soft enough, at a fraction of PCFSoft's taps.
+  renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const build = () => {
     renderer.getSize(size);
-    // Multisampled, so edges stay smooth with the passes on.
-    const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+    // Lightly multisampled, so edges stay smooth with the passes on.
+    const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 2 });
     composer = new EffectComposer(renderer, target);
     renderPass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera());
     composer.addPass(renderPass);
     bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.22, 0.35, threshold());
+    // The glow is soft anyway, so it's worked out at half the size it would
+    // be: a quarter of the pixels in each of its blur passes.
+    const bloomSize = bloom.setSize.bind(bloom);
+    bloom.setSize = (w, h) => bloomSize(Math.max(1, Math.round(w / 2)), Math.max(1, Math.round(h / 2)));
     composer.addPass(bloom);
-    composer.addPass(new OutputPass());
     composer.addPass(new ShaderPass(GradeShader));
     composer.setPixelRatio(renderer.getPixelRatio());
     composer.setSize(size.x, size.y);
@@ -138,7 +152,9 @@ export function createLook(renderer: THREE.WebGLRenderer): Look {
     set(next) {
       level = next;
       const high = next === "high";
+      trims = 0;
       renderer.shadowMap.enabled = high;
+      renderer.shadowMap.autoUpdate = true;
       if (high && !composer) build();
       if (!high && composer) {
         composer.dispose();
@@ -166,7 +182,18 @@ export function createLook(renderer: THREE.WebGLRenderer): Look {
       bright = next;
       if (bloom) bloom.threshold = threshold();
     },
+    trim() {
+      if (level !== "high" || trims >= 2) return false;
+      trims++;
+      if (trims === 1 && bloom) bloom.enabled = false;
+      // Shadows drawn every other frame: half the sun's work, and at 60 a
+      // frame's lag in a shadow is hard to see.
+      if (trims === 2) renderer.shadowMap.autoUpdate = false;
+      return true;
+    },
     render(scene, camera) {
+      if (trims >= 2 && renderer.shadowMap.enabled) renderer.shadowMap.needsUpdate = frame % 2 === 0;
+      frame++;
       if (!composer || !renderPass) {
         renderer.render(scene, camera);
         return;

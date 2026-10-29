@@ -18,6 +18,18 @@ describe("sharpness", () => {
     expect(s.ratio).toBe(2);
   });
 
+  it("says when it has no sharpness left to give", () => {
+    const s = new Sharpness(1.5, 1.5);
+    expect(s.struggling()).toBe(false);
+    run(s, 90, 33);
+    expect(s.struggling()).toBe(true);
+    // Once per hard spell, not on every look.
+    expect(s.struggling()).toBe(false);
+    // Lowering the floor lets it step down again.
+    s.min = 1;
+    expect(run(s, 90 * 2, 33)).toEqual([1.25, 1]);
+  });
+
   it("ignores a lone hitch", () => {
     const s = new Sharpness(2);
     expect(run(s, 600, (i) => (i % 90 === 40 ? 120 : 16.7))).toEqual([]);
