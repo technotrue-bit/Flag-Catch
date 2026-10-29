@@ -16,7 +16,7 @@ describe("settings", () => {
 
   it("save and load every setting", () => {
     const store = memory();
-    const s = { ...DEFAULTS, music: 0.3, chimes: false, leftHanded: true, camTurn: "slow" as const, calm: true, dsMode: true };
+    const s = { ...DEFAULTS, music: 0.3, chimes: false, leftHanded: true, camTurn: "slow" as const, calm: true, dsMode: true, graphics: "high" as const };
     saveSettings(store, s);
     expect(loadSettings(store)).toEqual(s);
   });
@@ -35,6 +35,7 @@ describe("settings", () => {
     expect(s.leftHanded).toBe(false);
     expect(loadSettings(memory({ "flagcatch.settings": JSON.stringify({ dsMode: "on" }) })).dsMode).toBe(false);
     expect(loadSettings(memory({ "flagcatch.settings": "{oops" }))).toEqual(DEFAULTS);
+    expect(loadSettings(memory({ "flagcatch.settings": JSON.stringify({ graphics: "ultra" }) })).graphics).toBe("normal");
   });
 
   it("turn the camera slower or faster", () => {

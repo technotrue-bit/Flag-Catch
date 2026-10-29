@@ -180,6 +180,11 @@ function flagLook(color: string, light: string, shape: string) {
 const glowGeo = new THREE.RingGeometry(1.0, 1.65, 32);
 const knobGeo = new THREE.SphereGeometry(0.22, 12, 9);
 
+/** Shapes every prop shares, which must outlive any one island. */
+export function sharedShape(g: THREE.BufferGeometry): boolean {
+  return g === boxGeo || g === cylGeo || g === glowGeo || g === knobGeo;
+}
+
 /**
  * A team's flag: a tall pole and a big cloth in the team's color with its
  * shape, a glow ring on the ground and a pin floating above. The cloth
@@ -248,10 +253,11 @@ const ID = new THREE.Matrix4();
  * Tree parts for instanced forests in each world's style: each part is one
  * shape (several fused together) drawn as one batch for the whole island.
  */
-export function treeParts(style: string, trunk: string, leaf: string, leafLight: string): TreePart[] {
-  const ball = new THREE.SphereGeometry(1, 10, 7);
-  const tube = new THREE.CylinderGeometry(0.5, 0.5, 1, 8);
-  const cone = new THREE.ConeGeometry(1, 1, 9);
+export function treeParts(style: string, trunk: string, leaf: string, leafLight: string, smooth = false): TreePart[] {
+  // High graphics rounds the shapes off.
+  const ball = smooth ? new THREE.SphereGeometry(1, 18, 12) : new THREE.SphereGeometry(1, 10, 7);
+  const tube = new THREE.CylinderGeometry(0.5, 0.5, 1, smooth ? 14 : 8);
+  const cone = new THREE.ConeGeometry(1, 1, smooth ? 16 : 9);
   switch (style) {
     case "palm": {
       // A leaning, ringed trunk under a crown of drooping fronds and coconuts.

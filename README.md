@@ -126,6 +126,26 @@ overwriting the other. Played on its own or signed out, nothing leaves the phone
   does it in one tap on Android and computers, and shows the steps on iPhone,
   where Safari doesn't let web pages hide its bars.
 
+## Graphics
+
+Pick Low, Normal or High under Settings, View. The island rebuilds at once.
+
+- Low: drawn at 1x with fewer sparks, trees, flowers and rocks, for older phones.
+- Normal: the classic look, as sharp as the screen allows up to 2x.
+- High: soft sun shadows under every tree, animal and base; a glow on the
+  brightest things (the sun, lava, embers); reflective water that ripples and
+  mirrors the sky, with the sun glinting off it; lava with slowly flowing veins;
+  a sky dome with a sun; tufts of grass that sway in the breeze on the green
+  worlds; rounder trees, more scenery, patchy lawns and beaches; a soft color
+  grade and vignette; and a sharper picture (up to 2.5x).
+
+On every level the frame rate safety net still draws less sharp if the phone
+can't keep 60.
+
+Trees, and the posts and banner over each base, turn see-through while they
+stand between the camera and your animal, so you never lose sight of yourself.
+On High their shadows stay on the ground.
+
 ## DS mode
 
 An optional layout for playing with the phone held upright, like a two screen
@@ -150,7 +170,7 @@ handed play). A hinge with two little lights sits between them.
 - In a match, the pause button (top left) opens Resume, Settings, How to Play,
   Restart and Quit to menu. Leaving the app pauses the match too.
 - Settings, saved on the phone: Music and Sounds volume (Sounds covers the
-  chimes); Chimes on or off; Zoom; Camera turn (slow, normal, fast);
+  chimes); Chimes on or off; Graphics (Low, Normal, High); Zoom; Camera turn (slow, normal, fast);
   Screen shake; Calm effects (fewer sparks, no lightning flash, a softer
   glow); Left handed (steer on the right, buttons on the left); Big buttons;
   Vibration where the phone has it; DS mode. `?dev` adds the feel tuning sliders.
@@ -296,6 +316,6 @@ Test games with `?per` or `?time` don't pay points.
 - `src/progress.ts`: points, unlocks and best scores, with per-device tallies and the merge. `src/cloud.ts`: account saves through the TrueAIGaming play page.
 - `src/animals.ts`: per animal speeds by medium and shot stats.
 - `src/critters.ts`: the animal models and their rigs.
-- `src/main.ts`, `src/world.ts`, `src/models.ts`, `src/fx.ts`: rendering.
+- `src/main.ts`, `src/world.ts`, `src/models.ts`, `src/fx.ts`: rendering. `src/look.ts`: the Graphics levels, shadows and the High passes.
 - `src/hud.ts`, `src/input.ts`, `src/audio.ts`: menus, thumbs, HUD, sound, chimes and animal mood tones.
 - `src/cues.ts`: the cue chimes for big moments. `src/settings.ts`: saved player settings.

@@ -6,6 +6,9 @@
 import type { Store } from "./progress";
 
 export type CamTurn = "slow" | "normal" | "fast";
+/** How much the game draws: Low for older phones, High for shadows, glow, reflections and grass. */
+export type Graphics = "low" | "normal" | "high";
+export const GRAPHICS: readonly Graphics[] = ["low", "normal", "high"];
 
 export interface Settings {
   /** Camera zoom, 0 out to 1 in. */
@@ -28,6 +31,8 @@ export interface Settings {
   vibrate: boolean;
   /** Phone held upright: the game on a top screen, the map and controls on a bottom one. */
   dsMode: boolean;
+  /** Graphics quality. */
+  graphics: Graphics;
 }
 
 export const DEFAULTS: Readonly<Settings> = {
@@ -42,6 +47,7 @@ export const DEFAULTS: Readonly<Settings> = {
   bigButtons: false,
   vibrate: true,
   dsMode: false,
+  graphics: "normal",
 };
 
 const KEY = "flagcatch.settings";
@@ -71,6 +77,7 @@ export function loadSettings(store: Store | null): Settings {
         bigButtons: bool(p.bigButtons, s.bigButtons),
         vibrate: bool(p.vibrate, s.vibrate),
         dsMode: bool(p.dsMode, s.dsMode),
+        graphics: pick(p.graphics, GRAPHICS, s.graphics),
       };
     }
     // Before this settings card, Zoom and Music had keys of their own.

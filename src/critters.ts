@@ -619,7 +619,18 @@ function bakeWhole(root: THREE.Object3D, body: THREE.Object3D): THREE.Mesh {
   const parts: THREE.BufferGeometry[] = [];
   body.traverse((o) => {
     const mesh = o as THREE.Mesh;
-    if (mesh.isMesh) parts.push(mesh.geometry.clone().applyMatrix4(m.multiplyMatrices(toBody, mesh.matrixWorld)));
+    if (!mesh.isMesh) return;
+    // Parts kept out of the bake (glowing bits, spinning wheels) come with an
+    // index and no colors; give them the same layout as the baked ones, in
+    // their own material's color, or the merge fails and the far animal vanishes.
+    let g = mesh.geometry.clone().applyMatrix4(m.multiplyMatrices(toBody, mesh.matrixWorld));
+    if (g.index) g = g.toNonIndexed();
+    for (const name of Object.keys(g.attributes)) if (name !== "position" && name !== "normal" && name !== "color") g.deleteAttribute(name);
+    if (!g.attributes.color) {
+      const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshBasicMaterial;
+      paint(g, mat.color ?? new THREE.Color("#ffffff"));
+    }
+    parts.push(g);
   });
   return new THREE.Mesh(mergeGeometries(parts) ?? new THREE.BufferGeometry(), animalMat);
 }
