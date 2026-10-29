@@ -38,6 +38,7 @@ import { MAPS, WATER_Y, groundHeight, landOf, mapFor, surfaceHeight } from "./te
 import { WORLDS } from "./worlds";
 import { type World, buildWorld } from "./world";
 import { camTurnRate, onSettings, settings } from "./settings";
+import { createLook, sceneryFor } from "./look";
 import { cue } from "./cues";
 import { applyDs, ds } from "./ds";
 
@@ -77,10 +78,12 @@ if (!isOpen(mode)) mode = "capture";
 
 const app = document.getElementById("app")!;
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-// Sharp as the screen allows (up to 2x), easing off if the phone can't keep 60.
-const sharpness = new Sharpness(Math.min(2, window.devicePixelRatio || 1));
-renderer.setPixelRatio(sharpness.ratio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+// Shadows, glow and the color grade at High graphics (see look.ts).
+const look = createLook(renderer);
+// Sharp as the Graphics setting and screen allow, easing off if the phone can't keep 60.
+let sharpness = new Sharpness(look.set(settings.graphics));
+renderer.setPixelRatio(sharpness.ratio);
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -97,7 +100,12 @@ let lastPlans: string[] = (() => {
 })();
 
 let match: Match = newMatch(Number(params.get("seed") ?? 1));
-let world: World = buildWorld(scene, match);
+let world: World = makeWorld();
+/** The island's scenery for this match, at the Graphics setting's detail. */
+function makeWorld(): World {
+  look.setBright(match.world.id === "frost");
+  return buildWorld(scene, match, sceneryFor(settings.graphics), renderer);
+}
 const fx = new Fx(scene);
 const controls = createControls(document.body);
 // In DS mode only the bottom screen steers; the top one is for watching.
@@ -243,6 +251,8 @@ function rebuildViews(): void {
   for (const flag of match.flags) {
     const team = TEAMS[flag.owner];
     const f = buildFlag(team.color, team.light, team.shape);
+    f.root.traverse((o) => (o.castShadow = !(o as THREE.Sprite).isSprite));
+    f.glow.castShadow = false;
     (f.marker.material as THREE.SpriteMaterial).sizeAttenuation = false;
     scene.add(f.root);
     flagViews.push(f);
@@ -281,7 +291,7 @@ function warmShaders(): void {
     if (o.frustumCulled) { culled.push(o); o.frustumCulled = false; }
     if (o instanceof THREE.InstancedMesh && o.count === 0) { empty.push(o); o.count = 1; }
   });
-  renderer.render(scene, camera);
+  look.render(scene, camera);
   for (const o of hidden) o.visible = false;
   for (const o of culled) o.frustumCulled = true;
   for (const o of empty) o.count = 0;
@@ -290,6 +300,8 @@ function warmShaders(): void {
 
 function makeView(animal: string, team: number, me: boolean): PlayerView {
   const rig = buildAnimal(animal, TEAMS[team].color);
+  // Animals cast the sun's shadows when High graphics draws them.
+  rig.root.traverse((o) => (o.castShadow = true));
   scene.add(rig.root);
   const ring = new THREE.Group();
   scene.add(ring);
@@ -696,7 +708,10 @@ function syncViews(t: number, dt: number): void {
     const r = v.rig;
     // Knocked out animals are off the field until they respawn.
     const dist = Math.hypot(p.x - cx, p.z - cz);
-    const far = dist > DRAW_RANGE || p.out > 0;
+    // Another animal right at the lens is just a blur of fur: leave it out
+    // (and on the pick screen, those near you, so your animal has the stage).
+    const atLens = p.id !== 0 && dist < (phase === "select" ? 9 : 1.7);
+    const far = dist > DRAW_RANGE || p.out > 0 || atLens;
     r.root.visible = v.ring.visible = !far;
     if (v.badge) v.badge.visible = p.medic;
     // Shield bubble or Star glow while one runs.
@@ -1042,6 +1057,7 @@ function resize(): void {
   const w = split ? split.top.w : window.innerWidth;
   const h = split ? split.top.h : window.innerHeight;
   renderer.setSize(w, h, false);
+  look.setSize(w, h);
   camera.aspect = w / h;
   // Wider view on short landscape phones so the sides don't feel cramped,
   // and a touch wider on the squarer DS top screen so you see round you.
@@ -1062,6 +1078,8 @@ resize();
 let acc = 0;
 let last = performance.now();
 const drawSize = new THREE.Vector2();
+/** Your animal's drawn position, for see-through trees and the shadows round you. */
+const focus = new THREE.Vector3();
 function frame(now: number): void {
   const gap = now - last;
   const dt = Math.min(0.1, gap / 1000);
@@ -1086,7 +1104,9 @@ function frame(now: number): void {
   if (me.stun <= 0) camYaw += wrapAngle(me.heading - camYaw) * Math.min(1, dt * camTurnRate(settings));
   shake = Math.max(0, shake - dt * 2.5);
   const t = now / 1000;
-  world.update(t, match, camera.position);
+  const seen = drawn(me);
+  focus.set(seen.x, seen.y + 1, seen.z);
+  world.update(t, match, camera.position, focus);
   stepFlashes(dt);
   syncViews(t, Math.max(dt, 1 / 240));
   fx.update(dt);
@@ -1105,14 +1125,10 @@ function frame(now: number): void {
     watchScore();
   }
   hud.update(match, controls, camYaw);
-  renderer.render(scene, camera);
+  look.render(scene, camera);
   if (phase === "play" && !hud.paused && !match.over) {
     const ratio = sharpness.frame(gap);
-    if (ratio !== null) {
-      renderer.setPixelRatio(ratio);
-      renderer.getSize(drawSize);
-      renderer.setSize(drawSize.x, drawSize.y, false);
-    }
+    if (ratio !== null) setSharpness(ratio);
   }
 
   if (phase === "play" && !match.over) {
@@ -1167,6 +1183,28 @@ function frame(now: number): void {
 }
 requestAnimationFrame(frame);
 
+function setSharpness(ratio: number): void {
+  look.setPixelRatio(ratio);
+  renderer.getSize(drawSize);
+  renderer.setSize(drawSize.x, drawSize.y, false);
+  look.setSize(drawSize.x, drawSize.y);
+}
+
+/** A new Graphics setting: new passes and sharpness, and the island rebuilt at the new detail. */
+function applyGraphics(): void {
+  if (settings.graphics === look.level) return;
+  sharpness = new Sharpness(look.set(settings.graphics));
+  setSharpness(sharpness.ratio);
+  world.dispose();
+  world = makeWorld();
+  // Shadows on or off changes every shader, so they're all built afresh.
+  scene.traverse((o) => {
+    const m = (o as THREE.Mesh).material;
+    for (const mat of Array.isArray(m) ? m : m ? [m] : []) mat.needsUpdate = true;
+  });
+  warmShaders();
+}
+
 function freshMatch(): void {
   clearSession();
   const lastMap = match.map;
@@ -1185,7 +1223,7 @@ function freshMatch(): void {
   // A new team size or world means a new island.
   if (match.map !== lastMap || match.world !== lastWorld) {
     world.dispose();
-    world = buildWorld(scene, match);
+    world = makeWorld();
   }
   rebuildViews();
   stats = freshStats();
@@ -1292,7 +1330,9 @@ for (const kind of ["pointerup", "touchend", "keydown"]) {
 
 let dsWas = settings.dsMode;
 const applySettings = () => {
-  fx.amount = settings.calm ? 0.4 : 1;
+  // Calm effects and Low graphics both thin out the sparks.
+  fx.amount = (settings.calm ? 0.4 : 1) * (settings.graphics === "low" ? 0.6 : 1);
+  applyGraphics();
   if (settings.dsMode !== dsWas) {
     dsWas = settings.dsMode;
     resize();
@@ -1403,7 +1443,7 @@ function resumeSession(): boolean {
   if (next.map !== match.map || next.world !== match.world) {
     world.dispose();
     match = next;
-    world = buildWorld(scene, match);
+    world = makeWorld();
   } else match = next;
   rebuildViews();
   stats = freshStats();
@@ -1533,6 +1573,9 @@ function clampInt(v: number, lo: number, hi: number): number {
     return match;
   },
   controls,
+  scene,
+  camera,
+  renderer,
 };
 
 function loadAnimal(): string {

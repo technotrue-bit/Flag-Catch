@@ -187,6 +187,7 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-opt input[type=range]{flex:1;max-width:170px;height:28px;accent-color:#46b4e8}
 .fc-opt .fc-seg{flex:none}
 .fc-opt .seg{pointer-events:auto;padding:6px 10px;border-radius:999px;font-weight:900;font-size:11px;letter-spacing:.3px;border:2px solid transparent;cursor:pointer}
+.fc-note{grid-column:1/-1;margin:-4px 0 2px;font-size:11px;font-weight:700;opacity:.6}
 .fc-opt .seg.on{background:#fffaf0;border-color:${PALETTE.ink}}
 .fc-tog{pointer-events:auto;position:relative;flex:none;width:52px;height:30px;border-radius:999px;background:rgba(43,35,64,.2);transition:background .15s;cursor:pointer}
 .fc-tog::after{content:"";position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 0 rgba(43,35,64,.2);transition:transform .15s}
@@ -579,7 +580,7 @@ export function createHud(controls: Controls): Hud {
       input.addEventListener("change", () => sfx.pick());
       row(label).appendChild(input);
     };
-    const choice = <K extends "camTurn">(label: string, key: K, options: Array<[Settings[K], string]>) => {
+    const choice = <K extends "camTurn" | "graphics">(label: string, key: K, options: Array<[Settings[K], string]>) => {
       const seg = el("div", "fc-seg", row(label));
       const btns = options.map(([v, text]) => {
         const b = el("div", "seg", seg);
@@ -609,6 +610,14 @@ export function createHud(controls: Controls): Hud {
     slider("Sounds", "sound");
     toggle("Chimes", "chimes");
     head("VIEW");
+    choice("Graphics", "graphics", [
+      ["low", "LOW"],
+      ["normal", "NORMAL"],
+      ["high", "HIGH"],
+    ]);
+    // Its own row, with a line on what High brings.
+    (grid.lastElementChild as HTMLElement).style.gridColumn = "1 / -1";
+    el("div", "fc-note", grid).textContent = "High adds sun shadows, glow, shiny water, swaying grass and a sharper picture.";
     slider("Zoom", "zoom");
     choice("Camera turn", "camTurn", [
       ["slow", "SLOW"],
