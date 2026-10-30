@@ -10,6 +10,36 @@ const SITE = [/^https:\/\/(www\.)?trueaigaming\.com$/, /^https:\/\/trueaigaming-
 
 export const isSite = (origin: string): boolean => SITE.some((re) => re.test(origin));
 
+/** The game served from this computer (development and tests): any page framing it may play the site. */
+const devHost = (): boolean => typeof location !== "undefined" && (location.hostname === "localhost" || location.hostname === "127.0.0.1");
+
+/**
+ * What the play page says about online play ("tag:online"): signed out, or signed in with a ticket that names the
+ * player (see net/ticket.ts), the site's public key to check tickets with, and the site's Realtime address and public
+ * key that rooms meet on.
+ */
+export interface OnlineInfo {
+  signedIn: boolean;
+  ticket?: string;
+  siteKey?: JsonWebKey;
+  realtime?: { url: string; key: string };
+}
+
+/** Only the site's own Supabase project address is used for rooms. */
+const REALTIME_URL = /^https:\/\/[a-z0-9]{8,40}\.supabase\.co$/;
+
+export function readOnline(m: Record<string, unknown>, dev = devHost()): OnlineInfo | null {
+  if (m.signedIn !== true) return { signedIn: false };
+  const rt = m.realtime as { url?: unknown; key?: unknown } | undefined;
+  const key = m.key as JsonWebKey | undefined;
+  if (typeof m.ticket !== "string" || m.ticket.length > 600) return null;
+  if (!key || typeof key !== "object" || key.kty !== "EC" || key.crv !== "P-256" || typeof key.x !== "string" || typeof key.y !== "string") return null;
+  if (!rt || typeof rt.url !== "string" || typeof rt.key !== "string" || rt.key.length > 2000) return null;
+  const url = rt.url.replace(/\/+$/, "");
+  if (!REALTIME_URL.test(url) && !(dev && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(url))) return null;
+  return { signedIn: true, ticket: m.ticket, siteKey: { kty: "EC", crv: "P-256", x: key.x, y: key.y }, realtime: { url, key: rt.key } };
+}
+
 export interface Cloud {
   /** Send the current save to the account, once the page has said it keeps one. */
   push(): void;
@@ -34,6 +64,7 @@ export function startCloud(
   get: () => unknown,
   apply: (data: unknown) => void,
   onName: (name: string) => void = () => {},
+  onOnline: (info: OnlineInfo) => void = () => {},
 ): Cloud {
   if (window.parent === window) return { push() {} };
   let site: string | null = null;
@@ -41,9 +72,14 @@ export function startCloud(
     if (site) window.parent.postMessage({ type: "tag:save", game, v: 1, data: get() }, site);
   };
   window.addEventListener("message", (e: MessageEvent) => {
-    if (e.source !== window.parent || !isSite(e.origin)) return;
+    if (e.source !== window.parent || !(isSite(e.origin) || devHost())) return;
     const m = e.data as { type?: unknown; game?: unknown; data?: unknown; name?: unknown } | null;
     if (!m || m.game !== game) return;
+    if (m.type === "tag:online") {
+      const info = readOnline(m as Record<string, unknown>);
+      if (info) onOnline(info);
+      return;
+    }
     if (m.type === "tag:player") {
       const name = cleanName(m.name);
       if (name) onName(name);
