@@ -535,6 +535,13 @@ export interface MatchOptions {
   world?: string;
   /** Plans the teams opened with last match; neither team opens with them again. */
   avoidPlans?: readonly string[];
+  /**
+   * Online: more real players besides player 0, each in its team's slot (slot 0 of team 0 is player 0). They are not
+   * CPUs; `step` asks for their input. Their rivals in the same slot still get a CPU animal.
+   */
+  seats?: ReadonlyArray<{ team: Team; slot: number; animal: string; medic?: boolean }>;
+  /** Online: both teams' CPUs play at the chosen difficulty, since real players are on both sides. */
+  evenBots?: boolean;
 }
 
 export function createMatch(opts: MatchOptions): Match {
@@ -556,9 +563,14 @@ export function createMatch(opts: MatchOptions): Match {
   const picks = Array.from({ length: opts.perTeam }, () => ids[Math.floor(rng() * ids.length)]);
   for (let team = 0 as Team; team <= 1; team = (team + 1) as Team) {
     for (let i = 0; i < opts.perTeam; i++) {
-      const human = team === 0 && i === 0;
+      const seat = opts.seats?.find((s) => s.team === team && s.slot === i && !(team === 0 && i === 0));
+      const human = (team === 0 && i === 0) || !!seat;
       // Your rival in slot 0 gets your animal, so neither side has the edge.
-      const def = human || (team === 1 && i === 0) ? ANIMALS[opts.humanAnimal] ?? ANIMALS.lion : ANIMALS[picks[i]];
+      const def = seat
+        ? ANIMALS[seat.animal] ?? ANIMALS.lion
+        : (team === 0 && i === 0) || (team === 1 && i === 0)
+          ? ANIMALS[opts.humanAnimal] ?? ANIMALS.lion
+          : ANIMALS[picks[i]];
       const b = bases[team];
       // A sunflower spiral around the base, so a big team starts spread out.
       const a = i * 2.39996;
@@ -570,7 +582,7 @@ export function createMatch(opts: MatchOptions): Match {
       const p = makePlayer(players.length, team, def, !human, x, z, Math.atan2(-b.x, -b.z));
       // One in eight is a medic (the human only if picked); guardians lean to defending.
       p.role = i % 8 === 3 ? "medic" : def.style === "guardian" ? "defend" : "attack";
-      p.medic = human ? !!opts.humanMedic : p.role === "medic";
+      p.medic = seat ? !!seat.medic : human ? !!opts.humanMedic : p.role === "medic";
       players.push(p);
     }
     if (team === 1) break;
@@ -612,7 +624,9 @@ export function createMatch(opts: MatchOptions): Match {
     baseRadius: map.baseRadius,
     hoardRate: (HOARD_RATE * 5) / Math.max(1, flagsPerTeam),
     aggro: Math.min(1, Math.sqrt(8 / opts.perTeam)),
-    skill: [SKILLS.medium, rivalSkill(opts.difficulty ?? "medium", opts.perTeam)],
+    skill: opts.evenBots
+      ? [rivalSkill(opts.difficulty ?? "medium", opts.perTeam), rivalSkill(opts.difficulty ?? "medium", opts.perTeam)]
+      : [SKILLS.medium, rivalSkill(opts.difficulty ?? "medium", opts.perTeam)],
     difficulty: opts.difficulty ?? "medium",
     stations,
     time: 0,
@@ -811,8 +825,11 @@ export function restoreMatch(m: Match, raw: unknown): boolean {
   return true;
 }
 
-/** Advance one fixed step. `human` drives player 0; CPUs think for themselves. */
-export function step(m: Match, human: Input): void {
+/**
+ * Advance one fixed step. `human` drives player 0; CPUs think for themselves. Online, `others` gives the input of each
+ * other real player (see MatchOptions.seats).
+ */
+export function step(m: Match, human: Input, others?: (p: Player) => Input): void {
   m.events.length = 0;
   if (m.over) return;
   m.time += STEP;
@@ -830,7 +847,7 @@ export function step(m: Match, human: Input): void {
     }
   }
   for (const p of m.turn) {
-    const input = p.cpu ? cpuInput(m, p) : human;
+    const input = p.cpu ? cpuInput(m, p) : p.id === 0 || !others ? human : others(p);
     movePlayer(m, p, input);
   }
   stepFires(m);
@@ -871,7 +888,25 @@ function speedFor(p: Player): number {
   return p.def.landSpeed * boost;
 }
 
-function movePlayer(m: Match, p: Player, input: Input): void {
+/**
+ * Online: moves your own animal ahead of the host's word, so steering answers at once. Only the moving part of a
+ * step (steer, speed, jump, fly, dive): nothing is thrown, used, grabbed or scored, and no events are kept. The host's
+ * next word puts the animal where it really is.
+ */
+export function predict(m: Match, p: Player, input: Input): boolean {
+  if (p.out > 0) return false;
+  const kept = m.events.length;
+  const fires = m.fires.length;
+  movePlayer(m, p, { ...input, throwPressed: false, useItem: false, plant: false, fire: false }, false);
+  // Says whether it jumped, so the hop is heard at once.
+  let jumped = false;
+  for (let i = kept; i < m.events.length; i++) if (m.events[i].kind === "jump") jumped = true;
+  m.events.length = kept;
+  m.fires.length = fires;
+  return jumped;
+}
+
+function movePlayer(m: Match, p: Player, input: Input, act = true): void {
   if (p.out > 0) {
     p.out -= STEP;
     if (p.out <= 0) respawn(m, p);
@@ -956,15 +991,19 @@ function movePlayer(m: Match, p: Player, input: Input): void {
   const flyer = flies(p.def);
   if (flyer) {
     fly(m, p);
-    if (jumpDown && !p.jumpWasHeld) dropBomb(m, p);
+    if (act && jumpDown && !p.jumpWasHeld) dropBomb(m, p);
     p.jumpWasHeld = jumpDown;
-    stepGun(m, p, !stunned && (!!input.fire || input.throwPressed));
+    if (act) stepGun(m, p, !stunned && (!!input.fire || input.throwPressed));
   } else landJump(m, p, jumpDown);
   const surf = surfaceHeight(p.x, p.z);
   const water = isWater(p.x, p.z);
   if (!flyer) settle(m, p, surf, water);
   p.medium = !p.onSurface && p.y - surf > 1.2 ? "air" : water ? "water" : "land";
   const lava = p.medium === "water" && p.onSurface && isLava(p.x, p.z);
+  if (!act) {
+    stepDive(m, p, !stunned && !!input.dive && water && !lava && p.onSurface);
+    return;
+  }
   p.burnCd = Math.max(0, p.burnCd - STEP);
   if (lava && p.burnCd <= 0) burn(m, p);
   stepDive(m, p, !stunned && !!input.dive && water && !lava && p.onSurface);

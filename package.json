@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@supabase/realtime-js": "2.118.0",
     "three": "^0.182.0"
   },
   "devDependencies": {

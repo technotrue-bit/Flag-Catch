@@ -134,6 +134,9 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-stats small{display:block;font-size:9px;font-weight:900;letter-spacing:.6px;color:rgba(43,35,64,.55)}
 @media (max-height:380px){.fc-card .box{padding:10px 18px}.fc-card h1{font-size:30px}.fc-pill b{font-size:26px}.fc-stats b{font-size:16px}.fc-card .go{margin-top:6px;padding:9px 22px;font-size:17px}}
 .fc-card .go.alt{background:#ff8a4c}
+.fc-players{display:flex;flex-wrap:wrap;gap:5px;justify-content:center;margin:4px 0}
+.fc-players span{padding:3px 10px;border-radius:999px;color:#fff;font-weight:900;font-size:12px}
+.fc-players span.you{box-shadow:0 0 0 3px #ffd166}
 .fc-tune{display:none;margin-top:8px;text-align:left;font-size:11px;font-weight:700;max-height:34vh;overflow:auto}
 .fc-set{display:flex;align-items:center;gap:10px;margin:10px 0 4px;font-weight:800;font-size:15px}
 .fc-set span{font-size:12px;color:rgba(43,35,64,.6)}
@@ -300,7 +303,7 @@ export interface Hud {
     onBack: () => void,
   ): void;
   /** The title screen: PLAY, How to play, Settings and Full screen. */
-  showTitle(points: number, onPlay: () => void): void;
+  showTitle(points: number, onPlay: () => void, onOnline?: () => void): void;
   /** New points total for a title screen already showing (an account save arrived). */
   titlePoints(points: number): void;
   /** Your site username, shown by your marker on the minimap ("You" until it comes). */
@@ -315,13 +318,26 @@ export interface Hud {
   floatText(x: number, y: number, text: string, color?: string): void;
   /** 3, 2, 1, GO! then onDone. */
   countdown(onDone: () => void): void;
-  showResults(m: Match, stats: MatchStats, award: Award | null, onAgain: () => void, onChange: () => void, progress?: Progress): void;
+  showResults(m: Match, stats: MatchStats, award: Award | null, onAgain: () => void, onChange: () => void, progress?: Progress, online?: OnlineResults): void;
+  /** Takes the results card away (an online match starting while it shows). */
+  clearResults(): void;
+  /** Online matches can't pause: the menu says so and offers Leave instead of Restart and Quit. */
+  setOnline(on: boolean): void;
+  /** Where the online screens go. */
+  readonly root: HTMLElement;
   /** Fit the HUD to DS mode's two screens, or back to the whole view (null). */
   layout(split: DsLayout | null): void;
   /** True while the pause menu or a card over it is open; the match waits. */
   readonly paused: boolean;
   /** Camera distance multiplier from the Zoom setting (smaller is closer). */
   readonly camScale: number;
+}
+
+/** The results card of an online match: its own buttons, and every real player's points. */
+export interface OnlineResults {
+  again: string;
+  change: string;
+  players: Array<{ name: string; score: number; mine: boolean; you: boolean }>;
 }
 
 export interface PauseActions {
@@ -503,6 +519,7 @@ export function createHud(controls: Controls): Hud {
 
   // The pause button (and Settings inside it) waits in the top left corner.
   let paused = false;
+  let online = false;
   let pauseActions: PauseActions = { restart() {}, quit() {} };
   const tl = el("div", "fc-top-left", root);
   const pauseChip = el("div", "fc-chip fc-pause", tl);
@@ -534,16 +551,25 @@ export function createHud(controls: Controls): Hud {
     paused = true;
     music.duck(true);
     const { card: c, box } = card();
-    el("h1", "", box).textContent = "PAUSED";
+    el("h1", "", box).textContent = online ? "MENU" : "PAUSED";
+    // Online, everyone else plays on, so the match keeps going behind the menu.
+    if (online) el("p", "", box).textContent = "The match keeps going while this is open.";
     const list = el("div", "fc-menu-list", box);
     const close = () => {
       c.remove();
       paused = false;
       music.duck(false);
     };
-    button(list, "RESUME", "go", close);
+    button(list, online ? "BACK TO THE MATCH" : "RESUME", "go", close);
     button(list, "SETTINGS", "go alt", () => openSettings());
     button(list, "HOW TO PLAY", "go alt", () => openHow());
+    if (online) {
+      button(list, "LEAVE MATCH", "small", () => {
+        close();
+        pauseActions.quit();
+      });
+      return;
+    }
     const row = el("div", "row2", list);
     button(row, "RESTART", "small", () => {
       close();
@@ -727,6 +753,13 @@ export function createHud(controls: Controls): Hud {
     get paused() {
       return paused;
     },
+    root,
+    setOnline(on) {
+      online = on;
+    },
+    clearResults() {
+      root.querySelectorAll(".fc-results").forEach((n) => n.remove());
+    },
     layout(next) {
       split = next;
       placeMap();
@@ -756,7 +789,7 @@ export function createHud(controls: Controls): Hud {
       n.style.color = color;
       window.setTimeout(() => n.remove(), 1000);
     },
-    showTitle(points, onPlay) {
+    showTitle(points, onPlay, onOnline) {
       root.classList.add("fc-menu");
       const t = el("div", "fc-title", root);
       const logo = el("h2", "fc-logo", t);
@@ -776,6 +809,12 @@ export function createHud(controls: Controls): Hud {
         }, 220);
       });
       const row = el("div", "row3", t);
+      if (onOnline) {
+        button(row, "PLAY ONLINE", "chip hot", () => {
+          t.remove();
+          onOnline();
+        });
+      }
       button(row, "HOW TO PLAY", "chip", openHow);
       button(row, "SETTINGS", "chip", openSettings);
       // DS mode: hold the phone upright for a game screen over a map and buttons screen.
@@ -1182,7 +1221,7 @@ export function createHud(controls: Controls): Hud {
       };
       next();
     },
-    showResults(m, stats, award, onAgain, onChange, progress) {
+    showResults(m, stats, award, onAgain, onChange, progress, onl) {
       const card = el("div", "fc-card fc-results", root);
       const box = el("div", "box", card);
       const [a, b] = m.scores;
@@ -1214,6 +1253,16 @@ export function createHud(controls: Controls): Hud {
       const mvp = m.players.reduce((best, p) => (p.score > best.score ? p : best), m.players[0]);
       el("p", "", box).textContent =
         mvp.id === 0 ? "You were the MVP!" : `MVP: ${mvp.def.name} on ${TEAMS[mvp.team].name}, ${mvp.score} points`;
+      // Online: every real player's points, best first, in their team's color.
+      if (onl && onl.players.length > 1) {
+        const list = el("div", "fc-players", box);
+        for (const pl of [...onl.players].sort((x, y) => y.score - x.score)) {
+          const r = el("span", "", list);
+          r.textContent = `${pl.name} ${pl.score}`;
+          r.style.background = pl.mine ? TEAMS[0].color : TEAMS[1].color;
+          if (pl.you) r.classList.add("you");
+        }
+      }
       // What this match paid, a new best and anything it opened.
       if (award) {
         const earn = el("div", "fc-earn", box);
@@ -1238,9 +1287,9 @@ export function createHud(controls: Controls): Hud {
       }
       const btns = el("div", "row2", box);
       const again = el("div", "go", btns);
-      again.textContent = "PLAY AGAIN";
+      again.textContent = onl?.again ?? "PLAY AGAIN";
       const change = el("div", "go alt", btns);
-      change.textContent = "CHANGE SETUP";
+      change.textContent = onl?.change ?? "CHANGE SETUP";
       card.addEventListener("pointerdown", (e) => e.stopPropagation());
       again.addEventListener("pointerdown", (e) => {
         e.stopPropagation();

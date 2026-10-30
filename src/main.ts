@@ -27,15 +27,26 @@ import {
   type Mode,
   NO_INPUT,
   STEP,
+  type SimEvent,
   createMatch,
   liveMatchState,
+  predict,
   restoreMatch,
   setAnimal,
   step,
   wrapAngle,
 } from "./sim";
 import * as progressStore from "./progress";
-import { startCloud } from "./cloud";
+import { type OnlineInfo, startCloud } from "./cloud";
+import { type OnlineSetup, guestMatch, hostMatch, newSetup } from "./net/match";
+import { GuestRoom, HostRoom, type Identity, type Picks, type RoomEnv, type RoomEvents, type RoomState, type Rules, findRooms, newId } from "./net/room";
+import { type Signal, localSignal, realtimeSignal } from "./net/signal";
+import { type Snap, applyMe, applySnap, encodeMe, encodeSnap, mapEvent } from "./net/snap";
+import { DELAY, DELAY_RELAYED, EventQueue, SnapBuffer } from "./net/client";
+import { InputSender } from "./net/inputs";
+import { type View } from "./net/view";
+import { type Who, checkTicket } from "./net/ticket";
+import { type RoomScreen, showBusy, showMessage, showOnlineMenu, showRoom } from "./onlineui";
 import { MAPS, WATER_Y, groundHeight, landOf, mapFor, surfaceHeight } from "./terrain";
 import { WORLDS } from "./worlds";
 import { type World, buildWorld } from "./world";
@@ -190,7 +201,21 @@ function drawn(p: Match["players"][number]): typeof ip {
   ip.y = prev[k + 1] + (p.y - prev[k + 1]) * alpha;
   ip.z = prev[k + 2] + (p.z - prev[k + 2]) * alpha;
   ip.h = prev[k + 3] + wrapAngle(p.heading - prev[k + 3]) * alpha;
+  if (p.id === 0 && fix.lengthSq() > 0) {
+    ip.x += fix.x;
+    ip.y += fix.y;
+    ip.z += fix.z;
+  }
   return ip;
+}
+/**
+ * Online, when the host's word moves your animal a little from where this phone had it, the difference is drawn
+ * away over a moment instead of jumping. Zero offline.
+ */
+const fix = new THREE.Vector3();
+/** Leaves an animal's drawn position where it is now: online, everyone else is placed straight from the host. */
+function pin(p: Match["players"][number]): void {
+  if (prev.length >= (p.id + 1) * 4) prev.set([p.x, p.y, p.z, p.heading], p.id * 4);
 }
 const flagViews: FlagRig[] = [];
 const fireGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.7, 10);
@@ -279,6 +304,12 @@ function rebuildViews(): void {
     if (v.aura) scene.remove(v.aura);
   }
   views = match.players.map((p) => makeView(p.def.id, p.team, p.id === 0));
+  for (const t of tags.values()) {
+    t.material.map?.dispose();
+    t.material.dispose();
+  }
+  tags.clear();
+  for (const [id, name] of names) addTag(id, name);
   // A batch for each kind and team among the others; you are always drawn in full.
   const kinds = new Map<string, { rig: AnimalRig; count: number }>();
   for (const v of views.slice(1)) {
@@ -375,6 +406,45 @@ function makeView(animal: string, team: number, me: boolean): PlayerView {
     view.me = { halo, arrow, mats };
   }
   return view;
+}
+
+/** Online: the other real players' usernames by player id, and the name tags over their heads. */
+const names = new Map<number, string>();
+const tags = new Map<number, THREE.Sprite>();
+function addTag(id: number, name: string): void {
+  const v = views[id];
+  if (!v || id === 0) return;
+  const team = match.players[id].team;
+  const c = document.createElement("canvas");
+  const ctx = c.getContext("2d");
+  if (!ctx) return;
+  const font = "900 40px ui-rounded, 'Nunito', 'Trebuchet MS', system-ui, sans-serif";
+  ctx.font = font;
+  const w = Math.min(560, Math.ceil(ctx.measureText(name).width) + 44);
+  c.width = w;
+  c.height = 64;
+  ctx.font = font;
+  ctx.fillStyle = TEAMS[team].color;
+  ctx.beginPath();
+  ctx.roundRect(2, 2, w - 4, 60, 30);
+  ctx.fill();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "#ffffff";
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(name, w / 2, 34, w - 30);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, transparent: true }));
+  tag.material.sizeAttenuation = false;
+  tag.center.set(0.5, 0);
+  tag.renderOrder = 19;
+  tag.scale.set((0.05 * w) / 64, 0.05, 1);
+  tag.position.y = 3.3;
+  v.rig.root.add(tag);
+  tags.set(id, tag);
 }
 
 function swapAnimal(id: string): void {
@@ -768,7 +838,8 @@ function syncViews(t: number, dt: number): void {
     const far = dist > DRAW_RANGE || p.out > 0 || atLens || overHorizon(eyeY, dist, p.y + r.size.y + 0.5);
     // Your animal, the nearest few and any flag carrier close by move in
     // full; the rest are drawn in batches, and far off as stand-ins.
-    const full = p.id === 0 || dist <= nearReach || (p.carrying >= 0 && dist < LOD_RANGE);
+    // Real players online are always drawn in full, with their name over them.
+    const full = p.id === 0 || dist <= nearReach || (p.carrying >= 0 && dist < LOD_RANGE) || tags.has(p.id);
     const token = !full && dist > TOKEN_RANGE && p.carrying < 0;
     v.shown = !far;
     r.root.visible = !far && full;
@@ -1165,18 +1236,24 @@ function frame(now: number): void {
   // On TrueAIGaming.com the game's frame can take its new size after the
   // phone's turn events have fired, so check the size every frame too.
   if (window.innerWidth !== laidW || window.innerHeight !== laidH) resize();
-  if (hitStop > 0) {
+  // Online, nobody's game stops for one player: no pausing and no hit stop.
+  if (hitStop > 0 && !net) {
     hitStop -= dt;
-  } else if (phase === "play" && !hud.paused) {
+  } else if (phase === "play" && (!hud.paused || net)) {
     acc += dt;
     while (acc >= STEP) {
-      snapshot();
-      step(match, humanInput());
-      handleEvents();
+      if (net?.role === "guest") guestStep(net);
+      else {
+        snapshot();
+        if (net?.role === "host") hostStep(net);
+        else step(match, humanInput());
+        handleEvents();
+      }
       acc -= STEP;
     }
     alpha = acc / STEP;
-    if (now - sessionAt > SESSION_EVERY_MS) saveSession();
+    if (net?.role === "guest") guestDraw(net, now / 1000, dt);
+    if (!net && now - sessionAt > SESSION_EVERY_MS) saveSession();
   } else alpha = 1;
   const me = match.players[0];
   if (me.stun <= 0) camYaw += wrapAngle(me.heading - camYaw) * Math.min(1, dt * camTurnRate(settings));
@@ -1218,6 +1295,7 @@ function frame(now: number): void {
   if (phase === "play" && match.over) {
     phase = "results";
     clearSession();
+    if (net?.role === "host") hostOver(net);
     music.stop();
     window.setTimeout(() => {
       if (phase === "results") music.play(0);
@@ -1236,13 +1314,20 @@ function frame(now: number): void {
     // Pay out points (not for test games with a forced clock or team size).
     const [a, b] = match.scores;
     const award =
-      timeParam || params.has("per") ? null : progressStore.award(progress, worldId, match.players[0].score, a > b ? "win" : a === b ? "draw" : "loss", device);
+      timeParam || params.has("per") ? null : progressStore.award(progress, match.world.id, match.players[0].score, a > b ? "win" : a === b ? "draw" : "loss", device);
     if (award) {
       progressStore.save(store, progress);
       cloud.push();
       if (award.opened.length) window.setTimeout(() => phase === "results" && cue("unlock"), 2600);
       else if (award.record) window.setTimeout(() => phase === "results" && cue("best"), 2200);
     }
+    if (net) {
+      // Online: back to the room for the next one, or out.
+      const players = [...names.entries()].map(([id, name]) => ({ name, score: match.players[id].score, mine: match.players[id].team === 0, you: false }));
+      players.push({ name: myName(), score: match.players[0].score, mine: true, you: true });
+      net = null;
+      hud.showResults(match, stats, award, backToRoom, leaveOnline, award ? progress : undefined, { again: "BACK TO ROOM", change: "LEAVE", players });
+    } else
     hud.showResults(
       match,
       stats,
@@ -1298,7 +1383,12 @@ function freshMatch(): void {
     }
   }
   // A fresh seed every match, so no two start alike; ?seed= pins the run for testing.
-  match = newMatch(params.has("seed") ? match.rng() * 1e9 : Math.floor(Math.random() * 2 ** 31));
+  installMatch(newMatch(params.has("seed") ? match.rng() * 1e9 : Math.floor(Math.random() * 2 ** 31)), lastMap, lastWorld);
+}
+
+/** Makes `next` the match on screen: a new island if its map or world differs, fresh views and counters. */
+function installMatch(next: Match, lastMap = match.map, lastWorld = match.world): void {
+  match = next;
   // A new team size or world means a new island.
   if (match.map !== lastMap || match.world !== lastWorld) {
     world.dispose();
@@ -1363,10 +1453,17 @@ function showSelect(): void {
 function showTitle(): void {
   phase = "title";
   if (music.level !== 0) music.play(0);
-  hud.showTitle(progress.points, () => {
-    unlockAudio();
-    showSelect();
-  });
+  hud.showTitle(
+    progress.points,
+    () => {
+      unlockAudio();
+      showSelect();
+    },
+    () => {
+      unlockAudio();
+      openOnline();
+    },
+  );
 }
 
 // Signed in on TrueAIGaming: the account's save joins this one, and each payout goes back to it.
@@ -1379,15 +1476,423 @@ const cloud = startCloud(
     if (phase === "title") hud.titlePoints(progress.points);
   },
   (name) => hud.setPlayerName(name),
+  (info) => {
+    onlineInfo = info;
+    me = null;
+  },
 );
 
-// Restart and Quit from the pause menu.
+/*
+ * Online play (see src/net). One phone hosts: it runs the match as usual and sends it to everyone else about 20
+ * times a second, taking their sticks and buttons in return. Every other phone draws the match from its own side,
+ * moving its own animal ahead of the host's word so steering answers at once.
+ */
+interface HostNet {
+  role: "host";
+  room: HostRoom;
+  setup: OnlineSetup;
+  /** Host ids of the other real players. */
+  humans: number[];
+  steps: number;
+  events: SimEvent[];
+}
+interface GuestNet {
+  role: "guest";
+  room: GuestRoom;
+  setup: OnlineSetup;
+  view: View;
+  buf: SnapBuffer;
+  queue: EventQueue;
+  sender: InputSender;
+  /** Inputs the host hasn't used yet, replayed after each word from it. */
+  pending: Array<{ seq: number; input: Input }>;
+  acked: number;
+  steps: number;
+  /** When "waiting for the host" was last called, so it isn't said every frame. */
+  waitCall: number;
+}
+/** The match being played online, or null. */
+let net: HostNet | GuestNet | null = null;
+/** The room you're in, between matches too. */
+let room: HostRoom | GuestRoom | null = null;
+let roomScreen: RoomScreen | null = null;
+let onlineInfo: OnlineInfo | null = null;
+let signal: Signal | null = null;
+let me: Identity | null = null;
+let rules: Rules = { world: worldId, mode, difficulty };
+const localNet = params.get("net") === "local";
+let closeBusy: (() => void) | null = null;
+
+function myName(): string {
+  return me?.who.name ?? "You";
+}
+
+/** Checks a ticket. Local tests (?net=local) name players with "local:" and a name instead. */
+function checkWho(ticket: unknown): Promise<Who | null> {
+  if (localNet) {
+    const name = typeof ticket === "string" && ticket.startsWith("local:") ? ticket.slice(6, 30) : "";
+    return Promise.resolve(name ? { name, uid: name, exp: Infinity } : null);
+  }
+  return checkTicket(ticket, onlineInfo?.siteKey ?? null);
+}
+
+/** Who you are online and how rooms meet, or why you can't play online here. */
+async function onlineReady(): Promise<{ env: RoomEnv } | { why: string }> {
+  if (!localNet) {
+    if (!onlineInfo) return { why: window.parent === window ? "offsite" : "signin" };
+    if (!onlineInfo.signedIn || !onlineInfo.ticket || !onlineInfo.realtime) return { why: "signin" };
+  }
+  if (!me) {
+    const ticket = localNet ? `local:${(params.get("name") ?? "Player").slice(0, 24)}` : onlineInfo!.ticket!;
+    const who = await checkWho(ticket);
+    if (!who) return { why: "signin" };
+    me = { id: newId(), ticket, who };
+  }
+  if (!signal) {
+    try {
+      signal = localNet ? localSignal() : await realtimeSignal(onlineInfo!.realtime!);
+    } catch {
+      return { why: "down" };
+    }
+  }
+  return { env: { signal, me, check: checkWho, local: localNet } };
+}
+
+const NOT_ONLINE: Record<string, [string, string]> = {
+  offsite: ["PLAY ONLINE", "Online matches are played on TrueAIGaming.com. Open Flag Catch there to play with friends."],
+  signin: ["SIGN IN TO PLAY ONLINE", "Sign in to your TrueAIGaming.com account to play online. Only your username is shown to other players."],
+  down: ["CAN'T GO ONLINE", "Online play isn't reachable right now. Try again in a little while."],
+};
+
+function openOnline(): void {
+  phase = "select";
+  void onlineReady().then((r) => {
+    if ("why" in r) {
+      const [title, text] = NOT_ONLINE[r.why] ?? NOT_ONLINE.down;
+      showMessage(hud.root, title, text, "OK", showTitle);
+      return;
+    }
+    rules = { world: isOpen(rules.world) ? rules.world : "home", mode: isOpen(rules.mode) ? rules.mode : "capture", difficulty: rules.difficulty };
+    showOnlineMenu(hud.root, myName(), {
+      quick: () => void quickMatch(r.env),
+      make: () => void hostRoom(r.env, false),
+      join: (code) => void joinRoom(r.env, code, true),
+      back: showTitle,
+    });
+  });
+}
+
+const picks = (): Picks => ({ animal: humanAnimal, medic: humanMedic });
+
+const roomEvents: RoomEvents = {
+  change(state) {
+    roomScreen?.update(state);
+  },
+  start(setup, seat) {
+    if (room instanceof GuestRoom) guestStart(room, setup, seat);
+  },
+  snap(s) {
+    if (net?.role === "guest") guestHeard(net, s);
+  },
+  events(t, list) {
+    if (net?.role === "guest") net.queue.push(t, list);
+  },
+  left(seat) {
+    if (!net || net.role !== "host") return;
+    const name = names.get(seat);
+    names.delete(seat);
+    const tag = tags.get(seat);
+    tag?.removeFromParent();
+    tags.delete(seat);
+    if (name) hud.call(`${name.toUpperCase()} LEFT`, "#ffffff");
+  },
+  closed(why) {
+    const playing = !!net;
+    room = null;
+    net = null;
+    roomScreen?.close();
+    roomScreen = null;
+    endOnline();
+    showMessage(hud.root, "ROOM CLOSED", why === "host" ? (playing ? "The host left the match." : "The host closed the room.") : "You left the room.", "OK", showTitle);
+  },
+};
+
+async function quickMatch(env: RoomEnv): Promise<void> {
+  let cancelled = false;
+  closeBusy = showBusy(hud.root, "Looking for a match…", () => {
+    cancelled = true;
+    leaveOnline();
+  });
+  const codes = await findRooms(env.signal).catch(() => [] as string[]);
+  for (const code of codes) {
+    if (cancelled) return;
+    if (await joinRoom(env, code, false)) return;
+  }
+  if (cancelled) return;
+  await hostRoom(env, true);
+}
+
+async function hostRoom(env: RoomEnv, open: boolean): Promise<void> {
+  const r = new HostRoom(env, picks(), rules, open, roomEvents);
+  room = r;
+  try {
+    await r.begin();
+  } catch {
+    if (room === r) room = null;
+    closeBusy?.();
+    showMessage(hud.root, "CAN'T GO ONLINE", "Couldn't make a room just now. Try again in a little while.", "OK", openOnline);
+    return;
+  }
+  if (room !== r) {
+    r.leave();
+    return;
+  }
+  closeBusy?.();
+  closeBusy = null;
+  openRoomScreen(r.state());
+}
+
+/** Joins a room by its code. With `say`, tells you when it doesn't work out; quick match tries the next instead. */
+async function joinRoom(env: RoomEnv, code: string, say: boolean): Promise<boolean> {
+  if (say) closeBusy = showBusy(hud.root, `Joining ${code}…`, () => leaveOnline());
+  const r = new GuestRoom(env, picks(), code, roomEvents);
+  room = r;
+  try {
+    await r.begin();
+  } catch (err) {
+    if (room === r) room = null;
+    if (say) {
+      closeBusy?.();
+      closeBusy = null;
+      const why = err instanceof Error ? err.message : "";
+      const text =
+        why === "full" ? "That room is full." : why === "playing" ? "That room is in a match. Try again when it ends." : why === "link" ? "Couldn't connect to that room." : "No room with that code. Check it and try again.";
+      showMessage(hud.root, "CAN'T JOIN", text, "OK", openOnline);
+    }
+    return false;
+  }
+  if (room !== r) {
+    r.leave();
+    return false;
+  }
+  closeBusy?.();
+  closeBusy = null;
+  openRoomScreen(r.state());
+  return true;
+}
+
+function openRoomScreen(state: RoomState | null): void {
+  phase = "select";
+  if (music.level !== 0) music.play(0);
+  hud.setOnline(true);
+  roomScreen?.close();
+  roomScreen = showRoom(hud.root, picks(), progressStore.unlocked(progress, unlockAll), {
+    pick(p) {
+      humanAnimal = p.animal;
+      humanMedic = p.medic;
+      saveAnimal(p.animal);
+      saveMedic(p.medic);
+      swapAnimal(p.animal);
+      room?.pick(p);
+    },
+    rules(next) {
+      rules = next;
+      if (room instanceof HostRoom) room.setRules(next);
+    },
+    start() {
+      if (room instanceof HostRoom) hostStart(room);
+    },
+    leave: leaveOnline,
+  });
+  if (state) roomScreen.update(state);
+}
+
+/** A quick match room starts by itself once its wait is over. */
+window.setInterval(() => {
+  if (room instanceof HostRoom && !net) {
+    if (room.due()) hostStart(room);
+    else if (roomScreen) roomScreen.update(room.state());
+  } else if (room instanceof GuestRoom && !net && roomScreen) {
+    const st = room.state();
+    if (st?.autoIn !== null && st) roomScreen.update(st);
+  }
+}, 500);
+
+function hostStart(r: HostRoom): void {
+  if (net) return;
+  const setup = newSetup(Math.floor(Math.random() * 2 ** 31), rules.mode, rules.world, rules.difficulty, r.seats());
+  const next = hostMatch(setup);
+  names.clear();
+  for (const m of r.members()) if (!m.host) names.set(m.team * setup.perTeam + m.slot, m.name);
+  net = { role: "host", room: r, setup, humans: [...names.keys()], steps: 0, events: [] };
+  r.start(setup);
+  beginOnlineMatch(next);
+}
+
+function guestStart(r: GuestRoom, setup: OnlineSetup, seat: number): void {
+  const { match: next, view } = guestMatch(setup, seat);
+  names.clear();
+  const st = r.state();
+  for (const m of st?.members ?? []) {
+    if (m.you) continue;
+    names.set(view.player(m.team * setup.perTeam + m.slot), m.name);
+  }
+  const buf = new SnapBuffer();
+  buf.delay = r.relayed ? DELAY_RELAYED : DELAY;
+  net = { role: "guest", room: r, setup, view, buf, queue: new EventQueue(), sender: new InputSender(), pending: [], acked: 0, steps: 0, waitCall: 0 };
+  beginOnlineMatch(next);
+}
+
+function beginOnlineMatch(next: Match): void {
+  roomScreen?.close();
+  roomScreen = null;
+  hud.clearResults();
+  hud.root.classList.remove("fc-menu");
+  hud.root.querySelectorAll(".fc-sel, .fc-title").forEach((n) => n.remove());
+  fix.set(0, 0, 0);
+  installMatch(next);
+  snapshot();
+  tryLandscape();
+  startCountdown(true);
+}
+
+/** The host's step: everyone's input, the match, and every third step a snapshot out to the others. */
+function hostStep(n: HostNet): void {
+  const inputs = new Map<number, Input>();
+  for (const id of n.humans) {
+    const input = n.room.input(id);
+    // Nobody there (left, or away from the game): a CPU drives until they're back.
+    match.players[id].cpu = !input;
+    if (input) inputs.set(id, input);
+  }
+  step(match, humanInput(), (p) => inputs.get(p.id) ?? NO_INPUT);
+  for (const e of match.events) n.events.push(e);
+  n.steps++;
+  if (n.steps % 3 === 0 || match.over) sendSnap(n, match.over);
+}
+
+function sendSnap(n: HostNet, last: boolean): void {
+  n.room.send(encodeSnap(match), (seat) => encodeMe(match.players[seat]), n.steps / 3, last);
+  n.room.sendEvents(match.time, n.events);
+  n.events = [];
+}
+
+function hostOver(n: HostNet): void {
+  sendSnap(n, true);
+  n.room.finish();
+}
+
+/** A joining phone's step: your input goes to the host, and your animal moves on ahead of its word. */
+function guestStep(n: GuestNet): void {
+  const p = match.players[0];
+  if (prev.length >= 4) prev.set([p.x, p.y, p.z, p.heading], 0);
+  const input = humanInput();
+  const seq = n.sender.add(input);
+  n.pending.push({ seq, input });
+  if (n.pending.length > 180) n.pending.shift();
+  if (predict(match, p, input)) sfx.jump(0, 1);
+  n.steps++;
+  if (n.steps % (n.room.relayed ? 6 : 2) === 0) n.room.sendInput(n.sender.frames());
+}
+
+/** A word from the host: kept for drawing, and your own animal put where the host has it plus what it hasn't seen yet. */
+function guestHeard(n: GuestNet, s: Snap): void {
+  n.buf.push(s, performance.now() / 1000);
+  if (!s.me || typeof s.a !== "number" || s.a < n.acked) return;
+  n.acked = s.a;
+  const p = match.players[0];
+  const bx = p.x;
+  const by = p.y;
+  const bz = p.z;
+  const bh = p.heading;
+  applyMe(match, n.view, s.me);
+  n.pending = n.pending.filter((q) => q.seq > s.a!);
+  for (const q of n.pending) predict(match, p, q.input);
+  const dx = p.x - bx;
+  const dy = p.y - by;
+  const dz = p.z - bz;
+  if (Math.hypot(dx, dz) > 4) {
+    // Far off (a respawn, a big knock): just go there.
+    fix.set(0, 0, 0);
+    if (prev.length >= 4) prev.set([p.x, p.y, p.z, p.heading], 0);
+    return;
+  }
+  // Same place on screen for now; the difference fades out in guestDraw.
+  if (prev.length >= 4) {
+    prev[0] += dx;
+    prev[1] += dy;
+    prev[2] += dz;
+    prev[3] += wrapAngle(p.heading - bh);
+  }
+  fix.x -= dx;
+  fix.y -= dy;
+  fix.z -= dz;
+}
+
+/** Everyone else where the host had them a moment ago, and the match's events as the drawing reaches them. */
+function guestDraw(n: GuestNet, now: number, dt: number): void {
+  const t = n.buf.time(now);
+  const at = n.buf.at(t);
+  if (at) applySnap(match, n.view, at.a, at.b, at.k, 0);
+  for (const p of match.players) if (p.id !== 0) pin(p);
+  const due = n.queue.due(t);
+  if (due.length) {
+    match.events = due.map((e) => mapEvent(e, n.view)).filter((e) => !(e.kind === "jump" && e.player === 0));
+    handleEvents();
+    match.events = [];
+  }
+  fix.multiplyScalar(Math.exp(-dt * 9));
+  if (fix.lengthSq() < 1e-6) fix.set(0, 0, 0);
+  if (n.buf.heardAt > 0 && now - n.buf.heardAt > 2.5 && now - n.waitCall > 2) {
+    n.waitCall = now;
+    hud.call("WAITING FOR THE HOST…", "#ffffff");
+  }
+}
+
+/** After an online match's results: back to the room you were in. */
+function backToRoom(): void {
+  if (!room) {
+    leaveOnline();
+    return;
+  }
+  names.clear();
+  freshMatch();
+  openRoomScreen(room instanceof HostRoom ? room.state() : room.state());
+}
+
+/** Out of the room and back to the title. */
+function leaveOnline(): void {
+  room?.leave();
+  room = null;
+  net = null;
+  closeBusy?.();
+  closeBusy = null;
+  roomScreen?.close();
+  roomScreen = null;
+  endOnline();
+  showTitle();
+}
+
+function endOnline(): void {
+  hud.setOnline(false);
+  hud.clearResults();
+  hud.root.querySelectorAll(".fc-card:not(.fc-results)").forEach((n) => n.remove());
+  names.clear();
+  fix.set(0, 0, 0);
+  freshMatch();
+}
+
+// Restart and Quit from the pause menu; online, Quit leaves the match.
 hud.setPauseActions({
   restart() {
     freshMatch();
     startCountdown(true);
   },
   quit() {
+    if (net || room) {
+      leaveOnline();
+      return;
+    }
     freshMatch();
     showSelect();
   },
@@ -1453,7 +1958,7 @@ interface Session {
 let sessionAt = 0;
 
 function saveSession(): void {
-  if ((phase !== "play" && phase !== "countdown") || match.over) return;
+  if ((phase !== "play" && phase !== "countdown") || match.over || net) return;
   sessionAt = performance.now();
   const s: Session = {
     v: 1,
