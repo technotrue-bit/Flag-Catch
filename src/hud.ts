@@ -16,6 +16,7 @@ import { type Award, type Progress, UNLOCKS, costOf, nextUnlock } from "./progre
 import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, currentWorld, groundHeight, landOf, onBridge } from "./terrain";
 import { WORLDS, type WorldDef, worldById } from "./worlds";
 import { type DsLayout, mapRect } from "./ds";
+import { PORTAL, UPRIGHT_NAME } from "./portal";
 
 const MAP_W = 156;
 const MAP_H = Math.round((MAP_W * WORLD_HALF_X) / WORLD_HALF_Z);
@@ -652,7 +653,7 @@ export function createHud(controls: Controls): Hud {
     ]);
     slider("Screen shake", "shake");
     toggle("Calm effects", "calm");
-    toggle("DS mode (phone upright)", "dsMode");
+    toggle(PORTAL ? "Upright mode (two screens)" : "DS mode (phone upright)", "dsMode");
     head("CONTROLS");
     toggle("Left handed", "leftHanded");
     toggle("Big buttons", "bigButtons");
@@ -739,7 +740,7 @@ export function createHud(controls: Controls): Hud {
   el("div", "", rotate).textContent = "Turn your phone sideways to play";
   // Or keep it upright and play on two screens.
   el("div", "or", rotate).textContent = "or";
-  const dsBtn = button(rotate, "PLAY UPRIGHT IN DS MODE", "ds", () => setSetting("dsMode", true));
+  const dsBtn = button(rotate, `PLAY UPRIGHT IN ${UPRIGHT_NAME}`, "ds", () => setSetting("dsMode", true));
   el("small", "", dsBtn).textContent = "Game on top, map and buttons below";
 
   const count = el("div", "fc-count", root);
@@ -812,7 +813,7 @@ export function createHud(controls: Controls): Hud {
         }, 220);
       });
       const row = el("div", "row3", t);
-      if (onOnline) {
+      if (onOnline && !PORTAL) {
         button(row, "PLAY ONLINE", "chip hot", () => {
           t.remove();
           onOnline();
@@ -825,16 +826,17 @@ export function createHud(controls: Controls): Hud {
         setSetting("dsMode", !settings.dsMode);
         if (settings.dsMode && !split) this.call("HOLD YOUR PHONE UPRIGHT", "#ffd166");
       });
-      const dsLabel = () => (dsChip.textContent = `DS MODE: ${settings.dsMode ? "ON" : "OFF"}`);
+      const dsLabel = () => (dsChip.textContent = `${UPRIGHT_NAME}: ${settings.dsMode ? "ON" : "OFF"}`);
       dsLabel();
       onSettings(() => dsChip.isConnected && dsLabel());
-      if (!isFullscreen()) {
+      // Portals add their own fullscreen button and don't allow one in the game.
+      if (!isFullscreen() && !PORTAL) {
         const fs = button(row, "FULL SCREEN", "chip hot", () => {
           openFullscreen();
           if (isFullscreen()) fs.remove();
         });
       }
-      el("div", "foot", t).textContent = "A TrueAIGaming.com game";
+      el("div", "foot", t).textContent = PORTAL ? "A TrueAIGaming game" : "A TrueAIGaming.com game";
       t.addEventListener("pointerdown", (e) => e.stopPropagation());
     },
     setPlayerName(name) {
