@@ -4,6 +4,7 @@
  * worlds and Playful mode along the way. Pure logic over a tiny store, so
  * the tests can run it without a browser.
  */
+import { DAILY_BONUS, dayBefore } from "./daily";
 import type { Mode } from "./sim";
 
 export interface Progress {
@@ -20,6 +21,15 @@ export interface Progress {
    * both played since the last sync add up instead of one overwriting the other.
    */
   dev: Record<string, Tally>;
+  /** Daily Flag: the last day cleared, the run of days in a row up to it, and the longest run. */
+  daily: DailyRun;
+}
+
+export interface DailyRun {
+  /** YYYY-MM-DD of the last day cleared, or "" before the first. */
+  last: string;
+  streak: number;
+  best: number;
 }
 
 /** One device's running totals. Each only ever goes up. */
@@ -68,9 +78,10 @@ const CLASSIC = ["lion", "penguin", "croc", "bird", "eagle", "mammoth", "wolf"];
 /** Enough phones, tablets and browsers for anyone; a save never grows past it. */
 const MAX_DEVICES = 64;
 const ID = /^[a-z0-9]{1,24}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 export function fresh(): Progress {
-  return { points: 0, best: {}, played: 0, wins: 0, extra: [], dev: {} };
+  return { points: 0, best: {}, played: 0, wins: 0, extra: [], dev: {}, daily: { last: "", streak: 0, best: 0 } };
 }
 
 const count = (n: unknown): number => (typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
@@ -114,6 +125,10 @@ export function parse(raw: unknown, device: string): Progress {
   const r = raw as Record<string, unknown>;
   if (typeof r.best === "object" && r.best !== null && !Array.isArray(r.best)) {
     for (const [world, score] of Object.entries(r.best)) if (ID.test(world) && count(score) > 0) p.best[world] = count(score);
+  }
+  if (typeof r.daily === "object" && r.daily !== null && !Array.isArray(r.daily)) {
+    const d = r.daily as Record<string, unknown>;
+    if (typeof d.last === "string" && DAY.test(d.last) && count(d.streak) > 0) p.daily = { last: d.last, streak: count(d.streak), best: Math.max(count(d.best), count(d.streak)) };
   }
   if (Array.isArray(r.extra)) p.extra = [...new Set(r.extra.filter((x): x is string => typeof x === "string" && ID.test(x)))];
   const dev = typeof r.dev === "object" && r.dev !== null && !Array.isArray(r.dev) ? (r.dev as Record<string, unknown>) : null;
@@ -170,6 +185,12 @@ export function merge(into: Progress, other: Progress): boolean {
   }
   for (const [world, score] of Object.entries(other.best)) into.best[world] = Math.max(into.best[world] ?? 0, score);
   for (const id of other.extra) if (!into.extra.includes(id)) into.extra.push(id);
+  // The run that reached the later day wins; on the same day, the longer one.
+  const a = into.daily;
+  const b = other.daily;
+  const best = Math.max(a.best, b.best);
+  if (b.last > a.last || (b.last === a.last && b.streak > a.streak)) into.daily = { last: b.last, streak: b.streak, best };
+  else into.daily.best = best;
   total(into);
   return JSON.stringify(into) !== before;
 }
@@ -215,4 +236,38 @@ export function award(p: Progress, world: string, myScore: number, result: "win"
   if (record) p.best[world] = Math.round(myScore);
   const opened = [...unlocked(p)].filter((id) => !before.has(id));
   return { gained, record, opened };
+}
+
+export interface DailyAward {
+  /** Bonus points paid now (0 if today was already cleared). */
+  bonus: number;
+  /** Days in a row, today included. */
+  streak: number;
+  /** True the first time today is cleared. */
+  first: boolean;
+  /** Ids the bonus opened. */
+  opened: string[];
+}
+
+/**
+ * Today's goal cleared: the first clear of the day pays the bonus to this device and adds today to the streak
+ * (a missed day starts it again at 1). Clearing it again the same day, or an earlier day's match finishing after a
+ * later day was cleared, changes nothing.
+ */
+export function clearDaily(p: Progress, key: string, device = "local"): DailyAward {
+  // Already cleared, or a match from an earlier day finished after a later one was cleared.
+  if (p.daily.last >= key) return { bonus: 0, streak: p.daily.streak, first: false, opened: [] };
+  const before = unlocked(p);
+  const streak = p.daily.last === dayBefore(key) ? p.daily.streak + 1 : 1;
+  p.daily = { last: key, streak, best: Math.max(p.daily.best, streak) };
+  const mine = (p.dev[device] ??= { points: 0, played: 0, wins: 0 });
+  mine.points += DAILY_BONUS;
+  total(p);
+  const opened = [...unlocked(p)].filter((id) => !before.has(id));
+  return { bonus: DAILY_BONUS, streak, first: true, opened };
+}
+
+/** The streak as it stands on `key`: alive if the last clear was today or yesterday, else 0. */
+export function streakOn(p: Progress, key: string): number {
+  return p.daily.last === key || p.daily.last === dayBefore(key) ? p.daily.streak : 0;
 }
