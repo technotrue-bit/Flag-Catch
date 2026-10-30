@@ -285,6 +285,19 @@ with empty hands to get a random item, then tap ITEM (or E) to use it:
 
 A station's box comes back 8 seconds after it is taken.
 
+## Online matches
+
+PLAY ONLINE on the title screen plays a live match with friends. It works on TrueAIGaming.com while signed in, since the site hands the game a signed ticket with the player's username (`tag:online`, see `src/cloud.ts`). Every phone in a room checks every ticket with the site's public key, so the only names anyone sees are real site usernames. There is no chat, and a room code is typed on an on-screen pad.
+
+- QUICK MATCH joins the fullest open room, or opens one. An open room starts by itself 20 seconds after a second player joins.
+- MAKE A ROOM gives a 4 letter code for friends; JOIN WITH A CODE takes one. The host picks the world, mode and CPU skill.
+- Matches are 8 a side with up to 8 real players. CPU animals fill the empty spots at the same skill on both teams, and take over for anyone who leaves.
+- Each phone sees the match from its own side, with its team in Blue at the bottom of the map, so the HUD and controls work as in single player.
+
+How it runs: the host's phone runs the match and sends it out 20 times a second; the others send their stick and buttons 30 times a second, move their own animal ahead at once and correct to the host, and draw everyone else a tenth of a second behind. Phones meet on Supabase Realtime broadcast channels (`src/net/signal.ts`) and then link directly over WebRTC data channels (`src/net/peer.ts`); where a network blocks that, the match goes through the Realtime channel instead. Nothing is stored. The code is in `src/net/` (rooms, snapshots, inputs, the turned-round view) and `src/onlineui.ts` (the screens).
+
+To try it without the site, open two tabs of the dev server with `?net=local&name=Ana` and `?net=local&name=Bea`: rooms then meet through the browser's BroadcastChannel.
+
 ## Status
 
 Phase 7: a title screen, pause menu, settings for sound, view and controls,
