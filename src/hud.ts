@@ -34,6 +34,8 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-team.moon .ic{background:transparent;box-shadow:inset -6px -2px 0 0 #fff}
 .fc-timer{min-width:74px;text-align:center;padding:6px 12px;border-radius:14px;background:rgba(255,255,255,.88);font-weight:800;font-size:20px;box-shadow:0 3px 0 rgba(43,35,64,.18)}
 .fc-timer.low{color:#e8455b}
+.fc-goal{position:absolute;top:calc(max(10px,var(--fc-sa-top)) + 46px);left:50%;transform:translateX(-50%);padding:4px 12px;border-radius:999px;background:rgba(255,209,102,.95);font-weight:900;font-size:13px;white-space:nowrap;box-shadow:0 3px 0 rgba(43,35,64,.18)}
+.fc-goal.done{background:#7ee36b;color:#fff}
 .fc-team,.fc-timer{transition:transform .2s}
 .bump{animation:fcbump .45s cubic-bezier(.3,1.8,.5,1)}
 @keyframes fcbump{0%{transform:scale(1)}35%{transform:scale(1.28)}100%{transform:scale(1)}}
@@ -78,7 +80,7 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 @keyframes fcrot{0%,20%{transform:rotate(0)}50%,80%{transform:rotate(-90deg)}100%{transform:rotate(0)}}
 @media (orientation:portrait){.fc-rotate{display:flex}}
 .fc-menu .fc-stick,.fc-menu .fc-knob{display:none!important}
-.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power,.fc-menu .fc-hearts,.fc-menu .fc-out{display:none!important}
+.fc-menu .fc-goal,.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power,.fc-menu .fc-hearts,.fc-menu .fc-out{display:none!important}
 .fc-sel{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:8px;padding:max(10px,var(--fc-sa-top)) max(12px,var(--fc-sa-right)) max(10px,var(--fc-sa-bottom)) max(12px,var(--fc-sa-left))}
 .fc-sel h2{flex:none;margin:0;text-align:center;font-size:30px;line-height:1.05;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
 .fc-logo{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:0 10px;font-size:38px!important;letter-spacing:2px!important;animation:fclogo 3s ease-in-out infinite}
@@ -206,10 +208,19 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-title .row3{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
 .fc-title .chip{pointer-events:auto;padding:9px 16px;border-radius:999px;background:rgba(255,250,240,.92);font-weight:900;font-size:14px;box-shadow:0 3px 0 rgba(43,35,64,.2);cursor:pointer}
 .fc-title .chip.hot{background:#ffd166}
+.fc-title .daily{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 18px;border-radius:18px;background:rgba(255,250,240,.94);border:3px solid #ffd166;box-shadow:0 4px 0 rgba(43,35,64,.22);cursor:pointer;max-width:min(92vw,460px);text-align:center}
+.fc-title .daily b{font-size:15px;font-weight:900;letter-spacing:.5px}
+.fc-title .daily span{font-size:12px;font-weight:800;color:rgba(43,35,64,.7)}
+.fc-title .daily em{font-style:normal;font-size:11px;font-weight:900;padding:1px 8px;border-radius:999px;background:#ffd166}
+.fc-title .daily.done{border-color:#7ee36b}
+.fc-title .daily.done em{background:#7ee36b;color:#fff}
+.fc-title .daily.hot{animation:fcbreath 1.8s ease-in-out infinite}
+.fc-daily{margin:8px 0 0;padding:6px 10px;border-radius:14px;background:rgba(255,209,102,.25);font-weight:900;font-size:13px}
+.fc-daily.done{background:rgba(126,227,107,.3)}
 .fc-title .foot{position:absolute;bottom:max(8px,var(--fc-sa-bottom));font-size:11px;font-weight:800;color:rgba(43,35,64,.55)}
 .fc-title.out{animation:fcout .3s ease-in forwards}
 @keyframes fcout{to{opacity:0;transform:scale(1.08)}}
-@media (max-height:360px){.fc-title{gap:6px}.fc-title .fc-logo{font-size:44px!important}.fc-title .fc-logo .flag{transform:scale(1.1)}.fc-title .big{padding:10px 48px;font-size:24px}.fc-title .tag{font-size:12px}}
+@media (max-height:360px){.fc-title .daily{padding:4px 14px}.fc-title .daily span{display:none}.fc-title{gap:6px}.fc-title .fc-logo{font-size:44px!important}.fc-title .fc-logo .flag{transform:scale(1.1)}.fc-title .big{padding:10px 48px;font-size:24px}.fc-title .tag{font-size:12px}}
 .fc-how{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
 @media (max-width:560px){.fc-how{grid-template-columns:repeat(2,1fr)}}
 .fc-how div{padding:8px;border-radius:14px;background:rgba(43,35,64,.06);font-size:12px;font-weight:700;line-height:1.25;color:rgba(43,35,64,.8)}
@@ -304,7 +315,9 @@ export interface Hud {
     onBack: () => void,
   ): void;
   /** The title screen: PLAY, How to play, Settings and Full screen. */
-  showTitle(points: number, onPlay: () => void, onOnline?: () => void): void;
+  showTitle(points: number, onPlay: () => void, onOnline?: () => void, daily?: TitleDaily): void;
+  /** Today's Flag goal under the score while a daily match plays, or null to hide it. */
+  setGoal(text: string | null, done?: boolean): void;
   /** New points total for a title screen already showing (an account save arrived). */
   titlePoints(points: number): void;
   /** Your site username, shown by your marker on the minimap ("You" until it comes). */
@@ -319,7 +332,16 @@ export interface Hud {
   floatText(x: number, y: number, text: string, color?: string): void;
   /** 3, 2, 1, GO! then onDone. */
   countdown(onDone: () => void): void;
-  showResults(m: Match, stats: MatchStats, award: Award | null, onAgain: () => void, onChange: () => void, progress?: Progress, online?: OnlineResults): void;
+  showResults(
+    m: Match,
+    stats: MatchStats,
+    award: Award | null,
+    onAgain: () => void,
+    onChange: () => void,
+    progress?: Progress,
+    online?: OnlineResults,
+    daily?: DailyResult,
+  ): void;
   /** Takes the results card away (an online match starting while it shows). */
   clearResults(): void;
   /** Online matches can't pause: the menu says so and offers Leave instead of Restart and Quit. */
@@ -332,6 +354,32 @@ export interface Hud {
   readonly paused: boolean;
   /** Camera distance multiplier from the Zoom setting (smaller is closer). */
   readonly camScale: number;
+}
+
+/** Today's Flag on the title screen. */
+export interface TitleDaily {
+  /** The goal in words. */
+  goal: string;
+  /** World, animal and mode, e.g. "LAVA LOOP · NIGHT BAT · PLAYFUL". */
+  where: string;
+  /** Days in a row so far (0 when there's no run going). */
+  streak: number;
+  /** Already cleared today. */
+  done: boolean;
+  /** Pulses, for a player sent here to play it (?daily=1). */
+  hot: boolean;
+  onPlay(): void;
+}
+
+/** How a daily match went, for the results card. */
+export interface DailyResult {
+  goal: string;
+  have: number;
+  n: number;
+  done: boolean;
+  /** Bonus points paid by this match (0 if today was already cleared or the goal was missed). */
+  bonus: number;
+  streak: number;
 }
 
 /** The results card of an online match: its own buttons, and every real player's points. */
@@ -516,6 +564,8 @@ export function createHud(controls: Controls): Hud {
   press(medicBtn, () => (controls.plantQueued = true), () => {});
 
   const call = el("div", "fc-call", root);
+  const goalPill = el("div", "fc-goal", root);
+  goalPill.hidden = true;
   let callTimer = 0;
 
   // The pause button (and Settings inside it) waits in the top left corner.
@@ -793,7 +843,7 @@ export function createHud(controls: Controls): Hud {
       n.style.color = color;
       window.setTimeout(() => n.remove(), 1000);
     },
-    showTitle(points, onPlay, onOnline) {
+    showTitle(points, onPlay, onOnline, daily) {
       root.classList.add("fc-menu");
       const t = el("div", "fc-title", root);
       const logo = el("h2", "fc-logo", t);
@@ -812,6 +862,25 @@ export function createHud(controls: Controls): Hud {
           onPlay();
         }, 220);
       });
+      if (daily) {
+        const card = el("div", `daily${daily.done ? " done" : ""}${daily.hot && !daily.done ? " hot" : ""}`, t);
+        el("b", "", card).textContent = `TODAY'S FLAG: ${daily.goal}`;
+        el("span", "", card).textContent = daily.where;
+        el("em", "", card).textContent = daily.done
+          ? `DONE TODAY${daily.streak > 1 ? ` · ${daily.streak} DAYS IN A ROW` : ""}`
+          : daily.streak > 0
+            ? `KEEP YOUR ${daily.streak} DAY STREAK`
+            : "NEW EVERY DAY";
+        card.addEventListener("click", (e) => {
+          e.stopPropagation();
+          sfx.go();
+          t.classList.add("out");
+          window.setTimeout(() => {
+            t.remove();
+            daily.onPlay();
+          }, 220);
+        });
+      }
       const row = el("div", "row3", t);
       if (onOnline && !PORTAL) {
         button(row, "PLAY ONLINE", "chip hot", () => {
@@ -841,6 +910,11 @@ export function createHud(controls: Controls): Hud {
     },
     setPlayerName(name) {
       myName = name;
+    },
+    setGoal(text, done = false) {
+      goalPill.hidden = text === null;
+      if (text !== null && goalPill.textContent !== text) goalPill.textContent = text;
+      goalPill.classList.toggle("done", done);
     },
     titlePoints(points) {
       const tag = root.querySelector<HTMLElement>(".fc-title .tag");
@@ -1226,7 +1300,7 @@ export function createHud(controls: Controls): Hud {
       };
       next();
     },
-    showResults(m, stats, award, onAgain, onChange, progress, onl) {
+    showResults(m, stats, award, onAgain, onChange, progress, onl, daily) {
       const card = el("div", "fc-card fc-results", root);
       const box = el("div", "box", card);
       const [a, b] = m.scores;
@@ -1290,11 +1364,20 @@ export function createHud(controls: Controls): Hud {
           window.setTimeout(() => (fill.style.width = `${Math.round(((progress.points - prevAt) / span) * 100)}%`), 500);
         }
       }
+      // Today's Flag: the goal, and the bonus and streak when it's cleared.
+      if (daily) {
+        const line = el("div", `fc-daily${daily.done ? " done" : ""}`, box);
+        line.textContent = daily.done
+          ? daily.bonus
+            ? `TODAY'S FLAG CLEARED! +${fmt(daily.bonus)} BONUS · ${daily.streak} ${daily.streak === 1 ? "DAY" : "DAYS"} IN A ROW`
+            : `TODAY'S FLAG: DONE · ${daily.streak} ${daily.streak === 1 ? "DAY" : "DAYS"} IN A ROW`
+          : `TODAY'S FLAG: ${daily.goal} (${daily.have}/${daily.n}) · TRY AGAIN!`;
+      }
       const btns = el("div", "row2", box);
       const again = el("div", "go", btns);
-      again.textContent = onl?.again ?? "PLAY AGAIN";
+      again.textContent = onl?.again ?? (daily && !daily.done ? "TRY AGAIN" : "PLAY AGAIN");
       const change = el("div", "go alt", btns);
-      change.textContent = onl?.change ?? "CHANGE SETUP";
+      change.textContent = onl?.change ?? (daily ? "MENU" : "CHANGE SETUP");
       card.addEventListener("pointerdown", (e) => e.stopPropagation());
       again.addEventListener("pointerdown", (e) => {
         e.stopPropagation();

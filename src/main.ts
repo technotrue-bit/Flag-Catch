@@ -9,7 +9,7 @@ import * as THREE from "three";
 import { ANIMALS } from "./animals";
 import { type Mood, buzz, moodTone, music, sfx, unlockAudio } from "./audio";
 import { Fx } from "./fx";
-import { type MatchStats, createHud } from "./hud";
+import { type DailyResult, type MatchStats, createHud } from "./hud";
 import { createControls } from "./input";
 import { type AnimalRig, buildAnimal } from "./critters";
 import { Crowd, TOKEN_RANGE } from "./crowd";
@@ -37,6 +37,7 @@ import {
   wrapAngle,
 } from "./sim";
 import * as progressStore from "./progress";
+import { type Daily, dailyFor, goalProgress, goalText } from "./daily";
 import { type OnlineInfo, startCloud } from "./cloud";
 import { type OnlineSetup, guestMatch, hostMatch, newSetup } from "./net/match";
 import { GuestRoom, HostRoom, type Identity, type Picks, type RoomEnv, type RoomEvents, type RoomState, type Rules, findRooms, newId } from "./net/room";
@@ -48,7 +49,7 @@ import { type View } from "./net/view";
 import { type Who, checkTicket } from "./net/ticket";
 import { type RoomScreen, showBusy, showMessage, showOnlineMenu, showRoom } from "./onlineui";
 import { MAPS, WATER_Y, groundHeight, landOf, mapFor, surfaceHeight } from "./terrain";
-import { WORLDS } from "./worlds";
+import { WORLDS, worldById } from "./worlds";
 import { type World, buildWorld } from "./world";
 import { camTurnRate, onSettings, settings } from "./settings";
 import { createLook, sceneryFor } from "./look";
@@ -128,6 +129,9 @@ let lastPlans: string[] = (() => {
     return [];
   }
 })();
+
+/** Today's Flag while one is being played (from the title screen's daily card or a kept match); null otherwise. */
+let dailyRun: Daily | null = null;
 
 let match: Match = newMatch(Number(params.get("seed") ?? 1));
 let world: World = makeWorld();
@@ -288,13 +292,14 @@ const SHADOW_RANGE = 24;
 // And at most this many of them.
 const SHADOW_CASTERS = 10;
 
-function newMatch(seed: number): Match {
+/** A match from the current picks. A daily passes no plans to avoid, so every phone plays the same match. */
+function newMatch(seed: number, avoidPlans: readonly string[] = lastPlans): Match {
   const map = mapFor(perTeam);
   // Hoard ends at the points target; the 15 minute cap only stops a stalemate.
   const duration = mode === "hoard" ? 900 : timeParam || map.duration;
   // Capture plays for one big flag a side; Hoard needs a pile to fight over.
   const flagsPerTeam = mode === "hoard" ? map.flagsPerTeam : 1;
-  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam, mode, map, humanMedic, difficulty, world: worldId, avoidPlans: lastPlans });
+  return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam, mode, map, humanMedic, difficulty, world: worldId, avoidPlans });
 }
 
 function rebuildViews(): void {
@@ -522,6 +527,12 @@ function freshStats(): MatchStats {
   return { steals: 0, banks: 0, hits: 0, knockouts: 0, saves: 0, items: 0 };
 }
 
+/** Today's Flag goal under the score, counting up as you go ("GRAB 2 FLAGS 1/2"). */
+function showGoal(d: Daily): void {
+  const { have, done } = goalProgress(d.goal, stats, match.over && match.scores[0] > match.scores[1]);
+  hud.setGoal(d.goal.kind === "win" ? `TODAY: ${goalText(d)}` : `TODAY: ${goalText(d)} ${have}/${d.goal.n}`, done);
+}
+
 /** Counts what you did, for the results card. */
 function countStats(): void {
   for (const e of match.events) {
@@ -536,6 +547,7 @@ function countStats(): void {
 
 function handleEvents(): void {
   countStats();
+  if (dailyRun && phase === "play" && !match.over) showGoal(dailyRun);
   const right = new THREE.Vector3(-Math.cos(camYaw), 0, Math.sin(camYaw));
   for (const e of match.events) {
     if (e.kind === "end") {
@@ -1315,6 +1327,26 @@ function frame(now: number): void {
     const [a, b] = match.scores;
     const award =
       timeParam || params.has("per") ? null : progressStore.award(progress, match.world.id, match.players[0].score, a > b ? "win" : a === b ? "draw" : "loss", device);
+    // Today's Flag: a cleared goal pays its bonus once a day and grows the streak. The bonus joins this match's
+    // payout, so the results card counts it and shows what it opened.
+    let daily: DailyResult | undefined;
+    if (award && dailyRun && !net) {
+      const goal = goalProgress(dailyRun.goal, stats, a > b);
+      const cleared = goal.done ? progressStore.clearDaily(progress, dailyRun.key, device) : null;
+      if (cleared?.first) {
+        award.gained += cleared.bonus;
+        for (const id of cleared.opened) if (!award.opened.includes(id)) award.opened.push(id);
+      }
+      daily = {
+        goal: goalText(dailyRun),
+        have: goal.have,
+        n: dailyRun.goal.n,
+        done: goal.done,
+        bonus: cleared?.bonus ?? 0,
+        streak: progress.daily.streak,
+      };
+      hud.setGoal(null);
+    }
     if (award) {
       progressStore.save(store, progress);
       cloud.push();
@@ -1333,14 +1365,22 @@ function frame(now: number): void {
       stats,
       award,
       () => {
+        if (dailyRun) return startDaily(dailyRun, true);
         freshMatch();
         startCountdown(true);
       },
       () => {
+        if (dailyRun) {
+          endDaily();
+          freshMatch();
+          return showTitle();
+        }
         freshMatch();
         showSelect();
       },
       award ? progress : undefined,
+      undefined,
+      daily,
     );
   }
   requestAnimationFrame(frame);
@@ -1450,9 +1490,14 @@ function showSelect(): void {
   );
 }
 
+/** Sent here from trueaigaming.com's "Today" card: the title's daily card pulses. */
+const dailyAsked = params.get("daily") === "1";
+
 function showTitle(): void {
   phase = "title";
   if (music.level !== 0) music.play(0);
+  const today = dailyFor(new Date());
+  const key = today.key;
   hud.showTitle(
     progress.points,
     () => {
@@ -1463,7 +1508,56 @@ function showTitle(): void {
       unlockAudio();
       openOnline();
     },
+    {
+      goal: goalText(today),
+      where: [worldById(today.world).name, ANIMALS[today.animal].name, today.mode === "playful" ? "Playful" : "Capture"]
+        .join(" · ")
+        .toUpperCase(),
+      streak: progressStore.streakOn(progress, key),
+      done: progress.daily.last === key,
+      hot: dailyAsked,
+      onPlay: () => {
+        unlockAudio();
+        startDaily(dailyFor(new Date()), false);
+      },
+    },
   );
+}
+
+/**
+ * Plays Today's Flag: the day's world, animal, mode, island size and rival skill, from the day's seed. None of it is
+ * saved as your picks, and a locked world or animal is yours for this match. `again` replays it from the results.
+ */
+function startDaily(d: Daily, again: boolean): void {
+  dailyRun = d;
+  humanAnimal = d.animal;
+  worldId = d.world;
+  mode = d.mode;
+  perTeam = d.per;
+  difficulty = d.difficulty;
+  humanMedic = false;
+  clearSession();
+  const lastMap = match.map;
+  const lastWorld = match.world;
+  installMatch(newMatch(d.seed, []), lastMap, lastWorld);
+  showGoal(d);
+  if (!again) tryLandscape();
+  startCountdown(again);
+}
+
+/** Back to your own picks after a daily (none of the daily's were saved, so the saved ones are still yours). */
+function endDaily(): void {
+  dailyRun = null;
+  hud.setGoal(null);
+  humanAnimal = loadAnimal();
+  if (!isOpen(humanAnimal)) humanAnimal = "lion";
+  worldId = loadWorld();
+  if (!isOpen(worldId)) worldId = "home";
+  mode = loadMode();
+  if (!isOpen(mode)) mode = "capture";
+  perTeam = loadSize();
+  difficulty = loadDifficulty();
+  humanMedic = loadMedic();
 }
 
 // Signed in on TrueAIGaming: the account's save joins this one, and each payout goes back to it.
@@ -1885,6 +1979,7 @@ function endOnline(): void {
 // Restart and Quit from the pause menu; online, Quit leaves the match.
 hud.setPauseActions({
   restart() {
+    if (dailyRun) return startDaily(dailyRun, true);
     freshMatch();
     startCountdown(true);
   },
@@ -1892,6 +1987,11 @@ hud.setPauseActions({
     if (net || room) {
       leaveOnline();
       return;
+    }
+    if (dailyRun) {
+      endDaily();
+      freshMatch();
+      return showTitle();
     }
     freshMatch();
     showSelect();
@@ -1951,6 +2051,8 @@ interface Session {
   v: 1;
   at: number;
   setup: { animal: string; per: number; mode: Mode; world: string; medic: boolean; difficulty: Difficulty };
+  /** The day's key when the match is Today's Flag. */
+  daily?: string;
   state: MatchState;
   stats: MatchStats;
   said: typeof said;
@@ -1964,6 +2066,7 @@ function saveSession(): void {
     v: 1,
     at: Date.now(),
     setup: { animal: humanAnimal, per: perTeam, mode, world: worldId, medic: humanMedic, difficulty },
+    daily: dailyRun?.key,
     state: liveMatchState(match),
     stats,
     said,
@@ -2043,6 +2146,11 @@ function resumeSession(): boolean {
   lastLand = landOf(match.players[0].z);
   snapshot();
   placeCamera(1);
+  // A kept daily carries on as one, goal and all.
+  if (typeof s.daily === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s.daily)) {
+    dailyRun = dailyFor(s.daily);
+    showGoal(dailyRun);
+  }
   phase = "play";
   music.play(1);
   acc = 0;
