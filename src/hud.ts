@@ -732,6 +732,9 @@ export function createHud(controls: Controls): Hud {
   const pops = el("div", "fc-pops", root);
 
   const rotate = el("div", "fc-rotate", root);
+  // The card covers the game, so a touch on it is never steering: without this the stick grabs any touch on the left
+  // half and the DS button there never gets its click.
+  rotate.addEventListener("pointerdown", (e) => e.stopPropagation());
   el("div", "phone", rotate);
   el("div", "", rotate).textContent = "Turn your phone sideways to play";
   // Or keep it upright and play on two screens.
