@@ -209,9 +209,9 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-title .row3{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
 .fc-title .chip{pointer-events:auto;padding:9px 16px;border-radius:999px;background:rgba(255,250,240,.92);font-weight:900;font-size:14px;box-shadow:0 3px 0 rgba(43,35,64,.2);cursor:pointer}
 .fc-title .chip.hot{background:#ffd166}
-.fc-title .daily{pointer-events:auto;display:flex;align-items:center;gap:8px;padding:5px 6px 5px 14px;border-radius:999px;background:rgba(255,250,240,.9);box-shadow:0 3px 0 rgba(43,35,64,.18);cursor:pointer;max-width:min(92vw,460px)}
-.fc-title .daily b{font-size:13px;font-weight:900;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fc-title .daily em{font-style:normal;font-size:11px;font-weight:900;padding:2px 8px;border-radius:999px;background:#ffd166;white-space:nowrap}
+.fc-title .daily{pointer-events:auto;display:flex;align-items:center;gap:8px;padding:6px 7px 6px 16px;border-radius:999px;background:#fffaf0;border:3px solid #ffd166;box-shadow:0 4px 0 rgba(43,35,64,.2);cursor:pointer;max-width:min(92vw,480px)}
+.fc-title .daily b{font-size:15px;font-weight:900;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc-title .daily em{font-style:normal;font-size:12px;font-weight:900;padding:3px 9px;border-radius:999px;background:#ffd166;white-space:nowrap}
 .fc-title .daily.done{border-color:#7ee36b}
 .fc-title .daily.done em{background:#7ee36b;color:#fff}
 .fc-title .daily.hot{animation:fcbreath 1.8s ease-in-out infinite}
