@@ -13,6 +13,7 @@ import { type Settings, onSettings, setSetting, settings } from "./settings";
 import { cue } from "./cues";
 import { type Difficulty, HOARD_TARGET, ITEMS, type ItemKind, type Match, type Mode, nearestBase, tune } from "./sim";
 import { type Award, type Progress, UNLOCKS, costOf, nextUnlock } from "./progress";
+import { DAILY_BONUS } from "./daily";
 import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, currentWorld, groundHeight, landOf, onBridge } from "./terrain";
 import { WORLDS, type WorldDef, worldById } from "./worlds";
 import { type DsLayout, mapRect } from "./ds";
@@ -208,10 +209,9 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-title .row3{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
 .fc-title .chip{pointer-events:auto;padding:9px 16px;border-radius:999px;background:rgba(255,250,240,.92);font-weight:900;font-size:14px;box-shadow:0 3px 0 rgba(43,35,64,.2);cursor:pointer}
 .fc-title .chip.hot{background:#ffd166}
-.fc-title .daily{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 18px;border-radius:18px;background:rgba(255,250,240,.94);border:3px solid #ffd166;box-shadow:0 4px 0 rgba(43,35,64,.22);cursor:pointer;max-width:min(92vw,460px);text-align:center}
-.fc-title .daily b{font-size:15px;font-weight:900;letter-spacing:.5px}
-.fc-title .daily span{font-size:12px;font-weight:800;color:rgba(43,35,64,.7)}
-.fc-title .daily em{font-style:normal;font-size:11px;font-weight:900;padding:1px 8px;border-radius:999px;background:#ffd166}
+.fc-title .daily{pointer-events:auto;display:flex;align-items:center;gap:8px;padding:6px 7px 6px 16px;border-radius:999px;background:#fffaf0;border:3px solid #ffd166;box-shadow:0 4px 0 rgba(43,35,64,.2);cursor:pointer;max-width:min(92vw,480px)}
+.fc-title .daily b{font-size:15px;font-weight:900;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc-title .daily em{font-style:normal;font-size:12px;font-weight:900;padding:3px 9px;border-radius:999px;background:#ffd166;white-space:nowrap}
 .fc-title .daily.done{border-color:#7ee36b}
 .fc-title .daily.done em{background:#7ee36b;color:#fff}
 .fc-title .daily.hot{animation:fcbreath 1.8s ease-in-out infinite}
@@ -220,7 +220,7 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-title .foot{position:absolute;bottom:max(8px,var(--fc-sa-bottom));font-size:11px;font-weight:800;color:rgba(43,35,64,.55)}
 .fc-title.out{animation:fcout .3s ease-in forwards}
 @keyframes fcout{to{opacity:0;transform:scale(1.08)}}
-@media (max-height:360px){.fc-title .daily{padding:4px 14px}.fc-title .daily span{display:none}.fc-title{gap:6px}.fc-title .fc-logo{font-size:44px!important}.fc-title .fc-logo .flag{transform:scale(1.1)}.fc-title .big{padding:10px 48px;font-size:24px}.fc-title .tag{font-size:12px}}
+@media (max-height:360px){.fc-title .daily{padding:3px 5px 3px 12px}.fc-title{gap:6px}.fc-title .fc-logo{font-size:44px!important}.fc-title .fc-logo .flag{transform:scale(1.1)}.fc-title .big{padding:10px 48px;font-size:24px}.fc-title .tag{font-size:12px}}
 .fc-how{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
 @media (max-width:560px){.fc-how{grid-template-columns:repeat(2,1fr)}}
 .fc-how div{padding:8px;border-radius:14px;background:rgba(43,35,64,.06);font-size:12px;font-weight:700;line-height:1.25;color:rgba(43,35,64,.8)}
@@ -360,8 +360,6 @@ export interface Hud {
 export interface TitleDaily {
   /** The goal in words. */
   goal: string;
-  /** World, animal and mode, e.g. "LAVA LOOP · NIGHT BAT · PLAYFUL". */
-  where: string;
   /** Days in a row so far (0 when there's no run going). */
   streak: number;
   /** Already cleared today. */
@@ -864,13 +862,11 @@ export function createHud(controls: Controls): Hud {
       });
       if (daily) {
         const card = el("div", `daily${daily.done ? " done" : ""}${daily.hot && !daily.done ? " hot" : ""}`, t);
-        el("b", "", card).textContent = `TODAY'S FLAG: ${daily.goal}`;
-        el("span", "", card).textContent = daily.where;
+        // One plain line: today's goal, and what clearing it pays (or that it's done).
+        el("b", "", card).textContent = `DAILY: ${daily.goal}`;
         el("em", "", card).textContent = daily.done
-          ? `DONE TODAY${daily.streak > 1 ? ` · ${daily.streak} DAYS IN A ROW` : ""}`
-          : daily.streak > 0
-            ? `KEEP YOUR ${daily.streak} DAY STREAK`
-            : "NEW EVERY DAY";
+          ? `DONE${daily.streak > 1 ? ` · ${daily.streak} DAYS IN A ROW` : ""}`
+          : `+${DAILY_BONUS}${daily.streak > 0 ? ` · ${daily.streak} DAY STREAK` : ""}`;
         card.addEventListener("click", (e) => {
           e.stopPropagation();
           sfx.go();
@@ -1367,11 +1363,12 @@ export function createHud(controls: Controls): Hud {
       // Today's Flag: the goal, and the bonus and streak when it's cleared.
       if (daily) {
         const line = el("div", `fc-daily${daily.done ? " done" : ""}`, box);
+        const streak = daily.streak > 1 ? ` · ${daily.streak} DAYS IN A ROW` : "";
         line.textContent = daily.done
           ? daily.bonus
-            ? `TODAY'S FLAG CLEARED! +${fmt(daily.bonus)} BONUS · ${daily.streak} ${daily.streak === 1 ? "DAY" : "DAYS"} IN A ROW`
-            : `TODAY'S FLAG: DONE · ${daily.streak} ${daily.streak === 1 ? "DAY" : "DAYS"} IN A ROW`
-          : `TODAY'S FLAG: ${daily.goal} (${daily.have}/${daily.n}) · TRY AGAIN!`;
+            ? `DAILY DONE! +${fmt(daily.bonus)} BONUS${streak}`
+            : `DAILY: DONE TODAY${streak}`
+          : `DAILY: ${daily.goal} ${daily.have}/${daily.n}`;
       }
       const btns = el("div", "row2", box);
       const again = el("div", "go", btns);

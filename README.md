@@ -93,10 +93,11 @@ never sees the sign-in. Each device keeps its own running tally inside the save,
 so two phones that both played since the last sync add up instead of one
 overwriting the other. Played on its own or signed out, nothing leaves the phone.
 
-## Today's Flag (daily challenge)
+## Daily challenge
 
-One match a day, the same for every player. The title screen's Today's Flag card shows the day's goal (win the
-match, score a flag yourself, grab flags or pop rivals) and its world, animal and mode. The date picks all of it
+One match a day, the same for every player. A small line under the title's Play button shows the day's goal (win
+the match, score a flag yourself, grab flags or pop rivals) and the bonus for clearing it; tap it to play. The
+date picks the goal, world, animal and mode
 from a seed (`src/daily.ts`), so nothing comes from a server: Capture three days in four and Playful the rest (never
 Hoard, which can run long), 8 or 16 a side, Easy or Medium rivals, and a goal most players clear in a try or two. The
 world, animal or mode may be one you haven't opened yet; the daily lets you play it for that match, and none of
@@ -106,8 +107,7 @@ Clearing the goal pays a 150 point bonus once a day, on top of the match's own p
 streak; missing a day starts the streak again at 1. The streak lives in the save (`daily` in `src/progress.ts`), so
 on TrueAIGaming.com it follows a signed-in player to any device: merging two saves keeps the run that reached the
 later day. A kept match (reload, iPhone Safari dropping the tab) carries on as the daily. `?daily=1` makes the
-title's daily card pulse; trueaigaming.com's "Today" card links there and shows the same challenge from its own copy
-of `dailyFor`, checked against the pinned days in `src/daily.test.ts`.
+title's daily line pulse. `src/daily.test.ts` pins sample days so a change to the picks shows up in review.
 
 ## Look, sound and feel
 
