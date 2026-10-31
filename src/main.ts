@@ -530,7 +530,7 @@ function freshStats(): MatchStats {
 /** Today's Flag goal under the score, counting up as you go ("GRAB 2 FLAGS 1/2"). */
 function showGoal(d: Daily): void {
   const { have, done } = goalProgress(d.goal, stats, match.over && match.scores[0] > match.scores[1]);
-  hud.setGoal(d.goal.kind === "win" ? `TODAY: ${goalText(d)}` : `TODAY: ${goalText(d)} ${have}/${d.goal.n}`, done);
+  hud.setGoal(d.goal.kind === "win" ? `DAILY: ${goalText(d)}` : `DAILY: ${goalText(d)} ${have}/${d.goal.n}`, done);
 }
 
 /** Counts what you did, for the results card. */
@@ -1510,9 +1510,6 @@ function showTitle(): void {
     },
     {
       goal: goalText(today),
-      where: [worldById(today.world).name, ANIMALS[today.animal].name, today.mode === "playful" ? "Playful" : "Capture"]
-        .join(" · ")
-        .toUpperCase(),
       streak: progressStore.streakOn(progress, key),
       done: progress.daily.last === key,
       hot: dailyAsked,
