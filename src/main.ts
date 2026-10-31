@@ -1526,6 +1526,9 @@ function showTitle(): void {
  * saved as your picks, and a locked world or animal is yours for this match. `again` replays it from the results.
  */
 function startDaily(d: Daily, again: boolean): void {
+  // Straight from the title screen, so leave menu mode here (the select screen's Play does it for a normal
+  // match): in menu mode the stick, buttons, score, map and pause stay hidden.
+  hud.root.classList.remove("fc-menu");
   dailyRun = d;
   humanAnimal = d.animal;
   worldId = d.world;
