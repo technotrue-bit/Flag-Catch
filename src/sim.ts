@@ -180,11 +180,19 @@ export interface Skill {
   itemSmart: boolean;
 }
 
+/**
+ * How the rival team plays at each difficulty. Every level is a notch sharper
+ * than the human's own teammates (TEAMMATE), because the human tips the
+ * balance: rivals no better than the teammates lose to anyone who plays well.
+ */
 export const SKILLS: Record<Difficulty, Skill> = {
-  easy: { react: 0.6, noise: 30, dodge: 0.1, aimTol: 0.3, leads: false, throwRate: 0.035, pace: 0.82, coord: 0, tactics: 0, cautious: false, itemSmart: false },
-  medium: { react: 0.35, noise: 14, dodge: 0.4, aimTol: 0.18, leads: true, throwRate: 0.06, pace: 0.92, coord: 3, tactics: 0.6, cautious: true, itemSmart: true },
+  easy: { react: 0.45, noise: 20, dodge: 0.25, aimTol: 0.22, leads: true, throwRate: 0.05, pace: 0.9, coord: 2, tactics: 0.3, cautious: true, itemSmart: false },
+  medium: { react: 0.3, noise: 11, dodge: 0.5, aimTol: 0.16, leads: true, throwRate: 0.07, pace: 0.95, coord: 3, tactics: 0.75, cautious: true, itemSmart: true },
   hard: { react: 0.2, noise: 6, dodge: 0.75, aimTol: 0.12, leads: true, throwRate: 0.1, pace: 1, coord: 3, tactics: 1, cautious: true, itemSmart: true },
 };
+
+/** The human's CPU teammates, the same at every difficulty. */
+export const TEAMMATE: Skill = { react: 0.35, noise: 14, dodge: 0.4, aimTol: 0.18, leads: true, throwRate: 0.06, pace: 0.92, coord: 3, tactics: 0.6, cautious: true, itemSmart: true };
 
 /**
  * The rivals' skill for a team size. With dozens of CPUs a side, small edges
@@ -653,7 +661,7 @@ export function createMatch(opts: MatchOptions): Match {
     aggro: Math.min(1, Math.sqrt(8 / opts.perTeam)),
     skill: opts.evenBots
       ? [rivalSkill(opts.difficulty ?? "medium", opts.perTeam), rivalSkill(opts.difficulty ?? "medium", opts.perTeam)]
-      : [SKILLS.medium, rivalSkill(opts.difficulty ?? "medium", opts.perTeam)],
+      : [TEAMMATE, rivalSkill(opts.difficulty ?? "medium", opts.perTeam)],
     difficulty: opts.difficulty ?? "medium",
     stations,
     time: 0,
