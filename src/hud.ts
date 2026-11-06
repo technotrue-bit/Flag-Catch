@@ -14,7 +14,7 @@ import { cue } from "./cues";
 import { type Difficulty, HOARD_TARGET, ITEMS, type ItemKind, type Match, type Mode, nearestBase, tune } from "./sim";
 import { type Award, type Progress, UNLOCKS, costOf, nextUnlock } from "./progress";
 import { DAILY_BONUS } from "./daily";
-import { MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, currentWorld, groundHeight, landOf, onBridge } from "./terrain";
+import { BASE_Z, MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, currentMap, currentWorld, groundHeight, landOf, onBridge, outposts, setMap, setWorld } from "./terrain";
 import { WORLDS, type WorldDef, worldById } from "./worlds";
 import { type DsLayout, mapRect } from "./ds";
 import { PORTAL, UPRIGHT_NAME } from "./portal";
@@ -162,6 +162,14 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-tile .lock{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);opacity:1!important;padding:5px 10px;border-radius:999px;background:${PALETTE.ink};color:#fff;font-size:11px;font-weight:900;white-space:nowrap}
 .fc-play.locked{background:#9a93a8}
 .fc-step{display:contents}
+.fc-mapview{display:none}
+.fc-ds .fc-mapview{display:block;flex:0 1 auto;margin-top:auto;position:relative;width:max(120px,min(calc(var(--dsw) - 28px),calc((var(--dsbh) - 352px) * var(--fc-ar,2.3))));max-width:100%;aspect-ratio:var(--fc-ar,2.3);border-radius:14px;overflow:hidden;background:#fffaf0;box-shadow:0 0 0 3px rgba(43,35,64,.18),0 3px 0 3px rgba(43,35,64,.1)}
+.fc-ds .fc-mapview~.fc-setup{margin-top:6px}
+.fc-mapview canvas{display:block;width:100%;height:100%;animation:fcsnap .28s ease-out}
+.fc-mapview.locked canvas{filter:grayscale(.75) brightness(.92)}
+.fc-mapview b{position:absolute;bottom:5px;padding:2px 8px;border-radius:999px;color:#fff;font-size:10px;font-weight:900;letter-spacing:.4px}
+.fc-mapview i{position:absolute;top:5px;left:50%;transform:translateX(-50%);padding:2px 9px;border-radius:999px;background:rgba(43,35,64,.6);color:#fff;font-style:normal;font-size:10px;font-weight:900;letter-spacing:.4px;white-space:nowrap}
+@keyframes fcsnap{0%{opacity:0;transform:scale(1.06)}60%{opacity:1}100%{transform:none}}
 .fc-step[hidden]{display:none}
 .fc-sel h2.fc-logo>span{display:block}
 .fc-sum{flex:none;pointer-events:auto;cursor:pointer;align-self:center;display:flex;flex-direction:column;align-items:flex-start;padding:6px 16px;border-radius:18px;background:rgba(255,250,240,.9);box-shadow:0 3px 0 rgba(43,35,64,.18);font-weight:900;font-size:15px;line-height:1.2}
@@ -486,6 +494,8 @@ export function createHud(controls: Controls): Hud {
   let mapWorld: WorldDef | null = null;
   /** DS mode's two screens, or null for the normal layout. */
   let split: DsLayout | null = null;
+  /** Redraws the pick screen's map snapshot, while one is showing. */
+  let refreshView: (() => void) | null = null;
   /** The label by your marker on the minimap. */
   let myName = "You";
   /**
@@ -858,6 +868,8 @@ export function createHud(controls: Controls): Hud {
       split = next;
       placeMap();
       applyLayout();
+      // Turned upright on the pick screen: draw its map snapshot once the new layout is in place.
+      if (refreshView) requestAnimationFrame(() => refreshView?.());
     },
     get camScale() {
       // Slider 0 is zoomed out, 1 is zoomed in; the middle is the default view.
@@ -1166,7 +1178,11 @@ export function createHud(controls: Controls): Hud {
         titleText.textContent = n === 1 ? "MAP & ANIMAL" : "MATCH SETTINGS";
         titleSub.textContent = n === 1 ? "Step 1 of 2: pick where to play and who you ride" : "Step 2 of 2: set up the match, then play!";
         if (n === 2) refreshSummary();
-        else tiles.get(current)?.scrollIntoView({ inline: "center", block: "nearest" });
+        else {
+          tiles.get(current)?.scrollIntoView({ inline: "center", block: "nearest" });
+          // The team size may have changed in step 2, and the snapshot shows that island.
+          drawView();
+        }
       };
       // Your points, and what they open next.
       const pts = el("div", "fc-pts", stepA);
@@ -1184,7 +1200,29 @@ export function createHud(controls: Controls): Hud {
         onBack();
       });
       button(corner, "SETTINGS", "fc-chip fc-back", openSettings);
-      // Step 1: the map, today's challenge, and the animals.
+      // Step 1: the map, today's challenge, and the animals. In DS mode the bottom screen also shows a snapshot of
+      // the map from above.
+      const view = el("div", "fc-mapview", stepA);
+      const drawView = () => {
+        const def = MAPS.find((m) => m.size === size) ?? MAPS[0];
+        view.style.setProperty("--fc-ar", String(((def.scale * 114) / (def.scale * def.wide * 50)).toFixed(3)));
+        if (!split || !view.isConnected) return;
+        const r = view.getBoundingClientRect();
+        if (r.width < 10 || r.height < 10) return;
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        view.replaceChildren(drawMapPreview(world, def.size, Math.round(r.width * dpr), Math.round(r.height * dpr)));
+        view.classList.toggle("locked", !open.has(world));
+        el("i", "", view).textContent = `${def.size}v${def.size} · ${def.name.toUpperCase()}`;
+        const you = el("b", "", view);
+        you.textContent = "YOUR BASE";
+        you.style.left = "6px";
+        you.style.background = TEAMS[0].color;
+        const them = el("b", "", view);
+        them.textContent = "RIVALS";
+        them.style.right = "6px";
+        them.style.background = TEAMS[1].color;
+      };
+      refreshView = drawView;
       const mapPanel = el("div", "fc-setup", stepA);
       mapPanel.addEventListener("pointerdown", (e) => e.stopPropagation());
       // The world: step through all eight; locked ones show what opens them.
@@ -1204,6 +1242,7 @@ export function createHud(controls: Controls): Hud {
         const best = progress.best[world];
         el("small", "", worldName).textContent = locked ? `LOCKED · ${fmt(costOf(world))} PTS` : best ? `${w.blurb.toUpperCase()} · BEST ${best}` : w.blurb.toUpperCase();
         refreshNext();
+        drawView();
       };
       const stepWorld = (d: number) => {
         const i = WORLDS.findIndex((w) => w.id === world);
@@ -1626,6 +1665,74 @@ function drawMapBackground(w: number, h: number, upright: boolean): HTMLCanvasEl
   }
   ctx.putImageData(img, 0, 0);
   return c;
+}
+
+/**
+ * DS mode's map snapshot on the pick screen: a top-down picture of any world on any team size, drawn sideways (your
+ * homeland on the left, the rivals' on the right) with its real ground, water or lava, hills and bases. The terrain
+ * is switched to that world just long enough to draw it, then put back, so the match behind the menu is untouched.
+ */
+const previews = new Map<string, HTMLCanvasElement>();
+function drawMapPreview(worldId: string, size: number, w: number, h: number): HTMLCanvasElement {
+  const key = `${worldId}:${size}:${w}x${h}`;
+  const kept = previews.get(key);
+  if (kept) return kept;
+  const was = { world: currentWorld(), map: currentMap() };
+  const def = worldById(worldId);
+  setWorld(def);
+  setMap(MAPS.find((m) => m.size === size) ?? MAPS[0]);
+  try {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d")!;
+    const img = ctx.createImageData(w, h);
+    const P = def.palette;
+    const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    const mix = (a: number[], b: number[], k: number) => a.map((v, i) => v + (b[i] - v) * k);
+    const [low, high, sand, shallow, deep, rock] = [P.grassLow, P.grassHigh, P.sand, P.waterShallow, P.waterDeep, P.rock].map(rgb);
+    const plank = [201, 154, 104];
+    for (let py = 0; py < h; py++) {
+      for (let px = 0; px < w; px++) {
+        const z = (0.5 - px / w) * 2 * WORLD_HALF_Z;
+        const x = (py / h - 0.5) * 2 * WORLD_HALF_X;
+        const g = groundHeight(x, z);
+        let c3: number[];
+        if (onBridge(x, z)) c3 = plank;
+        else if (g <= 0) c3 = mix(shallow, deep, Math.min(1, -g / 5));
+        else if (g <= 0.9) c3 = sand;
+        else c3 = g > 9 ? mix(high, rock, Math.min(1, (g - 9) / 6)) : mix(low, high, Math.min(1, (g - 0.9) / 8));
+        // Light from the top left, so hills and dunes stand out.
+        if (g > 0) {
+          const slope = groundHeight(x - 1.5, z + 1.5) - g;
+          const k = 1 + Math.max(-0.22, Math.min(0.22, slope * 0.12));
+          c3 = c3.map((v) => v * k);
+        }
+        const i = (py * w + px) * 4;
+        img.data[i] = c3[0];
+        img.data[i + 1] = c3[1];
+        img.data[i + 2] = c3[2];
+        img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    // Each team's bases, in its color: yours on the left.
+    const s = Math.max(1, h / 70);
+    const at = (bx: number, bz: number): [number, number] => [(0.5 - bz / (2 * WORLD_HALF_Z)) * w, (0.5 + bx / (2 * WORLD_HALF_X)) * h];
+    for (const [bx, bz, team] of [[0, BASE_Z, 0], [0, -BASE_Z, 1], ...outposts()] as Array<[number, number, 0 | 1]>) {
+      const [qx, qy] = at(bx, bz);
+      ctx.beginPath();
+      ctx.arc(qx, qy, 3.2 * s, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,.75)";
+      ctx.fill();
+      mapPin(ctx, qx, qy, TEAMS[team].color, s);
+    }
+    previews.set(key, c);
+    return c;
+  } finally {
+    setWorld(was.world);
+    setMap(was.map);
+  }
 }
 
 /** A little flag pin whose point sits on (x, y). */
