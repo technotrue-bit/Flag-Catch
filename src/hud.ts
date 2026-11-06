@@ -59,6 +59,23 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-hearts{position:absolute;top:calc(max(10px,var(--fc-sa-top)) + 42px);left:max(10px,var(--fc-sa-left));display:flex;gap:3px;font-size:20px;line-height:1;filter:drop-shadow(0 2px 0 rgba(43,35,64,.25))}
 .fc-hearts i{font-style:normal;color:#e8455b;transition:transform .15s}
 .fc-hearts i.gone{color:rgba(43,35,64,.25);transform:scale(.8)}
+.fc-streak{position:absolute;top:calc(max(10px,var(--fc-sa-top)) + 68px);left:max(10px,var(--fc-sa-left));padding:3px 10px 3px 8px;border-radius:999px;background:linear-gradient(90deg,#ff6b5b,#ff9f1c 60%,#ffd166);color:#fff;font-weight:900;font-size:13px;letter-spacing:.5px;-webkit-text-stroke:0;box-shadow:0 2px 0 rgba(43,35,64,.25);pointer-events:none;animation:fcflame .9s ease-in-out infinite}
+.fc-streak.hot{font-size:15px;box-shadow:0 0 14px 2px rgba(255,159,28,.8),0 2px 0 rgba(43,35,64,.25)}
+@keyframes fcflame{50%{transform:scale(1.07) rotate(-2deg)}}
+.fc-feed{position:absolute;top:calc(max(10px,var(--fc-sa-top)) + 96px);left:max(10px,var(--fc-sa-left));display:flex;flex-direction:column;align-items:flex-start;gap:3px;pointer-events:none}
+.fc-feed div{padding:3px 10px;border-radius:999px;background:rgba(43,35,64,.58);color:#fff;font-size:11px;font-weight:900;letter-spacing:.3px;white-space:nowrap;animation:fcfeed 4.5s ease-out forwards}
+.fc-feed div.mine{background:rgba(255,250,240,.95);color:${PALETTE.ink};box-shadow:0 0 0 2px #ffd166}
+.fc-feed i{font-style:normal;margin:0 5px;color:#ffd166}
+.fc-feed em{font-style:normal;margin-left:6px;padding:0 6px;border-radius:999px;background:#ff9f1c;color:#fff}
+@keyframes fcfeed{0%{opacity:0;transform:translateX(-14px)}6%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0}}
+.fc-koban{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;opacity:0;z-index:2}
+.fc-koban b{display:block;font-size:50px;line-height:1;font-weight:900;letter-spacing:1px;-webkit-text-stroke:3px ${PALETTE.ink};paint-order:stroke fill;white-space:nowrap;text-shadow:0 0 22px rgba(255,209,102,.75)}
+.fc-koban small{display:inline-block;margin-top:6px;padding:3px 12px;border-radius:999px;background:rgba(43,35,64,.72);color:#fff;font-size:14px;font-weight:900;letter-spacing:.5px;white-space:nowrap}
+.fc-koban.lv2 b{font-size:58px;text-shadow:0 0 26px rgba(255,159,28,.9)}
+.fc-koban.lv3 b{font-size:66px;text-shadow:0 0 30px rgba(255,107,91,.95),0 0 60px rgba(255,209,102,.6)}
+.fc-koban.show{animation:fckoin 1.35s cubic-bezier(.2,1.4,.4,1) forwards}
+@keyframes fckoin{0%{opacity:0;transform:translate(-50%,-50%) scale(2.6) rotate(-8deg)}14%{opacity:1;transform:translate(-50%,-50%) scale(.92) rotate(3deg)}24%{transform:translate(-50%,-50%) scale(1.06) rotate(-1deg)}34%{transform:translate(-50%,-50%) scale(1) rotate(0)}80%{opacity:1}100%{opacity:0;transform:translate(-50%,-64%) scale(1)}}
+@media (max-height:420px){.fc-koban b{font-size:40px}.fc-koban.lv2 b{font-size:46px}.fc-koban.lv3 b{font-size:52px}.fc-koban small{font-size:12px}}
 .fc-out{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);padding:10px 22px;border-radius:18px;background:rgba(43,35,64,.72);color:#fff;font-weight:900;font-size:22px;text-align:center;display:none;white-space:nowrap}
 .fc-out small{display:block;font-size:13px;font-weight:700;opacity:.8}
 .fc-power{position:absolute;top:calc(max(10px,var(--fc-sa-top)) + 108px);left:50%;transform:translateX(-50%);padding:3px 12px;border-radius:999px;font-weight:900;font-size:13px;letter-spacing:1px;color:#fff;background:#ff6b9a;display:none;white-space:nowrap}
@@ -82,7 +99,7 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 @keyframes fcrot{0%,20%{transform:rotate(0)}50%,80%{transform:rotate(-90deg)}100%{transform:rotate(0)}}
 @media (orientation:portrait){.fc-rotate{display:flex}}
 .fc-menu .fc-stick,.fc-menu .fc-knob{display:none!important}
-.fc-menu .fc-goal,.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power,.fc-menu .fc-hearts,.fc-menu .fc-out{display:none!important}
+.fc-menu .fc-streak,.fc-menu .fc-feed,.fc-menu .fc-koban,.fc-menu .fc-goal,.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power,.fc-menu .fc-hearts,.fc-menu .fc-out{display:none!important}
 .fc-sel{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:8px;padding:max(10px,var(--fc-sa-top)) max(12px,var(--fc-sa-right)) max(10px,var(--fc-sa-bottom)) max(12px,var(--fc-sa-left))}
 .fc-sel h2{flex:none;margin:0;text-align:center;font-size:30px;line-height:1.05;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
 .fc-logo{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:0 10px;font-size:38px!important;letter-spacing:2px!important;animation:fclogo 3s ease-in-out infinite}
@@ -277,6 +294,10 @@ html.fc-ds #app{border-radius:10px;overflow:hidden;box-shadow:0 0 0 5px ${PALETT
 .fc-ds .fc-timer{font-size:17px;min-width:62px;padding:5px 9px}
 .fc-ds .fc-top-left{top:calc(var(--dst) + 8px);left:calc(var(--dsx) + 8px)}
 .fc-ds .fc-hearts{top:calc(var(--dst) + 54px);left:calc(var(--dsx) + 10px)}
+.fc-ds .fc-streak{top:calc(var(--dst) + 80px);left:calc(var(--dsx) + 10px)}
+.fc-ds .fc-feed{top:calc(var(--dst) + 84px);left:auto;right:calc(var(--dsx) + 10px);align-items:flex-end}
+.fc-ds .fc-koban{top:calc(var(--dst) + var(--dsh) * .55)}
+.fc-ds .fc-koban b{font-size:36px}.fc-ds .fc-koban.lv2 b{font-size:40px}.fc-ds .fc-koban.lv3 b{font-size:44px}
 .fc-ds .fc-zone{top:calc(var(--dst) + 48px)}
 .fc-ds .fc-arrow{top:calc(var(--dst) + 74px)}
 .fc-ds .fc-power{top:calc(var(--dst) + 110px)}
@@ -325,6 +346,10 @@ html.fc-ds #app{border-radius:10px;overflow:hidden;box-shadow:0 0 0 5px ${PALETT
 export interface Hud {
   update(m: Match, controls: Controls, camYaw: number): void;
   call(text: string, color?: string): void;
+  /** The big knockout banner: a title that punches in, a line under it, bigger for a higher `level` (1 to 3). */
+  ko(title: string, sub: string, color: string, level: number): void;
+  /** A line in the knockout feed: `a` knocked out `b`. */
+  feed(line: FeedLine): void;
   /**
    * After Play: step 1 picks the map and your animal (with Today's Flag), step 2 the mode, team size, role and
    * rivals, then PLAY. onPick fires on every tap so the 3D preview can swap.
@@ -426,12 +451,24 @@ export interface PauseActions {
 
 const CLASS_COLORS = { land: "#5cb85c", water: "#46b4e8", air: "#9b7be8" } as const;
 
+/** One knockout for the feed. `mine` when you're in it; `tag` a short extra like a streak. */
+export interface FeedLine {
+  a: string;
+  aTeam: 0 | 1;
+  b: string;
+  bTeam: 0 | 1;
+  mine: boolean;
+  tag?: string;
+}
+
 /** What you did in a match, counted from its events for the results card. */
 export interface MatchStats {
   steals: number;
   banks: number;
   hits: number;
   knockouts: number;
+  /** Your longest run of knockouts without being knocked out. */
+  bestStreak: number;
   saves: number;
   items: number;
 }
@@ -563,6 +600,14 @@ export function createHud(controls: Controls): Hud {
     return h;
   });
   const outCard = el("div", "fc-out", root);
+  // Kill streaks: your run of knockouts, the big knockout banner, and a feed of who knocked out whom.
+  const streakBadge = el("div", "fc-streak", root);
+  streakBadge.hidden = true;
+  let shownStreak = -1;
+  const koBanner = el("div", "fc-koban", root);
+  const koTitle = el("b", "", koBanner);
+  const koSub = el("small", "", koBanner);
+  const feedBox = el("div", "fc-feed", root);
 
   const press = (node: HTMLElement, down: () => void, up: () => void) => {
     node.addEventListener("pointerdown", (e) => {
@@ -779,7 +824,8 @@ export function createHud(controls: Controls): Hud {
       ["FLAGS", FLAG_FREE, "Grab a flag from the enemy base and bring it home to score."],
       ["THROW", "#ff6b5b", "Throw firecrackers. Three hits knock a rival out for a moment."],
       ["JUMP", "#46b4e8", "Hop over trouble."],
-      ["FLYERS", "#7a5cc4", "Fly on their own: steer and speed up with the stick. BOMB hits wide and reloads in 30 s. Hold FIRE for confetti; it cools down after 7 s."],
+      ["FLYERS", "#7a5cc4", "Fly on their own: steer and speed up with the stick. BOMB hits wide and reloads in 30 s (the Glide Fish fires 3 homing MISSILES instead). Hold FIRE for confetti; it cools down after 7 s."],
+      ["STREAKS", "#ff9f1c", "Knock out rivals in a row without being knocked out for streak bonus points. End a rival's streak for a shutdown bonus."],
       ["ITEM", "#ff6b9a", "Drive through a gift box for a power up, then tap ITEM."],
       ["DIVE", "#2fb5b0", "Swimmers can dive under the water to slip past."],
     ];
@@ -1048,6 +1094,12 @@ export function createHud(controls: Controls): Hud {
         power.style.background = on[2];
       }
       heartIcons.forEach((h, i) => h.classList.toggle("gone", i >= me.hp));
+      if (me.streak !== shownStreak) {
+        shownStreak = me.streak;
+        streakBadge.hidden = me.streak < 2;
+        streakBadge.textContent = `\u{1F525} ${me.streak} STREAK`;
+        streakBadge.classList.toggle("hot", me.streak >= 4);
+      }
       outCard.style.display = me.out > 0 ? "block" : "none";
       if (me.out <= 0) shownOut = -1;
       else if (Math.ceil(me.out) !== shownOut) {
@@ -1069,10 +1121,14 @@ export function createHud(controls: Controls): Hud {
       let jumpBg = "";
       let thrBg = "";
       if (flyer) {
+        // The Glide Fish fires homing missiles instead of dropping a bomb.
+        const fish = me.def.special === "missiles";
+        const name = fish ? "MISSILE" : "BOMB";
+        const color = fish ? "#e8455b" : "#7a5cc4";
         const left = Math.max(0, me.bombCd);
-        const loaded = Math.round((1 - left / tune.bombReload) * 36) * 10;
-        jumpLook = left > 0 ? `<small>BOMB</small><b>${Math.ceil(left)}</b>` : "BOMB";
-        jumpBg = left > 0 ? `conic-gradient(#7a5cc4 ${loaded}deg, #8fa3b8 ${loaded}deg)` : "#7a5cc4";
+        const loaded = Math.round((1 - left / (fish ? tune.fishReload : tune.bombReload)) * 36) * 10;
+        jumpLook = left > 0 ? `<small>${name}</small><b>${Math.ceil(left)}</b>` : fish ? "<small>MISSILES</small>FIRE" : name;
+        jumpBg = left > 0 ? `conic-gradient(${color} ${loaded}deg, #8fa3b8 ${loaded}deg)` : color;
         const heat = Math.round(me.heat * 36) * 10;
         thrLook = me.overheat > 0 ? `<small>COOL</small><b>${Math.ceil(me.overheat)}</b>` : "<small>CONFETTI</small>FIRE";
         thrBg = me.overheat > 0 ? `conic-gradient(#e8455b ${heat}deg, #8fa3b8 ${heat}deg)` : heat > 0 ? `conic-gradient(#ffb347 ${heat}deg, #ff6b9a ${heat}deg)` : "#ff6b9a";
@@ -1155,6 +1211,33 @@ export function createHud(controls: Controls): Hud {
         callTimer -= 1 / 60;
         if (callTimer <= 0) call.classList.remove("show");
       }
+    },
+    ko(title, sub, color, level) {
+      koTitle.textContent = title;
+      koTitle.style.color = color;
+      koSub.textContent = sub;
+      koSub.hidden = !sub;
+      koBanner.className = `fc-koban lv${Math.max(1, Math.min(3, level))}`;
+      void koBanner.offsetWidth;
+      koBanner.classList.add("show");
+      // The banner says it; the smaller call line steps aside.
+      call.classList.remove("show");
+    },
+    feed(line) {
+      while (feedBox.childElementCount >= 4) feedBox.firstElementChild?.remove();
+      const row = el("div", line.mine ? "mine" : "", feedBox);
+      const who = (name: string, team: 0 | 1) => {
+        const b = el("b", "", row);
+        b.textContent = name;
+        if (!line.mine) b.style.color = TEAMS[team].light;
+      };
+      who(line.a, line.aTeam);
+      if (line.b) {
+        el("i", "", row).textContent = "\u2738";
+        who(line.b, line.bTeam);
+      }
+      if (line.tag) el("em", "", row).textContent = line.tag;
+      window.setTimeout(() => row.remove(), 4600);
     },
     call(text, color = "#ffffff") {
       call.textContent = text;
@@ -1509,6 +1592,7 @@ export function createHud(controls: Controls): Hud {
       stat(stats.banks, m.mode === "hoard" ? "BANKED" : "SCORED");
       stat(stats.steals, "GRABS");
       stat(stats.knockouts, "KOS");
+      if (stats.bestStreak >= 2) stat(stats.bestStreak, "BEST STREAK");
       stat(stats.saves, "SAVES");
       stat(m.players[0].score, "POINTS");
       const mvp = m.players.reduce((best, p) => (p.score > best.score ? p : best), m.players[0]);

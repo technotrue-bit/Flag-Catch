@@ -294,6 +294,31 @@ plants a respawn flag where you stand, once every 30 seconds, anywhere but on
 the enemy's bases. Each medic keeps two up at a time, and an enemy who drives
 into one knocks it down. One in eight CPU animals is a medic.
 
+## Knockouts and kill streaks
+
+Your knockouts are made to land: a beat of freeze, then a moment of slow
+motion (offline; Calm effects skips it), a shockwave ring and a big burst at the
+rival, a deep punch of sound and a rising chime, KO! popping up over them, a
+camera kick, a gold glow and a buzz, and a KNOCKOUT! banner that punches in.
+
+Knock out rivals in a row without being knocked out yourself for a kill streak
+(`countStreak` in `src/sim.ts`, names in `src/streaks.ts`):
+
+- Each knockout in a run past the first pays 3 bonus points on top of the
+  usual 8, up to +15.
+- The banner grows with the run: 2 IN A ROW!, ON FIRE!, RAMPAGE!,
+  UNSTOPPABLE!, WILD STREAK!, then LEGENDARY! from 8. Knockouts within 4
+  seconds of each other are a multi KO and take the title: DOUBLE KO!,
+  TRIPLE KO!, QUAD KO!, MEGA KO!. Bigger runs bring a bigger chime, burst,
+  shake and buzz.
+- A flame badge under your hearts shows your run; get knocked out and it's
+  gone ("POPPED! 3 STREAK LOST").
+- Ending a rival's run of 3 or more is a SHUTDOWN!, worth 10 bonus points.
+- A feed under the badge lists who knocked out whom, yours highlighted, with
+  streak and shutdown tags (on the two biggest team sizes only yours and the
+  long streaks). A rival or teammate reaching 5 or 8 in a row is called out.
+- The results card shows your best streak.
+
 Flyers (Sky Eagle, Glide Fish, Night Bat) fly on their own, low over land and
 water alike: the stick steers and sets the speed, from a slow cruise with it let
 go to full speed pushed all the way. They carry two weapons instead of
@@ -304,6 +329,12 @@ second; five confetti hits make one hit. Holding it heats the gun, and after 7
 seconds of fire it overheats and cools for 3 seconds. The buttons show the
 bomb's reload and the gun's heat. Flying low, flyers still grab flags and items
 and can still be hit.
+
+The Glide Fish's special is MISSILES in place of the bomb (the same button): three
+homing paper missiles fanned out ahead, each after a different enemy (flag
+carriers first), with a 30 second reload shown on the button. CPU Glide Fish
+fire at the first enemy in range on Easy, and save the volley for a flag
+carrier, a rival on their last hit or a group on Medium and Hard.
 
 ## CPU brains and difficulty
 
@@ -370,8 +401,9 @@ sizes from 8v8 to 64v64. Thirteen animals to pick from:
   Bowl Goldfish (rolls in a fishbowl, as good on land as in water) and Pogo
   Frog (giant pogo jumps). The divers hold Dive in water to slip under
   firecrackers until their breath runs out.
-- Air: Sky Eagle (the bomber), Glide Fish (turns well) and Night Bat (fastest
-  flyer, fragile). They fly on their own, with a bomb and a confetti gun.
+- Air: Sky Eagle (the bomber), Glide Fish (turns well, fires homing missiles
+  instead of a bomb) and Night Bat (fastest flyer, fragile). They fly on their
+  own, with a bomb (or missiles) and a confetti gun.
 
 CPU animals are mirrored slot by slot across the teams, and the rival in your
 slot rides your animal, so neither side starts with the better line up.

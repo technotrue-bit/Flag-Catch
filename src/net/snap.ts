@@ -123,6 +123,8 @@ export const ME_KEYS = [
   "grabCd",
   "medicCd",
   "bombCd",
+  "streak",
+  "bestStreak",
   "heat",
   "overheat",
   "gunCd",

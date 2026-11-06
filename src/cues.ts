@@ -16,6 +16,9 @@ export type Cue =
   | "save"
   | "popped"
   | "knockout"
+  | "streak"
+  | "rampage"
+  | "shutdown"
   | "powerUp"
   | "thirty"
   | "ten"
@@ -43,8 +46,14 @@ export const TUNES: Record<Cue, readonly ChimeNote[]> = {
   save: [n(84, 0, 0.18), n(89, 0.1, 0.45)],
   // You got popped: a quick tumble down, light not gloomy.
   popped: [n(84, 0, 0.12, "pluck"), n(79, 0.07, 0.12, "pluck"), n(76, 0.14, 0.3)],
-  // You popped someone: a punchy pair up.
-  knockout: [n(84, 0, 0.12, "pluck"), n(91, 0.07, 0.3, "pluck")],
+  // You knocked someone out: a punchy three up that rings.
+  knockout: [n(84, 0, 0.1, "pluck"), n(89, 0.05, 0.1, "pluck"), n(96, 0.1, 0.35)],
+  // Two or three in a row: a bright climbing run.
+  streak: [n(81, 0, 0.12, "pluck"), n(84, 0.06, 0.12, "pluck"), n(89, 0.12, 0.12, "pluck"), n(93, 0.18, 0.5)],
+  // Four and up: the run climbs to the top and sparkles.
+  rampage: [n(84, 0, 0.1, "pluck"), n(89, 0.05, 0.1, "pluck"), n(93, 0.1, 0.1, "pluck"), n(96, 0.15, 0.1, "pluck"), n(101, 0.2, 0.6), n(96, 0.32, 0.4, "pluck")],
+  // You ended a rival's streak: down, then up and proud.
+  shutdown: [n(96, 0, 0.14), n(89, 0.1, 0.14), n(93, 0.2, 0.5, "pluck")],
   powerUp: [n(91, 0, 0.2), n(96, 0.07, 0.45)],
   // Thirty seconds: a ding dong.
   thirty: [n(84, 0, 0.5), n(77, 0.28, 0.7)],
@@ -71,7 +80,10 @@ export const PRIORITY: Record<Cue, number> = {
   theyScore: 2,
   save: 2,
   popped: 2,
-  knockout: 1,
+  knockout: 2,
+  streak: 3,
+  rampage: 4,
+  shutdown: 3,
   powerUp: 1,
   thirty: 3,
   ten: 3,

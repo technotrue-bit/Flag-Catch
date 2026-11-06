@@ -8,7 +8,7 @@ const days = (from: string, n: number): string[] => {
   const [y, m, d] = from.split("-").map(Number);
   return Array.from({ length: n }, (_, i) => dayKey(new Date(y, m - 1, d + i, 12)));
 };
-const stats = (s: Partial<Record<"banks" | "steals" | "knockouts", number>> = {}) => ({ steals: 0, banks: 0, hits: 0, knockouts: 0, saves: 0, items: 0, ...s });
+const stats = (s: Partial<Record<"banks" | "steals" | "knockouts", number>> = {}) => ({ steals: 0, banks: 0, hits: 0, knockouts: 0, bestStreak: 0, saves: 0, items: 0, ...s });
 
 describe("Daily Flag", () => {
   it("gives every phone the same challenge for a date", () => {

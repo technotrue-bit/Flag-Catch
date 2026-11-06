@@ -255,6 +255,26 @@ export const sfx = {
     tone("square", 220, 40, 0.4, pan, 0.22 * near);
     tone("sine", 900, 1800, 0.1, pan, 0.1 * near, 0.04);
   },
+  /** Your knockout: a deep thump, a crunch and a sparkle on top. */
+  ko(pan: number, near: number) {
+    tone("sine", 170, 42, 0.34, pan, 0.42 * near);
+    hiss(0.32, 1300, pan, 0.55 * near);
+    tone("square", 480, 960, 0.08, pan, 0.12 * near, 0.02);
+    [1568, 2093, 2637].forEach((f, i) => tone("triangle", f, f * 1.01, 0.12, pan, 0.11 * near, 0.06 + i * 0.045));
+  },
+  /** A streak: a whoosh up that climbs higher with each knockout in the run. */
+  streak(level: number) {
+    const lift = 2 ** (Math.min(level, 8) / 12);
+    tone("sawtooth", 260 * lift, 1040 * lift, 0.3, 0, 0.07);
+    [523, 659, 784, 1046].forEach((f, i) => tone("square", f * lift, f * lift, 0.1, 0, 0.09, 0.05 + i * 0.06));
+  },
+  /** The Glide Fish's missiles away: three quick rising whooshes. */
+  missiles(pan: number, near: number) {
+    [0, 0.07, 0.14].forEach((d) => {
+      tone("sawtooth", 380, 1500, 0.22, pan, 0.07 * near, d);
+      tone("triangle", 900, 1800, 0.12, pan, 0.08 * near, d);
+    });
+  },
   fizzle(pan: number, near: number) {
     hiss(0.2, 3200, pan, 0.08 * near);
   },
