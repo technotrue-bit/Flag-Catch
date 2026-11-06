@@ -8,7 +8,7 @@ the enemy base and carry it home to score, and guard your own. Firecrackers pop
 rivals loose so they drop what they carry; touch your own dropped flag to send
 it home.
 
-Three modes, picked on the start screen:
+Three modes, picked in the match settings:
 
 - Capture: one big flag a side, in the team's color with its shape (sun or
   moon), standing in the middle of its base. Steal theirs and bring it home to
@@ -45,6 +45,16 @@ its pick tile:
   (Easy ones hold on until it does).
 - All rounders (Rally Lion, Bowl Goldfish) fill whatever the team is short of.
 
+Which animal each CPU rides suits the map being played (`src/lineup.ts`). Every
+animal gets a fit score for each world: swimmers rule Deep Lagoon and Ring Reef,
+can't cross Lava Loop and have little water on Rust Dunes (the Bowl Goldfish and
+Pogo Frog still get about on land, so they stay picks there), land animals spend
+Deep Lagoon wading, Storm Spire's wind keeps flyers rarer, and on Frost Floe the
+grippy Surf Penguin and Skate Mammoth come up more. Animals that barely get about
+on a world are left out, the rest are picked by how well they fit, and each team
+gets a fair mix of jobs (raiders, hunters, guardians, a bomber, all rounders)
+with no one animal filling most of it.
+
 Every second or so each team shares out the jobs: two or three hunters per
 thief, someone to touch a dropped flag home, bodyguards for each carrier,
 guards while the base still has a flag, and raiders for the rest. A team
@@ -57,7 +67,7 @@ two minutes), and the next catch wins.
 
 ## Worlds
 
-Eight worlds, picked with the arrows on the start screen. Each one reshapes
+Eight worlds (maps), picked with the arrows on the first pick screen. Each one reshapes
 and repaints the same three land layout and adds a twist of its own. Every
 world is the same for both teams (the ground matches when turned round the
 middle), and bases, flags, stations and bridge landings always stay dry and level.
@@ -81,7 +91,7 @@ middle), and bases, flags, stations and bridge landings always stay dry and leve
 
 Every match pays your own points plus 100 for a win (40 for a draw). Points add
 up on your phone and open new animals, worlds and Playful mode along the way;
-the start screen shows your total and what opens next, and each world shows
+the first pick screen shows your total and what opens next, and each world shows
 your best match there. New players start with the Rally Lion, the Turbo Wolf
 and Home Isle. Players from before unlocks keep the first seven animals.
 `?unlock=all` opens everything for testing.
@@ -95,8 +105,8 @@ overwriting the other. Played on its own or signed out, nothing leaves the phone
 
 ## Daily challenge
 
-One match a day, the same for every player. A small line under the title's Play button shows the day's goal (win
-the match, score a flag yourself, grab flags or pop rivals) and the bonus for clearing it; tap it to play. The
+One match a day, the same for every player. A small line on the first pick screen, under the map, shows the day's
+goal (win the match, score a flag yourself, grab flags or pop rivals) and the bonus for clearing it; tap it to play. The
 date picks the goal, world, animal and mode
 from a seed (`src/daily.ts`), so nothing comes from a server: Capture three days in four and Playful the rest (never
 Hoard, which can run long), 8 or 16 a side, Easy or Medium rivals, and a goal most players clear in a try or two. The
@@ -106,8 +116,8 @@ the daily's picks are saved as yours.
 Clearing the goal pays a 150 point bonus once a day, on top of the match's own points, and adds a day to your
 streak; missing a day starts the streak again at 1. The streak lives in the save (`daily` in `src/progress.ts`), so
 on TrueAIGaming.com it follows a signed-in player to any device: merging two saves keeps the run that reached the
-later day. A kept match (reload, iPhone Safari dropping the tab) carries on as the daily. `?daily=1` makes the
-title's daily line pulse. `src/daily.test.ts` pins sample days so a change to the picks shows up in review.
+later day. A kept match (reload, iPhone Safari dropping the tab) carries on as the daily. `?daily=1` skips the main menu and makes the
+daily line pulse. `src/daily.test.ts` pins sample days so a change to the picks shows up in review.
 
 ## Look, sound and feel
 
@@ -138,7 +148,7 @@ title's daily line pulse. `src/daily.test.ts` pins sample days so a change to th
 - The results card counts its numbers up, shows the match MVP and fills a bar
   toward your next unlock. A win throws confetti and your animal twirls.
 - Add it to your home screen (Share, then Add to Home Screen on iPhone) to
-  play full screen with its own icon. The title screen's Full Screen button
+  play full screen with its own icon. The Full Screen button at the bottom of Settings
   does it in one tap on Android and computers, and shows the steps on iPhone,
   where Safari doesn't let web pages hide its bars.
 
@@ -193,8 +203,7 @@ upright map (the enemy's land at the top, yours at the bottom) with a steering
 area on the left and Jump, Throw, Item and Dive on the right (swapped for left
 handed play). A hinge with two little lights sits between them.
 
-- Turn it on or off with the DS MODE chip on the title screen, the DS mode
-  row in Settings, or the "Play upright in DS mode" button on the turn your
+- Turn it on or off with the DS mode row in Settings, or the "Play upright in DS mode" button on the turn your
   phone card. The choice is saved on the phone.
 - It only splits the screen while the phone is upright. Turn the phone
   sideways and the normal wide layout comes back; turn it upright again for
@@ -204,8 +213,18 @@ handed play). A hinge with two little lights sits between them.
 
 ## Menus and settings
 
-- The title screen has Play, How to Play, Settings, DS Mode and Full Screen.
-- The pick screen has Menu (back to the title) and Settings in its corner.
+- The main menu is just a list: Play, Settings, Multiplayer and Leave Game.
+  Arrow keys (or W and S) and Enter work it too.
+- Play leads to two steps. First the map and your animal (with the daily
+  line), then NEXT to the match settings: mode, team size, role and rivals,
+  with what you picked shown by PLAY (tap it to go back). Back in the corner
+  goes a step back, or to the menu from the first step; Settings is there too.
+- Multiplayer opens online play. Leave Game asks first, then goes back where
+  you came from: on TrueAIGaming.com's play page it tells the page
+  (`tag:leave`) and takes the tab back to the site; opened on its own it goes
+  back a page, or closes the tab, or else goes to TrueAIGaming.com
+  (`src/leave.ts`). Portal copies show only Play and Settings.
+- How to Play and Full Screen are at the bottom of Settings.
 - In a match, the pause button (top left) opens Resume, Settings, How to Play,
   Restart and Quit to menu. Leaving the app pauses the match too.
 - Settings, saved on the phone: Music and Sounds volume (Sounds covers the
@@ -227,7 +246,7 @@ flags is a bigger red dot with a white edge.
 
 ## Team sizes and maps
 
-Pick 8, 16, 32 or 64 animals a side on the start screen. Each size gets its own
+Pick 8, 16, 32 or 64 animals a side in the match settings. Each size gets its own
 island, drawn from the same three land layout:
 
 - 8v8: Home Isle, two bridges per channel, 5 flags a team.
@@ -247,7 +266,7 @@ drops any flag, is off the field for 2 seconds, and comes back with full health
 and a short shield at whichever of its team's bases or respawn flags is
 closest to where it fell. Blast counts as two hits.
 
-Pick MEDIC as your role on the start screen to get a FLAG button (or R): it
+Pick MEDIC as your role in the match settings to get a FLAG button (or R): it
 plants a respawn flag where you stand, once every 30 seconds, anywhere but on
 the enemy's bases. Each medic keeps two up at a time, and an enemy who drives
 into one knocks it down. One in eight CPU animals is a medic.
@@ -274,7 +293,7 @@ the clock: a team trailing late pushes forward, one leading late holds. Between
 decisions it dodges shots it sees coming (hopping skidding ones), aims where a
 moving target is going, and carriers steer around enemies.
 
-Pick the rivals' level on the start screen. Your teammates always play Medium.
+Pick the rivals' level in the match settings. Your teammates always play Medium.
 
 - Easy: slow to react, loose choices, rarely dodges, aims where you are, and
   everyone chases the same target.
@@ -303,7 +322,7 @@ A station's box comes back 8 seconds after it is taken.
 
 ## Online matches
 
-PLAY ONLINE on the title screen plays a live match with friends. It works on TrueAIGaming.com while signed in, since the site hands the game a signed ticket with the player's username (`tag:online`, see `src/cloud.ts`). Every phone in a room checks every ticket with the site's public key, so the only names anyone sees are real site usernames. There is no chat, and a room code is typed on an on-screen pad.
+MULTIPLAYER on the main menu plays a live match with friends. It works on TrueAIGaming.com while signed in, since the site hands the game a signed ticket with the player's username (`tag:online`, see `src/cloud.ts`). Every phone in a room checks every ticket with the site's public key, so the only names anyone sees are real site usernames. There is no chat, and a room code is typed on an on-screen pad.
 
 - QUICK MATCH joins the fullest open room, or opens one. An open room starts by itself 20 seconds after a second player joins.
 - MAKE A ROOM gives a 4 letter code for friends; JOIN WITH A CODE takes one. The host picks the world, mode and CPU skill.
@@ -334,7 +353,7 @@ sizes from 8v8 to 64v64. Thirteen animals to pick from:
 CPU animals are mirrored slot by slot across the teams, and the rival in your
 slot rides your animal, so neither side starts with the better line up.
 
-The game opens on the title screen, then the pick screen; a match counts down
+The game opens on the main menu, then the two pick steps; a match counts down
 3, 2, 1, GO!, and ends on a results card. Next is launch on TrueAIGaming.com,
 then online play.
 
@@ -362,7 +381,7 @@ Test games with `?per` or `?time` don't pay points.
 
 ## Layout
 
-- `src/sim.ts`: the match, stepped at a fixed 60 Hz from a seed, no Three.js.
+- `src/sim.ts`: the match, stepped at a fixed 60 Hz from a seed, no Three.js. `src/lineup.ts`: which animals the CPUs ride on each world.
 - `src/terrain.ts`: the maps and their three land height field, shared by sim, render and tests.
 - `src/worlds.ts`: the eight worlds' shapes, colors, trees and twists.
 - `src/progress.ts`: points, unlocks and best scores, with per-device tallies and the merge. `src/cloud.ts`: account saves through the TrueAIGaming play page.

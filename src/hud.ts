@@ -161,6 +161,11 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-tile.locked>*{opacity:.4}
 .fc-tile .lock{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);opacity:1!important;padding:5px 10px;border-radius:999px;background:${PALETTE.ink};color:#fff;font-size:11px;font-weight:900;white-space:nowrap}
 .fc-play.locked{background:#9a93a8}
+.fc-step{display:contents}
+.fc-step[hidden]{display:none}
+.fc-sel h2.fc-logo>span{display:block}
+.fc-sum{flex:none;pointer-events:auto;cursor:pointer;align-self:center;display:flex;flex-direction:column;align-items:flex-start;padding:6px 16px;border-radius:18px;background:rgba(255,250,240,.9);box-shadow:0 3px 0 rgba(43,35,64,.18);font-weight:900;font-size:15px;line-height:1.2}
+.fc-sum small{font-size:10px;font-weight:900;letter-spacing:.6px;color:rgba(43,35,64,.55)}
 .shake{animation:fcshake .35s}
 @keyframes fcshake{20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(3px)}}
 .fc-earn{margin:6px 0 0;font-weight:900;font-size:15px}
@@ -204,23 +209,26 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-title .fc-logo{margin:0;font-size:64px!important;line-height:1;font-weight:900;color:#fff;-webkit-text-stroke:3px ${PALETTE.ink};paint-order:stroke fill}
 .fc-title .fc-logo .flag{transform:scale(1.5);margin:0 10px}
 .fc-title .tag{font-weight:900;font-size:15px;color:#fff;-webkit-text-stroke:0;padding:4px 14px;border-radius:999px;background:rgba(43,35,64,.5)}
-.fc-title .big{pointer-events:auto;padding:14px 64px;border-radius:999px;background:#46b4e8;color:#fff;font-weight:900;font-size:30px;letter-spacing:1px;box-shadow:0 6px 0 rgba(43,35,64,.3);border:4px solid rgba(255,255,255,.85);animation:fcbreath 1.8s ease-in-out infinite;cursor:pointer}
+.fc-title .menu{pointer-events:auto;display:flex;flex-direction:column;align-items:stretch;gap:9px;width:min(300px,80vw)}
+.fc-title .item{padding:10px 18px;border-radius:999px;background:rgba(255,250,240,.95);color:${PALETTE.ink};font-weight:900;font-size:20px;letter-spacing:1px;text-align:center;box-shadow:0 4px 0 rgba(43,35,64,.22);border:3px solid transparent;cursor:pointer;outline:none}
+.fc-title .item.sel{border-color:${PALETTE.ink}}
+.fc-title .item.play{padding:12px 18px;background:#46b4e8;color:#fff;font-size:28px;box-shadow:0 6px 0 rgba(43,35,64,.3);border:4px solid rgba(255,255,255,.85);animation:fcbreath 1.8s ease-in-out infinite}
+.fc-title .item.play.sel{border-color:#fff}
+.fc-title .item.leave{background:rgba(43,35,64,.62);color:#fff}
 @keyframes fcbreath{50%{transform:scale(1.05)}}
-.fc-title .row3{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
-.fc-title .chip{pointer-events:auto;padding:9px 16px;border-radius:999px;background:rgba(255,250,240,.92);font-weight:900;font-size:14px;box-shadow:0 3px 0 rgba(43,35,64,.2);cursor:pointer}
-.fc-title .chip.hot{background:#ffd166}
-.fc-title .daily{pointer-events:auto;display:flex;align-items:center;gap:8px;padding:6px 7px 6px 16px;border-radius:999px;background:#fffaf0;border:3px solid #ffd166;box-shadow:0 4px 0 rgba(43,35,64,.2);cursor:pointer;max-width:min(92vw,480px)}
-.fc-title .daily b{font-size:15px;font-weight:900;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fc-title .daily em{font-style:normal;font-size:12px;font-weight:900;padding:3px 9px;border-radius:999px;background:#ffd166;white-space:nowrap}
-.fc-title .daily.done{border-color:#7ee36b}
-.fc-title .daily.done em{background:#7ee36b;color:#fff}
-.fc-title .daily.hot{animation:fcbreath 1.8s ease-in-out infinite}
+.fc-today{flex:none;pointer-events:auto;display:flex;align-items:center;gap:8px;padding:6px 7px 6px 16px;border-radius:999px;background:#fffaf0;border:3px solid #ffd166;box-shadow:0 4px 0 rgba(43,35,64,.2);cursor:pointer;max-width:min(92vw,480px)}
+.fc-today b{font-size:15px;font-weight:900;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc-today em{font-style:normal;font-size:12px;font-weight:900;padding:3px 9px;border-radius:999px;background:#ffd166;white-space:nowrap}
+.fc-today.done{border-color:#7ee36b}
+.fc-today.done em{background:#7ee36b;color:#fff}
+.fc-today.hot{animation:fcbreath 1.8s ease-in-out infinite}
 .fc-daily{margin:8px 0 0;padding:6px 10px;border-radius:14px;background:rgba(255,209,102,.25);font-weight:900;font-size:13px}
 .fc-daily.done{background:rgba(126,227,107,.3)}
 .fc-title .foot{position:absolute;bottom:max(8px,var(--fc-sa-bottom));font-size:11px;font-weight:800;color:rgba(43,35,64,.55)}
 .fc-title.out{animation:fcout .3s ease-in forwards}
 @keyframes fcout{to{opacity:0;transform:scale(1.08)}}
-@media (max-height:360px){.fc-title .daily{padding:3px 5px 3px 12px}.fc-title{gap:6px}.fc-title .fc-logo{font-size:44px!important}.fc-title .fc-logo .flag{transform:scale(1.1)}.fc-title .big{padding:10px 48px;font-size:24px}.fc-title .tag{font-size:12px}}
+@media (max-height:420px){.fc-today{padding:3px 5px 3px 12px}.fc-today b{font-size:13px}.fc-title{gap:6px}.fc-title .fc-logo{font-size:44px!important}.fc-title .fc-logo .flag{transform:scale(1.1)}.fc-title .menu{gap:7px}.fc-title .item{padding:7px 16px;font-size:17px}.fc-title .item.play{padding:8px 16px;font-size:23px}.fc-title .tag{font-size:12px}}
+@media (max-height:320px){.fc-title .fc-logo{font-size:34px!important}.fc-title .tag{display:none}.fc-title .item{padding:5px 14px;font-size:15px}.fc-title .item.play{padding:6px 14px;font-size:19px}}
 .fc-how{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
 @media (max-width:560px){.fc-how{grid-template-columns:repeat(2,1fr)}}
 .fc-how div{padding:8px;border-radius:14px;background:rgba(43,35,64,.06);font-size:12px;font-weight:700;line-height:1.25;color:rgba(43,35,64,.8)}
@@ -282,8 +290,8 @@ html.fc-ds #app{border-radius:10px;overflow:hidden;box-shadow:0 0 0 5px ${PALETT
 .fc-ds .fc-title .fc-logo{font-size:46px!important}
 .fc-ds .fc-title .fc-logo .flag{transform:scale(1.15);margin:0 6px}
 .fc-ds .fc-title .tag{margin-top:auto}
-.fc-ds .fc-title .big{padding:12px 56px;font-size:26px}
-.fc-ds .fc-title .chip{padding:9px 14px;font-size:13px}
+.fc-ds .fc-title .item{padding:10px 16px;font-size:18px}
+.fc-ds .fc-title .item.play{padding:12px 16px;font-size:24px}
 .fc-ds .fc-title .foot{bottom:calc(var(--dsbb) + 12px)}
 .fc-ds .fc-sel{padding:calc(var(--dst) + 52px) calc(var(--dsx) - 4px) calc(var(--dsbb) + 4px)}
 .fc-ds .fc-sel h2.fc-logo{display:none}
@@ -304,7 +312,10 @@ html.fc-ds #app{border-radius:10px;overflow:hidden;box-shadow:0 0 0 5px ${PALETT
 export interface Hud {
   update(m: Match, controls: Controls, camYaw: number): void;
   call(text: string, color?: string): void;
-  /** Pick your animal, mode and team size. onPick fires on every tap so the 3D preview can swap. */
+  /**
+   * After Play: step 1 picks the map and your animal (with Today's Flag), step 2 the mode, team size, role and
+   * rivals, then PLAY. onPick fires on every tap so the 3D preview can swap.
+   */
   showSelect(
     current: string,
     setup: MatchSetup,
@@ -313,9 +324,10 @@ export interface Hud {
     onPlay: (setup: MatchSetup) => void,
     onWorld: (id: string) => void,
     onBack: () => void,
+    daily?: TitleDaily,
   ): void;
-  /** The title screen: PLAY, How to play, Settings and Full screen. */
-  showTitle(points: number, onPlay: () => void, onOnline?: () => void, daily?: TitleDaily): void;
+  /** The main menu: Play, Settings, Multiplayer and Leave game. */
+  showTitle(points: number, actions: TitleActions): void;
   /** Today's Flag goal under the score while a daily match plays, or null to hide it. */
   setGoal(text: string | null, done?: boolean): void;
   /** New points total for a title screen already showing (an account save arrived). */
@@ -356,7 +368,14 @@ export interface Hud {
   readonly camScale: number;
 }
 
-/** Today's Flag on the title screen. */
+/** What the main menu's items do. Multiplayer and Leave game only show when given (and never on a portal). */
+export interface TitleActions {
+  onPlay(): void;
+  onOnline?(): void;
+  onLeave?(): void;
+}
+
+/** Today's Flag, a line on the first pick screen. */
 export interface TitleDaily {
   /** The goal in words. */
   goal: string;
@@ -715,6 +734,16 @@ export function createHud(controls: Controls): Hud {
       });
       el("div", "", box);
     }
+    // How to play and Full screen live here, so the main menu stays four items.
+    const more = el("div", "row2", box);
+    button(more, "HOW TO PLAY", "small", openHow);
+    // Portals add their own fullscreen button and don't allow one in the game.
+    if (!isFullscreen() && !PORTAL) {
+      const fs = button(more, "FULL SCREEN", "small", () => {
+        openFullscreen();
+        if (isFullscreen()) fs.remove();
+      });
+    }
     button(box, "DONE", "go", () => {
       c.remove();
       paused = wasPaused;
@@ -751,6 +780,19 @@ export function createHud(controls: Controls): Hud {
     button(box, "GOT IT", "go", () => {
       c.remove();
       paused = wasPaused;
+    });
+  }
+
+  /** Leave game asks first, so a stray tap doesn't close the game. */
+  function confirmLeave(onLeave: () => void): void {
+    const { card: c, box } = card();
+    el("h1", "sm", box).textContent = "LEAVE GAME?";
+    el("p", "", box).textContent = "Your points and unlocks are saved.";
+    const row = el("div", "row2", box);
+    button(row, "STAY", "go", () => c.remove());
+    button(row, "LEAVE", "go alt", () => {
+      c.remove();
+      onLeave();
     });
   }
 
@@ -841,7 +883,7 @@ export function createHud(controls: Controls): Hud {
       n.style.color = color;
       window.setTimeout(() => n.remove(), 1000);
     },
-    showTitle(points, onPlay, onOnline, daily) {
+    showTitle(points, actions) {
       root.classList.add("fc-menu");
       const t = el("div", "fc-title", root);
       const logo = el("h2", "fc-logo", t);
@@ -849,58 +891,70 @@ export function createHud(controls: Controls): Hud {
       el("span", "flag", logo);
       el("span", "b", logo).textContent = "CATCH";
       el("div", "tag", t).textContent = titleTag(points);
-      const play = el("div", "big", t);
-      play.textContent = "PLAY";
-      play.addEventListener("click", (e) => {
-        e.stopPropagation();
-        sfx.go();
-        t.classList.add("out");
-        window.setTimeout(() => {
-          t.remove();
-          onPlay();
-        }, 220);
-      });
-      if (daily) {
-        const card = el("div", `daily${daily.done ? " done" : ""}${daily.hot && !daily.done ? " hot" : ""}`, t);
-        // One plain line: today's goal, and what clearing it pays (or that it's done).
-        el("b", "", card).textContent = `DAILY: ${daily.goal}`;
-        el("em", "", card).textContent = daily.done
-          ? `DONE${daily.streak > 1 ? ` · ${daily.streak} DAYS IN A ROW` : ""}`
-          : `+${DAILY_BONUS}${daily.streak > 0 ? ` · ${daily.streak} DAY STREAK` : ""}`;
-        card.addEventListener("click", (e) => {
+      // The main menu: one list, nothing else. Play leads on to the map, the animal and the match settings.
+      const menu = el("div", "menu", t);
+      menu.setAttribute("role", "menu");
+      const items: HTMLElement[] = [];
+      const leave = (then: () => void) => {
+        document.removeEventListener("keydown", keys);
+        t.remove();
+        then();
+      };
+      const item = (text: string, cls: string, onTap: () => void) => {
+        const b = el("div", `item ${cls}`, menu);
+        b.textContent = text;
+        b.setAttribute("role", "menuitem");
+        b.tabIndex = 0;
+        b.addEventListener("click", (e) => {
           e.stopPropagation();
-          sfx.go();
-          t.classList.add("out");
-          window.setTimeout(() => {
-            t.remove();
-            daily.onPlay();
-          }, 220);
+          onTap();
         });
-      }
-      const row = el("div", "row3", t);
-      if (onOnline && !PORTAL) {
-        button(row, "PLAY ONLINE", "chip hot", () => {
-          t.remove();
-          onOnline();
-        });
-      }
-      button(row, "HOW TO PLAY", "chip", openHow);
-      button(row, "SETTINGS", "chip", openSettings);
-      // DS mode: hold the phone upright for a game screen over a map and buttons screen.
-      const dsChip = button(row, "", "chip", () => {
-        setSetting("dsMode", !settings.dsMode);
-        if (settings.dsMode && !split) this.call("HOLD YOUR PHONE UPRIGHT", "#ffd166");
+        b.addEventListener("pointerenter", () => choose(items.indexOf(b)));
+        items.push(b);
+        return b;
+      };
+      item("PLAY", "play", () => {
+        sfx.go();
+        document.removeEventListener("keydown", keys);
+        t.classList.add("out");
+        window.setTimeout(() => leave(actions.onPlay), 220);
       });
-      const dsLabel = () => (dsChip.textContent = `${UPRIGHT_NAME}: ${settings.dsMode ? "ON" : "OFF"}`);
-      dsLabel();
-      onSettings(() => dsChip.isConnected && dsLabel());
-      // Portals add their own fullscreen button and don't allow one in the game.
-      if (!isFullscreen() && !PORTAL) {
-        const fs = button(row, "FULL SCREEN", "chip hot", () => {
-          openFullscreen();
-          if (isFullscreen()) fs.remove();
+      item("SETTINGS", "", () => {
+        sfx.pick();
+        openSettings();
+      });
+      // Online play needs a TrueAIGaming.com sign in, so portal copies leave it out.
+      const onOnline = actions.onOnline;
+      if (onOnline && !PORTAL) {
+        item("MULTIPLAYER", "", () => {
+          sfx.pick();
+          leave(onOnline);
         });
       }
+      // Portals have their own way out of a game.
+      const onLeave = actions.onLeave;
+      if (onLeave && !PORTAL) {
+        item("LEAVE GAME", "leave", () => {
+          sfx.pick();
+          confirmLeave(onLeave);
+        });
+      }
+      // Arrow keys and Enter work the list too, for a keyboard or a pad.
+      let at = -1;
+      function choose(i: number) {
+        at = i;
+        items.forEach((b, k) => b.classList.toggle("sel", k === at));
+      }
+      function keys(e: KeyboardEvent) {
+        if (!t.isConnected) return document.removeEventListener("keydown", keys);
+        if (root.querySelector(".fc-card")) return;
+        if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") choose((at + 1) % items.length);
+        else if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") choose((at - 1 + items.length) % items.length);
+        else if ((e.key === "Enter" || e.key === " ") && at >= 0) items[at].click();
+        else return;
+        e.preventDefault();
+      }
+      document.addEventListener("keydown", keys);
       el("div", "foot", t).textContent = PORTAL ? "A TrueAIGaming game" : "A TrueAIGaming.com game";
       t.addEventListener("pointerdown", (e) => e.stopPropagation());
     },
@@ -1093,35 +1147,49 @@ export function createHud(controls: Controls): Hud {
       call.classList.add("show");
       callTimer = 0.9;
     },
-    showSelect(current, chosen, info, onPick, onPlay, onWorld, onBack) {
+    showSelect(current, chosen, info, onPick, onPlay, onWorld, onBack, daily) {
       let { mode, size, medic, difficulty, world } = chosen;
       const { progress, open } = info;
       root.classList.add("fc-menu");
       const sel = el("div", "fc-sel", root);
+      // Two steps: first the map and your animal, then the match settings, then play.
       const title = el("h2", "fc-logo", sel);
-      el("span", "a", title).textContent = "FLAG";
-      el("span", "flag", title);
-      el("span", "b", title).textContent = "CATCH";
-      el("small", "", title).textContent = "Pick your animal, steal their flags and bring them home!";
+      const titleText = el("span", "", title);
+      const titleSub = el("small", "", title);
+      const stepA = el("div", "fc-step", sel);
+      const stepB = el("div", "fc-step", sel);
+      let step: 1 | 2 = 1;
+      const showStep = (n: 1 | 2) => {
+        step = n;
+        stepA.hidden = n !== 1;
+        stepB.hidden = n !== 2;
+        titleText.textContent = n === 1 ? "MAP & ANIMAL" : "MATCH SETTINGS";
+        titleSub.textContent = n === 1 ? "Step 1 of 2: pick where to play and who you ride" : "Step 2 of 2: set up the match, then play!";
+        if (n === 2) refreshSummary();
+        else tiles.get(current)?.scrollIntoView({ inline: "center", block: "nearest" });
+      };
       // Your points, and what they open next.
-      const pts = el("div", "fc-pts", sel);
+      const pts = el("div", "fc-pts", stepA);
       const next = nextUnlock(progress);
       const nextIds = next ? [...(next.animals ?? []), ...(next.worlds ?? []), ...(next.modes ?? [])].filter((id) => !open.has(id)) : [];
       pts.innerHTML = `<b>★ ${fmt(progress.points)}</b> POINTS` + (next && nextIds.length ? ` · NEXT: ${nextIds.map(unlockName).join(", ").toUpperCase()} AT ${fmt(next.at)}` : "");
-      // Back to the title screen, and Settings from here too.
+      // Back a step (or to the main menu from the first), and Settings from here too.
       const corner = el("div", "fc-top-left", sel);
       corner.style.pointerEvents = "auto";
-      button(corner, "‹ MENU", "fc-chip fc-back", () => {
+      // Steering grabs any press it hears and would swallow these buttons' clicks.
+      corner.addEventListener("pointerdown", (e) => e.stopPropagation());
+      button(corner, "‹ BACK", "fc-chip fc-back", () => {
+        if (step === 2) return showStep(1);
         sel.remove();
         onBack();
       });
       button(corner, "SETTINGS", "fc-chip fc-back", openSettings);
-      // Mode and team size share one panel above the animals, so nothing overlaps.
-      const setup = el("div", "fc-setup", sel);
-      setup.addEventListener("pointerdown", (e) => e.stopPropagation());
+      // Step 1: the map, today's challenge, and the animals.
+      const mapPanel = el("div", "fc-setup", stepA);
+      mapPanel.addEventListener("pointerdown", (e) => e.stopPropagation());
       // The world: step through all eight; locked ones show what opens them.
-      const worldGroup = el("div", "fc-group", setup);
-      el("label", "", worldGroup).textContent = "WORLD";
+      const worldGroup = el("div", "fc-group", mapPanel);
+      el("label", "", worldGroup).textContent = "MAP";
       const worldBox = el("div", "fc-world", worldGroup);
       const prevW = el("div", "arw", worldBox);
       prevW.textContent = "‹";
@@ -1135,7 +1203,7 @@ export function createHud(controls: Controls): Hud {
         worldName.classList.toggle("locked", locked);
         const best = progress.best[world];
         el("small", "", worldName).textContent = locked ? `LOCKED · ${fmt(costOf(world))} PTS` : best ? `${w.blurb.toUpperCase()} · BEST ${best}` : w.blurb.toUpperCase();
-        refreshPlay();
+        refreshNext();
       };
       const stepWorld = (d: number) => {
         const i = WORLDS.findIndex((w) => w.id === world);
@@ -1146,6 +1214,25 @@ export function createHud(controls: Controls): Hud {
       };
       prevW.addEventListener("click", () => stepWorld(-1));
       nextW.addEventListener("click", () => stepWorld(1));
+      // Today's Flag: one plain line, today's goal and what clearing it pays (or that it's done). It plays its own
+      // map and animal, so it skips the steps.
+      if (daily) {
+        const line = el("div", `fc-today${daily.done ? " done" : ""}${daily.hot && !daily.done ? " hot" : ""}`, stepA);
+        el("b", "", line).textContent = `DAILY: ${daily.goal}`;
+        el("em", "", line).textContent = daily.done
+          ? `DONE${daily.streak > 1 ? ` · ${daily.streak} DAYS IN A ROW` : ""}`
+          : `+${DAILY_BONUS}${daily.streak > 0 ? ` · ${daily.streak} DAY STREAK` : ""}`;
+        line.addEventListener("pointerdown", (e) => e.stopPropagation());
+        line.addEventListener("click", (e) => {
+          e.stopPropagation();
+          sfx.go();
+          sel.remove();
+          daily.onPlay();
+        });
+      }
+      // Step 2: mode, team size, role and rivals share one panel.
+      const setup = el("div", "fc-setup", stepB);
+      setup.addEventListener("pointerdown", (e) => e.stopPropagation());
       const modeGroup = el("div", "fc-group", setup);
       el("label", "", modeGroup).textContent = "MODE";
       const modes = el("div", "fc-seg", modeGroup);
@@ -1230,7 +1317,7 @@ export function createHud(controls: Controls): Hud {
         diffBtns.set(id, b);
       }
       diffBtns.forEach((n, k) => n.classList.toggle("on", k === difficulty));
-      const row = el("div", "fc-row", sel);
+      const row = el("div", "fc-row", stepA);
       const tiles = new Map<string, HTMLElement>();
       const pick = (id: string) => {
         if (!open.has(id)) {
@@ -1253,17 +1340,41 @@ export function createHud(controls: Controls): Hud {
         tile.addEventListener("click", () => pick(id));
         tiles.set(id, tile);
       }
-      tiles.get(current)?.scrollIntoView({ inline: "center", block: "nearest" });
-      const play = el("div", "fc-play", row);
-      play.textContent = "PLAY";
-      function refreshPlay() {
-        play.classList.toggle("locked", !open.has(world));
+      const nextBtn = el("div", "fc-play", row);
+      nextBtn.textContent = "NEXT ›";
+      function refreshNext() {
+        nextBtn.classList.toggle("locked", !open.has(world));
       }
+      nextBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+      nextBtn.addEventListener("click", () => {
+        if (!open.has(world)) {
+          nope(worldName);
+          nope(nextBtn);
+          return;
+        }
+        sfx.pick();
+        showStep(2);
+      });
+      // Step 2's foot: what you picked in step 1, and PLAY.
+      const playRow = el("div", "fc-row", stepB);
+      const summary = el("div", "fc-sum", playRow);
+      summary.addEventListener("pointerdown", (e) => e.stopPropagation());
+      summary.addEventListener("click", () => {
+        sfx.pick();
+        showStep(1);
+      });
+      function refreshSummary() {
+        summary.replaceChildren();
+        el("small", "", summary).textContent = "MAP · ANIMAL";
+        el("span", "", summary).textContent = `${worldById(world).name} · ${ANIMALS[current]?.name ?? ""}`;
+      }
+      const play = el("div", "fc-play", playRow);
+      play.textContent = "PLAY";
       play.addEventListener("pointerdown", (e) => {
         e.stopPropagation();
         if (!open.has(world)) {
+          showStep(1);
           nope(worldName);
-          nope(play);
           return;
         }
         sel.remove();
@@ -1272,6 +1383,7 @@ export function createHud(controls: Controls): Hud {
       });
       showWorld();
       pick(open.has(current) ? current : "lion");
+      showStep(1);
     },
     countdown(onDone) {
       hintTimer = 8;

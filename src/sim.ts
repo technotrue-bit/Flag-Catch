@@ -26,6 +26,7 @@ import {
 } from "./terrain";
 import { type WorldDef, worldById } from "./worlds";
 import { PLANS, type TeamBrain, newBrain, pickPlan, switchPlan } from "./plans";
+import { pickLineup } from "./lineup";
 
 export const STEP = 1 / 60;
 
@@ -558,9 +559,9 @@ export function createMatch(opts: MatchOptions): Match {
     ...outposts().map(([x, z, team], i) => ({ id: 2 + i, team, x, z, main: false })),
   ];
   const players: Player[] = [];
-  const ids = Object.keys(ANIMALS);
-  // Each CPU slot gets the same animal on both teams, so the sides stay even.
-  const picks = Array.from({ length: opts.perTeam }, () => ids[Math.floor(rng() * ids.length)]);
+  // Each CPU slot gets the same animal on both teams, so the sides stay even, picked to suit this world with a fair
+  // mix of jobs (see lineup.ts). Slot 0 is yours, and your rival's.
+  const picks = [opts.humanAnimal, ...pickLineup(rng, world.id, Math.max(0, opts.perTeam - 1), opts.humanAnimal)];
   for (let team = 0 as Team; team <= 1; team = (team + 1) as Team) {
     for (let i = 0; i < opts.perTeam; i++) {
       const seat = opts.seats?.find((s) => s.team === team && s.slot === i && !(team === 0 && i === 0));

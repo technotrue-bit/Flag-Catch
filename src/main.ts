@@ -9,7 +9,8 @@ import * as THREE from "three";
 import { ANIMALS } from "./animals";
 import { type Mood, buzz, moodTone, music, sfx, unlockAudio } from "./audio";
 import { Fx } from "./fx";
-import { type DailyResult, type MatchStats, createHud } from "./hud";
+import { type DailyResult, type MatchStats, type TitleDaily, createHud } from "./hud";
+import { leaveGame } from "./leave";
 import { createControls } from "./input";
 import { type AnimalRig, buildAnimal } from "./critters";
 import { Crowd, TOKEN_RANGE } from "./crowd";
@@ -1487,39 +1488,53 @@ function showSelect(): void {
       }, 250);
     },
     showTitle,
+    todayLine(),
   );
 }
 
 /** Sent here from trueaigaming.com's "Today" card: the title's daily card pulses. */
 const dailyAsked = params.get("daily") === "1";
 
-function showTitle(): void {
-  phase = "title";
-  if (music.level !== 0) music.play(0);
+let dailyShown = false;
+
+/** Today's Flag for the first pick screen. */
+function todayLine(): TitleDaily {
   const today = dailyFor(new Date());
   const key = today.key;
-  hud.showTitle(
-    progress.points,
-    () => {
+  return {
+    goal: goalText(today),
+    streak: progressStore.streakOn(progress, key),
+    done: progress.daily.last === key,
+    hot: dailyAsked,
+    onPlay: () => {
+      unlockAudio();
+      startDaily(dailyFor(new Date()), false);
+    },
+  };
+}
+
+/** The main menu: Play, Settings, Multiplayer and Leave game. */
+function showTitle(): void {
+  // Sent here from trueaigaming.com's "Today" card: straight on to the pick screen, where the daily line pulses.
+  if (dailyAsked && !dailyShown) {
+    dailyShown = true;
+    return showSelect();
+  }
+  phase = "title";
+  if (music.level !== 0) music.play(0);
+  hud.showTitle(progress.points, {
+    onPlay: () => {
       unlockAudio();
       showSelect();
     },
-    () => {
+    onOnline: () => {
       unlockAudio();
       openOnline();
     },
-    {
-      goal: goalText(today),
-      streak: progressStore.streakOn(progress, key),
-      done: progress.daily.last === key,
-      hot: dailyAsked,
-      onPlay: () => {
-        unlockAudio();
-        startDaily(dailyFor(new Date()), false);
-      },
-    },
-  );
+    onLeave: () => leaveGame("flag-catch"),
+  });
 }
+
 
 /**
  * Plays Today's Flag: the day's world, animal, mode, island size and rival skill, from the day's seed. None of it is
