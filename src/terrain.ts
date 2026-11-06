@@ -90,9 +90,10 @@ export function setMap(def: MapDef): void {
   WORLD_HALF_Z = LAYOUT_HALF_Z * sz;
   ZONE_EDGE = LAYOUT_EDGE * sz;
   BASE_Z = LAYOUT_BASE_Z * sz;
-  bridgeXs = def.bridges.map((u) => u * sx);
+  // All land has no channels to cross and open sea no land to cross to, so only the island worlds get bridges.
+  bridgeXs = world.ground === "isles" ? def.bridges.map((u) => u * sx) : [];
   BRIDGES = bridgeXs;
-  BRIDGE_X = Math.max(...bridgeXs);
+  BRIDGE_X = bridgeXs.length ? Math.max(...bridgeXs) : 0;
   // Decks get a little wider on the big maps so crowds can pass.
   bridgeWidth = 20 * (1 + (def.scale - 1) * 0.35) ** 2 * world.bridgeWidth;
 }
@@ -125,7 +126,11 @@ export function mapScale(): number {
 export function groundHeight(x: number, z: number): number {
   const u = x / sx;
   const v = z / sz;
-  const f = Math.max(lobe(u, v, 0, 0, 40, 32), lobe(u, v, 0, HOME_V, 34, 32), lobe(u, v, 0, -HOME_V, 34, 32));
+  let f = Math.max(lobe(u, v, 0, 0, 40, 32), lobe(u, v, 0, HOME_V, 34, 32), lobe(u, v, 0, -HOME_V, 34, 32));
+  // All land: the channels and sea inside the play area fill in as low ground, with a beach round the edge.
+  const allLand = world.ground === "land";
+  const inside = allLand ? smooth(clamp01((LAYOUT_HALF_X - 1 - Math.abs(u)) / 4)) * smooth(clamp01((LAYOUT_HALF_Z - 1 - Math.abs(v)) / 4)) : 0;
+  if (allLand) f = Math.max(f, 0.45 * inside - 0.4 * (1 - inside));
   // Rolls only on land, so the channels stay clean water.
   const land = clamp01((f - 0.08) * 3);
   const rolls = 1.3 * Math.cos(u * 0.13) * Math.cos(v * 0.1) + 0.8 * Math.cos((u - v) * 0.07);
@@ -139,7 +144,7 @@ export function groundHeight(x: number, z: number): number {
   if (map.gigantic) {
     // Gigantic maps add side lakes in the middle land, a pond in each
     // homeland and two more lookout hills, so the open ground has shape.
-    const lakes = world.liquid === "lava" ? 0 : 1;
+    const lakes = world.liquid === "lava" || allLand ? 0 : 1;
     h -= 6 * lakes * (bump(u + 26, v + 14, 70) + bump(u - 26, v - 14, 70));
     h -= 5 * lakes * (bump(u - 22, v - 82, 40) + bump(u + 22, v + 82, 40));
     h += 3 * land * (bump(u + 24, v - 46, 60) + bump(u - 24, v + 46, 60));
@@ -148,6 +153,13 @@ export function groundHeight(x: number, z: number): number {
     for (const [ou, ov] of OUTPOSTS) pad = Math.max(pad, bump(u - ou, v - ov, 40));
     h = Math.max(h, h * (1 - pad) + 2.6 * pad);
   }
+  // Land necks and frozen sheets: blend toward flat ground at least 1.6 high.
+  if (world.fill) {
+    const k = world.fill(u, v) * calm(x, u, v);
+    if (k > 0) h += (Math.max(h, 1.6) - h) * Math.min(1, k);
+  }
+  // All land never dips under the water, however deep a dune trough runs.
+  if (allLand) h = Math.max(h, 0.5 * inside - 4 * (1 - inside));
   const b = bridge(x, v);
   return Math.max(h, b > 0.01 ? DOME * b - 1.2 : -Infinity, -6);
 }

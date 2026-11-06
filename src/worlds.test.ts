@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { ANIMAL_IDS } from "./animals";
 import * as progress from "./progress";
 import { type Input, NO_INPUT, STEP, createMatch, step } from "./sim";
-import { MAPS, WORLD_HALF_X, WORLD_HALF_Z, groundHeight, isLava, isWater } from "./terrain";
-import { WORLDS } from "./worlds";
+import { BRIDGES, MAPS, WORLD_HALF_X, WORLD_HALF_Z, groundHeight, isLava, isWater, setMap, setWorld } from "./terrain";
+import { WORLDS, worldById } from "./worlds";
 
 const opts = { seed: 3, humanAnimal: "lion", perTeam: 4, duration: 60, flagsPerTeam: 5 };
 
@@ -23,6 +23,54 @@ describe("worlds", () => {
         expect(m.stations.filter((s) => isWater(s.x, s.z)), `${w.id} stations`).toEqual([]);
         expect(m.players.filter((p) => isWater(p.x, p.z)), `${w.id} spawns`).toEqual([]);
       }
+    }
+  });
+
+  it("the worlds run from all land to all sea", () => {
+    // The share of the play area that's dry, sampled on a grid well inside the edges.
+    const dry = (id: string) => {
+      setWorld(worldById(id));
+      setMap(MAPS[0]);
+      let n = 0;
+      let land = 0;
+      for (let i = 0; i <= 40; i++)
+        for (let j = 0; j <= 60; j++) {
+          n++;
+          if (!isWater((i / 40 - 0.5) * 1.8 * WORLD_HALF_X, (j / 60 - 0.5) * 1.8 * WORLD_HALF_Z)) land++;
+        }
+      return land / n;
+    };
+    expect(dry("dunes")).toBe(1);
+    expect(dry("frost")).toBeGreaterThan(dry("home") + 0.05);
+    expect(dry("bluffs")).toBeGreaterThan(dry("home") + 0.05);
+    expect(dry("reef")).toBeLessThan(dry("home"));
+    expect(dry("lagoon")).toBeLessThan(0.12);
+  });
+
+  it("all land and open sea have no bridges; the island worlds keep theirs", () => {
+    for (const map of MAPS) {
+      for (const id of ["dunes", "lagoon"]) {
+        createMatch({ ...opts, perTeam: map.size, flagsPerTeam: map.flagsPerTeam, map, world: id });
+        expect(BRIDGES, `${id} ${map.name}`).toEqual([]);
+      }
+      createMatch({ ...opts, perTeam: map.size, flagsPerTeam: map.flagsPerTeam, map, world: "bluffs" });
+      expect(BRIDGES.length).toBe(map.bridges.length);
+    }
+  });
+
+  it("on the all land and open sea worlds every CPU still gets about and plays", () => {
+    for (const world of ["dunes", "lagoon"]) {
+      const m = createMatch({ ...opts, perTeam: 8, world, duration: 90 });
+      m.players[0].cpu = true;
+      const start = m.players.map((p) => [p.x, p.z]);
+      let grabs = 0;
+      for (let i = 0; i < 60 / STEP; i++) {
+        step(m, NO_INPUT);
+        for (const e of m.events) if (e.kind === "grab") grabs++;
+      }
+      const moved = m.players.filter((p, i) => Math.hypot(p.x - start[i][0], p.z - start[i][1]) > 10).length;
+      expect(moved, world).toBeGreaterThan(m.players.length * 0.7);
+      expect(grabs, world).toBeGreaterThan(0);
     }
   });
 

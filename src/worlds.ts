@@ -1,15 +1,16 @@
 /**
- * The eight worlds. Each one is the same three land layout (yours, the
- * middle, theirs) reshaped and repainted, with one twist of its own:
+ * The eight worlds. Each one starts from the same three land layout (yours,
+ * the middle, theirs), reshaped and repainted, with one twist of its own, and
+ * they run from all land to all sea:
  *
+ *   Rust Dunes    all land: red sand dunes and flat topped mesas, no water
+ *   Frost Floe    the channels froze over, but for a few holes; ice: land animals slide
+ *   Bumpy Bluffs  big rolling bumps, lookout bluffs and land necks across the channels
  *   Home Isle     the classic island
- *   Ring Reef     broken rings of reef water cut the lands, swimmers rule
- *   Bumpy Bluffs  big rolling bumps and lookout bluffs
- *   Frost Floe    ice: land animals slide and drift
- *   Deep Lagoon   mostly sea with small islands
  *   Storm Spire   a rock spire in the middle, swirling wind and lightning
- *   Rust Dunes    red sand dunes and flat topped mesas
  *   Lava Loop     the channels are lava that burns, and the bridges are narrow
+ *   Ring Reef     broken rings of reef water cut the lands, swimmers rule
+ *   Deep Lagoon   open sea: only a sand bar under each base and gift box
  *
  * Every shape is point symmetric (the same at (u, v) and (-u, -v)) so
  * neither team gets the better ground. Pure data and math: safe in node.
@@ -63,6 +64,16 @@ export interface WorldDef {
   ice: boolean;
   /** Swirling wind and lightning strikes. */
   storm: boolean;
+  /**
+   * The ground's overall shape: three islands split by channels (with bridges), all land with no water to cross, or
+   * open sea with only a sand bar under each base and power up station (no bridges either).
+   */
+  ground: "isles" | "land" | "sea";
+  /**
+   * How much of each spot, channels and sea included, is filled in as flat land (0 to 1): land necks across the
+   * channels, frozen sheets. Kept off the bases and where bridges land.
+   */
+  fill?: (u: number, v: number) => number;
   /** Extra height in layout units, already masked off the bases and bridges. */
   shape: (u: number, v: number, land: number) => number;
 }
@@ -109,6 +120,7 @@ export const WORLDS: readonly WorldDef[] = [
     liquid: "water",
     ice: false,
     storm: false,
+    ground: "isles",
     shape: () => 0,
   },
   {
@@ -135,11 +147,12 @@ export const WORLDS: readonly WorldDef[] = [
     petals: ["#ff7aa8", "#ffffff", "#ffd166"],
     fogNear: 90,
     fogFar: 240,
-    lagoons: 1.2,
+    lagoons: 1.9,
     bridgeWidth: 1,
     liquid: "water",
     ice: false,
     storm: false,
+    ground: "isles",
     shape(u, v, land) {
       // Broken rings of reef water round the middle and each homeland, with
       // four gaps each so land animals can still get through, plus coral rocks.
@@ -149,7 +162,7 @@ export const WORLDS: readonly WorldDef[] = [
         const d = Math.hypot(du, dv);
         const a = Math.atan2(dv, du);
         const gaps = smooth((Math.abs(Math.cos(2 * a)) - 0.25) / 0.2);
-        return Math.exp(-((d - r) ** 2) / 5) * gaps;
+        return Math.exp(-((d - r) ** 2) / 8) * gaps;
       };
       // Kept dry round the power up stations.
       const dry = 1 - Math.min(1, pair(u, v, 16, 20, 24) + pair(u, v, -18, 16, 24));
@@ -161,7 +174,7 @@ export const WORLDS: readonly WorldDef[] = [
   {
     id: "bluffs",
     name: "Bumpy Bluffs",
-    blurb: "Big bumps to launch off and lookout bluffs",
+    blurb: "Big bumps, bluffs and land necks. More land",
     palette: {
       ...HOME_PALETTE,
       skyTop: "#f5b38a",
@@ -190,6 +203,13 @@ export const WORLDS: readonly WorldDef[] = [
     liquid: "water",
     ice: false,
     storm: false,
+    ground: "isles",
+    // Two wide land necks across each channel on the flanks, so land animals can drive round as well as over the
+    // bridges.
+    fill: (u, v) => {
+      const neck = (cu: number, cv: number) => Math.exp(-((u - cu) ** 2) / 45 - ((v - cv) ** 2) / 260);
+      return Math.min(1, 1.6 * (neck(26, 36) + neck(-26, 36) + neck(26, -36) + neck(-26, -36)));
+    },
     shape(u, v, land) {
       const bumps = 1.5 * Math.cos(u * 0.32) * Math.cos(v * 0.27) + 0.9 * Math.cos(u * 0.19 + v * 0.23) * Math.cos(u * 0.19 - v * 0.23);
       const bluffs = 4.2 * (pair(u, v, 30, 12, 50) + pair(u, v, -26, 58, 45));
@@ -199,7 +219,7 @@ export const WORLDS: readonly WorldDef[] = [
   {
     id: "frost",
     name: "Frost Floe",
-    blurb: "Icy ground: land animals slide",
+    blurb: "Frozen channels, icy ground. Land slides",
     palette: {
       ...HOME_PALETTE,
       skyTop: "#9cc9ec",
@@ -231,6 +251,16 @@ export const WORLDS: readonly WorldDef[] = [
     liquid: "water",
     ice: true,
     storm: false,
+    ground: "isles",
+    // The channels have frozen over, all but a few holes of open water (and the water under each bridge).
+    fill: (u, v) => {
+      // An oval sheet over each channel, so the ice meets the shore in curves rather than straight edges.
+      const dv = (Math.abs(v) - 35) / 17;
+      const du = u / 42;
+      const band = smooth((1 - dv * dv - du * du) / 0.35);
+      const holes = Math.min(1, 1.4 * (pair(u, v, 30, 34, 30) + pair(u, v, -2, 38, 22) + pair(u, v, -32, 33, 26)));
+      return band * (1 - holes);
+    },
     shape(u, v, land) {
       // Smoother and lower than Home Isle, with ice ridges near the shores.
       const ridges = 1.6 * (pair(u, v, 34, 20, 60) + pair(u, v, 20, 100, 70));
@@ -240,7 +270,7 @@ export const WORLDS: readonly WorldDef[] = [
   {
     id: "lagoon",
     name: "Deep Lagoon",
-    blurb: "Mostly sea with small islands",
+    blurb: "Open sea. Only swimmers and flyers",
     palette: {
       ...HOME_PALETTE,
       skyTop: "#5aa9ea",
@@ -262,12 +292,11 @@ export const WORLDS: readonly WorldDef[] = [
     liquid: "water",
     ice: false,
     storm: false,
+    ground: "sea",
     shape(u, v, land) {
-      // Sink most of the land, leaving islands round the bases and a few more.
-      // Islands round the bases, the middle and each power up station.
-      const keep =
-        pair(u, v, 22, 12, 60) + pair(u, v, -24, 50, 70) + bump(u, v, 90) + pair(u, v, 16, 20, 30) + pair(u, v, -18, 16, 30) + pair(u, v, -12, 52, 30) + pair(u, v, 0, 22, 30) + pair(u, v, -24, 60, 30);
-      return land * (-4.2 + 4.6 * Math.min(1, keep));
+      // Sink all the land: only open sea is left, with a sand bar under each power up station (the bases keep theirs).
+      const keep = bump(u, v, 26) + pair(u, v, 16, 20, 26) + pair(u, v, -18, 16, 26) + pair(u, v, -12, 52, 26) + pair(u, v, 0, 22, 26) + pair(u, v, -24, 60, 26);
+      return land * (-6 + 6.4 * Math.min(1, keep));
     },
   },
   {
@@ -303,6 +332,7 @@ export const WORLDS: readonly WorldDef[] = [
     liquid: "water",
     ice: false,
     storm: true,
+    ground: "isles",
     shape(u, v, land) {
       // Flatter open ground and a tall rock spire in the middle.
       const d = Math.hypot(u, v);
@@ -313,7 +343,7 @@ export const WORLDS: readonly WorldDef[] = [
   {
     id: "dunes",
     name: "Rust Dunes",
-    blurb: "Red dunes and flat topped mesas",
+    blurb: "All land: red dunes and mesas, no water",
     palette: {
       ...HOME_PALETTE,
       skyTop: "#f0a36f",
@@ -340,11 +370,12 @@ export const WORLDS: readonly WorldDef[] = [
     petals: ["#ff6b9a", "#ffd166"],
     fogNear: 60,
     fogFar: 190,
-    lagoons: 0.5,
+    lagoons: 0,
     bridgeWidth: 1,
     liquid: "water",
     ice: false,
     storm: false,
+    ground: "land",
     shape(u, v, land) {
       const dunes = 1.1 * Math.cos(u * 0.42 + v * 0.18) * Math.cos(u * 0.42 - v * 0.18);
       // Mesas: steep sided, flat on top.
@@ -392,6 +423,7 @@ export const WORLDS: readonly WorldDef[] = [
     liquid: "lava",
     ice: false,
     storm: false,
+    ground: "isles",
     shape(u, v, land) {
       // Craggy rock with a few vents.
       const crags = 1.2 * Math.cos(u * 0.3) * Math.cos(v * 0.22) + 2.6 * (pair(u, v, 26, 16, 20) + pair(u, v, -28, 54, 24));
