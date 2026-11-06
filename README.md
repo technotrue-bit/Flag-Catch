@@ -47,13 +47,13 @@ its pick tile:
 
 Which animal each CPU rides suits the map being played (`src/lineup.ts`). Every
 animal gets a fit score for each world: swimmers rule Deep Lagoon and Ring Reef,
-can't cross Lava Loop and have little water on Rust Dunes (the Bowl Goldfish and
-Pogo Frog still get about on land, so they stay picks there), land animals spend
-Deep Lagoon wading, Storm Spire's wind keeps flyers rarer, and on Frost Floe the
-grippy Surf Penguin and Skate Mammoth come up more. Animals that barely get about
-on a world are left out, the rest are picked by how well they fit, and each team
-gets a fair mix of jobs (raiders, hunters, guardians, a bomber, all rounders)
-with no one animal filling most of it.
+can't cross Lava Loop and find no water on Rust Dunes (the Bowl Goldfish and
+Pogo Frog still get about on land, so they stay picks there), land animals have
+nothing to stand on in Deep Lagoon, Storm Spire's wind keeps flyers rarer, and on
+Frost Floe the grippy Surf Penguin and Skate Mammoth come up more. Only animals
+allowed on the world play it (see Worlds), the rest are picked by how well they
+fit, and each team gets a fair mix of jobs (raiders, hunters, guardians, a
+bomber, all rounders) with no one animal filling most of it.
 
 Every second or so each team shares out the jobs: two or three hunters per
 thief, someone to touch a dropped flag home, bodyguards for each carrier,
@@ -67,25 +67,44 @@ two minutes), and the next catch wins.
 
 ## Worlds
 
-Eight worlds (maps), picked with the arrows on the first pick screen. Each one reshapes
-and repaints the same three land layout and adds a twist of its own. Every
-world is the same for both teams (the ground matches when turned round the
-middle), and bases, flags, stations and bridge landings always stay dry and level.
+Eight worlds (maps), picked with the arrows on the first pick screen. Each one starts
+from the same three land layout and adds a twist of its own, and they run from all land
+to all sea (each world's `ground` and `fill` in `src/worlds.ts`). Every world is the same
+for both teams (the ground matches when turned round the middle), and bases, flags,
+stations and bridge landings always stay dry and level.
 
-- Home Isle: gentle grass and beaches.
-- Ring Reef: broken rings of reef water cut the lands (with gaps to drive
-  through), palms, coral in the shallows. Swimmers rule.
-- Bumpy Bluffs: rolling bumps to launch off and two lookout bluffs, in autumn colors.
-- Frost Floe: ice. Land animals slide and drift when they turn; the penguin
-  grips best and the mammoth's skateboard holds well. Pines, ice floes and snow.
-- Deep Lagoon: mostly sea, with small islands round the bases and stations.
+- Rust Dunes: all land, no water anywhere (and no bridges): red dunes and flat
+  topped mesas, cacti and blowing dust.
+- Frost Floe: the channels have frozen over, but for a few holes and the water
+  under each bridge. Ice: land animals slide and drift when they turn; the
+  penguin grips best and the mammoth's skateboard holds well. Pines and snow.
+- Bumpy Bluffs: rolling bumps to launch off, two lookout bluffs, and wide land
+  necks across both channels on the flanks, in autumn colors.
+- Home Isle: the classic three islands, gentle grass and beaches.
 - Storm Spire: a rock spire in the middle, wind that swings round the compass
   every 40 seconds (it shoves flyers most), and lightning that lands near each
   team in turn after a glowing warning ring. Rain.
-- Rust Dunes: red dunes and flat topped mesas, cacti and blowing dust.
 - Lava Loop: the channels and sea are lava. Touching it costs a hit and throws
   you back toward the nearest land, so there is no swimming across; the
   bridges are narrow and everyone but flyers uses them. Embers drift up.
+- Ring Reef: broken rings of reef water cut the lands (with gaps to drive
+  through), wider lagoons, palms, coral in the shallows. Swimmers rule.
+- Deep Lagoon: open sea, with only a sand bar under each base and gift box
+  station, and no bridges.
+
+Each world has its own animals, the ones that can get about on it
+(`allowedOn` in `src/lineup.ts`); the map picker says who plays:
+
+- Deep Lagoon: swimmers and flyers.
+- Rust Dunes and Lava Loop: land animals and flyers, plus the Bowl Goldfish and
+  Pogo Frog, which get about on land too.
+- Everywhere else: everyone.
+
+Only allowed animals play a world, CPUs and you alike (your rival rides your
+animal). On the pick screen the others say NOT ON THIS MAP, and flicking to a
+world your animal can't play switches you to the open one that suits it best,
+of the same job when there is one. Online, a player's pick that doesn't suit the
+host's world swaps the same way. The daily challenge's animal always plays its world.
 
 ## Points and unlocks
 

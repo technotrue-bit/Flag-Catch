@@ -14,6 +14,7 @@ import { cue } from "./cues";
 import { type Difficulty, HOARD_TARGET, ITEMS, type ItemKind, type Match, type Mode, nearestBase, tune } from "./sim";
 import { type Award, type Progress, UNLOCKS, costOf, nextUnlock } from "./progress";
 import { DAILY_BONUS } from "./daily";
+import { allowedAnimals, allowedOn, allowedPick, whoPlays } from "./lineup";
 import { BASE_Z, MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, currentMap, currentWorld, groundHeight, landOf, onBridge, outposts, setMap, setWorld } from "./terrain";
 import { WORLDS, type WorldDef, worldById } from "./worlds";
 import { type DsLayout, mapRect } from "./ds";
@@ -162,6 +163,10 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-tile .lock{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);opacity:1!important;padding:5px 10px;border-radius:999px;background:${PALETTE.ink};color:#fff;font-size:11px;font-weight:900;white-space:nowrap}
 .fc-play.locked{background:#9a93a8}
 .fc-step{display:contents}
+.fc-plays{margin-top:2px;font-size:10px;font-weight:900;letter-spacing:.4px;color:rgba(43,35,64,.62);text-align:center}
+.fc-tile.banned{background:rgba(233,228,238,.94)}
+.fc-tile.banned>*{opacity:.4}
+.fc-tile .lock.ban{background:#e8455b}
 .fc-mapview{display:none}
 /* On the top screen, under your animal: the bottom screen is too short on a real phone. */
 .fc-ds .fc-mapview{display:block;position:absolute;left:50%;top:calc(var(--dst) + var(--dsh) - 12px);transform:translate(-50%,-100%);width:min(calc(var(--dsw) - 24px),calc(var(--dsh) * .48 * var(--fc-ar,2.3)));aspect-ratio:var(--fc-ar,2.3);border-radius:14px;overflow:hidden;background:#fffaf0;box-shadow:0 0 0 3px rgba(255,255,255,.85),0 4px 0 3px rgba(43,35,64,.18)}
@@ -1241,6 +1246,8 @@ export function createHud(controls: Controls): Hud {
         worldName.classList.toggle("locked", locked);
         const best = progress.best[world];
         el("small", "", worldName).textContent = locked ? `LOCKED · ${fmt(costOf(world))} PTS` : best ? `${w.blurb.toUpperCase()} · BEST ${best}` : w.blurb.toUpperCase();
+        plays.textContent = `WHO PLAYS: ${whoPlays(world)}`;
+        refreshTiles();
         refreshNext();
         drawView();
       };
@@ -1253,6 +1260,8 @@ export function createHud(controls: Controls): Hud {
       };
       prevW.addEventListener("click", () => stepWorld(-1));
       nextW.addEventListener("click", () => stepWorld(1));
+      // Each map has its own animals: the ones that can get about on it.
+      const plays = el("div", "fc-plays", worldGroup);
       // Today's Flag: one plain line, today's goal and what clearing it pays (or that it's done). It plays its own
       // map and animal, so it skips the steps.
       if (daily) {
@@ -1359,7 +1368,7 @@ export function createHud(controls: Controls): Hud {
       const row = el("div", "fc-row", stepA);
       const tiles = new Map<string, HTMLElement>();
       const pick = (id: string) => {
-        if (!open.has(id)) {
+        if (!open.has(id) || !allowedOn(id, world)) {
           nope(tiles.get(id)!);
           return;
         }
@@ -1379,15 +1388,41 @@ export function createHud(controls: Controls): Hud {
         tile.addEventListener("click", () => pick(id));
         tiles.set(id, tile);
       }
+      /**
+       * Grey out the animals that can't play this map, and if yours is one, switch to the open one that suits it best,
+       * so step 2 always has an animal allowed here.
+       */
+      function refreshTiles() {
+        if (!tiles.size) return;
+        tiles.forEach((tile, id) => {
+          const banned = open.has(id) && !allowedOn(id, world);
+          tile.classList.toggle("banned", banned);
+          tile.querySelector(".ban")?.remove();
+          if (banned) el("div", "lock ban", tile).textContent = "NOT ON THIS MAP";
+        });
+        if (allowedOn(current, world)) return;
+        const swap = allowedPick(current, world);
+        const choice = open.has(swap) && allowedOn(swap, world) ? swap : allowedAnimals(world).find((id) => open.has(id));
+        if (choice) {
+          pick(choice);
+          tiles.get(choice)?.scrollIntoView({ inline: "center", block: "nearest" });
+        } else tiles.forEach((t, key) => t.classList.toggle("on", key === current));
+      }
       const nextBtn = el("div", "fc-play", row);
       nextBtn.textContent = "NEXT ›";
       function refreshNext() {
-        nextBtn.classList.toggle("locked", !open.has(world));
+        nextBtn.classList.toggle("locked", !open.has(world) || !allowedOn(current, world));
       }
       nextBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
       nextBtn.addEventListener("click", () => {
         if (!open.has(world)) {
           nope(worldName);
+          nope(nextBtn);
+          return;
+        }
+        // None of your open animals can play this map yet.
+        if (!allowedOn(current, world)) {
+          nope(plays);
           nope(nextBtn);
           return;
         }
@@ -1420,8 +1455,8 @@ export function createHud(controls: Controls): Hud {
         root.classList.remove("fc-menu");
         onPlay({ mode, size, medic, difficulty, world });
       });
+      pick(open.has(current) && allowedOn(current, world) ? current : allowedAnimals(world).find((id) => open.has(id)) ?? "lion");
       showWorld();
-      pick(open.has(current) ? current : "lion");
       showStep(1);
     },
     countdown(onDone) {

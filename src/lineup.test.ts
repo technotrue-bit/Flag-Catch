@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ANIMALS } from "./animals";
-import { POOR_FIT, pickLineup, worldFit } from "./lineup";
+import { POOR_FIT, allowedAnimals, allowedOn, allowedPick, pickLineup, whoPlays, worldFit } from "./lineup";
+import { dailyFor } from "./daily";
 import { mulberry32 } from "./rng";
 import { createMatch } from "./sim";
 import { WORLD_IDS } from "./worlds";
@@ -53,5 +54,30 @@ describe("CPU line ups fit the world", () => {
     const m = createMatch({ seed: 5, humanAnimal: "penguin", perTeam: 8, duration: 60, flagsPerTeam: 5, world: "lava" });
     for (let i = 0; i < 8; i++) expect(m.players[8 + i].def.id).toBe(m.players[i].def.id);
     for (const p of m.players.slice(1)) if (p.def.id !== "penguin") expect(worldFit(p.def, "lava")).toBeGreaterThanOrEqual(POOR_FIT);
+  });
+
+  it("each map has its own animals", () => {
+    expect(whoPlays("home")).toBe("EVERYONE");
+    expect(whoPlays("lagoon")).toBe("SWIMMERS & FLYERS");
+    expect(whoPlays("dunes")).toBe("LAND & FLYERS + GOLDFISH, FROG");
+    expect(allowedAnimals("lava")).not.toContain("shark");
+    for (const world of WORLD_IDS) {
+      // Every map has animals of every job, so a team is never short.
+      const styles = new Set(allowedAnimals(world).map((id) => ANIMALS[id].style));
+      for (const s of ["raider", "hunter", "guardian", "allrounder"] as const) expect(styles.has(s), `${world} ${s}`).toBe(true);
+      for (const ids of lineups(world)) for (const id of ids) expect(allowedOn(id, world), `${world} ${id}`).toBe(true);
+    }
+  });
+
+  it("a pick that can't play the map swaps for one that can, and the daily's animal always can", () => {
+    expect(allowedPick("lion", "lagoon")).not.toBe("lion");
+    expect(allowedOn(allowedPick("lion", "lagoon"), "lagoon")).toBe(true);
+    expect(allowedPick("penguin", "home")).toBe("penguin");
+    const m = createMatch({ seed: 2, humanAnimal: "wolf", perTeam: 4, duration: 60, flagsPerTeam: 5, world: "lagoon" });
+    for (const p of m.players) expect(allowedOn(p.def.id, "lagoon"), p.def.id).toBe(true);
+    for (let d = 0; d < 400; d++) {
+      const day = dailyFor(new Date(2026, 10, 1 + d, 12));
+      expect(allowedOn(day.animal, day.world), `${day.key} ${day.world} ${day.animal}`).toBe(true);
+    }
   });
 });

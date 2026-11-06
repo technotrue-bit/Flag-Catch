@@ -26,7 +26,7 @@ import {
 } from "./terrain";
 import { type WorldDef, worldById } from "./worlds";
 import { PLANS, type TeamBrain, newBrain, pickPlan, switchPlan } from "./plans";
-import { pickLineup } from "./lineup";
+import { allowedPick, pickLineup } from "./lineup";
 
 export const STEP = 1 / 60;
 
@@ -561,16 +561,19 @@ export function createMatch(opts: MatchOptions): Match {
   const players: Player[] = [];
   // Each CPU slot gets the same animal on both teams, so the sides stay even, picked to suit this world with a fair
   // mix of jobs (see lineup.ts). Slot 0 is yours, and your rival's.
-  const picks = [opts.humanAnimal, ...pickLineup(rng, world.id, Math.max(0, opts.perTeam - 1), opts.humanAnimal)];
+  // Only animals allowed on this world play it: an online pick that doesn't suit the host's world swaps for one that
+  // does (the pick screen never offers one offline).
+  const humanAnimal = allowedPick(opts.humanAnimal, world.id);
+  const picks = [humanAnimal, ...pickLineup(rng, world.id, Math.max(0, opts.perTeam - 1), humanAnimal)];
   for (let team = 0 as Team; team <= 1; team = (team + 1) as Team) {
     for (let i = 0; i < opts.perTeam; i++) {
       const seat = opts.seats?.find((s) => s.team === team && s.slot === i && !(team === 0 && i === 0));
       const human = (team === 0 && i === 0) || !!seat;
       // Your rival in slot 0 gets your animal, so neither side has the edge.
       const def = seat
-        ? ANIMALS[seat.animal] ?? ANIMALS.lion
+        ? ANIMALS[allowedPick(seat.animal, world.id)] ?? ANIMALS.lion
         : (team === 0 && i === 0) || (team === 1 && i === 0)
-          ? ANIMALS[opts.humanAnimal] ?? ANIMALS.lion
+          ? ANIMALS[humanAnimal] ?? ANIMALS.lion
           : ANIMALS[picks[i]];
       const b = bases[team];
       // A sunflower spiral around the base, so a big team starts spread out.
@@ -2708,6 +2711,8 @@ function lead(o: Player): [number, number] {
 
 /** Route a land animal over the best bridge when its goal is across a channel. */
 function viaBridge(p: Player, gx: number, gz: number): [number, number] {
+  // All land and open sea worlds have no bridges: go straight.
+  if (!BRIDGES.length) return [gx, gz];
   const s = mapScale();
   let best: [number, number] | null = null;
   let bestGap = Infinity;
