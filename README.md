@@ -205,8 +205,8 @@ handed play). A hinge with two little lights sits between them.
 
 - Turn it on or off with the DS mode row in Settings, or the "Play upright in DS mode" button on the turn your
   phone card. The choice is saved on the phone.
-- Picking a map in DS mode, the bottom screen shows a snapshot of it from
-  above: sideways, your base on the left and the rivals' on the right, with
+- Picking a map in DS mode, the top screen shows a big snapshot of it from
+  above, under your animal: sideways, your base on the left and the rivals' on the right, with
   its ground, water or lava, bridges and every base, on the team size you
   picked. It changes as you flick through the maps.
 - It only splits the screen while the phone is upright. Turn the phone

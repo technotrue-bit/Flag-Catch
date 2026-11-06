@@ -163,11 +163,11 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-play.locked{background:#9a93a8}
 .fc-step{display:contents}
 .fc-mapview{display:none}
-.fc-ds .fc-mapview{display:block;flex:0 1 auto;margin-top:auto;position:relative;width:max(120px,min(calc(var(--dsw) - 28px),calc((var(--dsbh) - 352px) * var(--fc-ar,2.3))));max-width:100%;aspect-ratio:var(--fc-ar,2.3);border-radius:14px;overflow:hidden;background:#fffaf0;box-shadow:0 0 0 3px rgba(43,35,64,.18),0 3px 0 3px rgba(43,35,64,.1)}
-.fc-ds .fc-mapview~.fc-setup{margin-top:6px}
+/* On the top screen, under your animal: the bottom screen is too short on a real phone. */
+.fc-ds .fc-mapview{display:block;position:absolute;left:50%;top:calc(var(--dst) + var(--dsh) - 12px);transform:translate(-50%,-100%);width:min(calc(var(--dsw) - 24px),calc(var(--dsh) * .48 * var(--fc-ar,2.3)));aspect-ratio:var(--fc-ar,2.3);border-radius:14px;overflow:hidden;background:#fffaf0;box-shadow:0 0 0 3px rgba(255,255,255,.85),0 4px 0 3px rgba(43,35,64,.18)}
 .fc-mapview canvas{display:block;width:100%;height:100%;animation:fcsnap .28s ease-out}
 .fc-mapview.locked canvas{filter:grayscale(.75) brightness(.92)}
-.fc-mapview b{position:absolute;bottom:5px;padding:2px 8px;border-radius:999px;color:#fff;font-size:10px;font-weight:900;letter-spacing:.4px}
+.fc-mapview b{position:absolute;bottom:6px;padding:3px 9px;border-radius:999px;color:#fff;font-size:11px;font-weight:900;letter-spacing:.4px}
 .fc-mapview i{position:absolute;top:5px;left:50%;transform:translateX(-50%);padding:2px 9px;border-radius:999px;background:rgba(43,35,64,.6);color:#fff;font-style:normal;font-size:10px;font-weight:900;letter-spacing:.4px;white-space:nowrap}
 @keyframes fcsnap{0%{opacity:0;transform:scale(1.06)}60%{opacity:1}100%{transform:none}}
 .fc-step[hidden]{display:none}
@@ -1200,8 +1200,8 @@ export function createHud(controls: Controls): Hud {
         onBack();
       });
       button(corner, "SETTINGS", "fc-chip fc-back", openSettings);
-      // Step 1: the map, today's challenge, and the animals. In DS mode the bottom screen also shows a snapshot of
-      // the map from above.
+      // Step 1: the map, today's challenge, and the animals. In DS mode the top screen also shows a snapshot of the
+      // map from above, under your animal.
       const view = el("div", "fc-mapview", stepA);
       const drawView = () => {
         const def = MAPS.find((m) => m.size === size) ?? MAPS[0];
@@ -1212,7 +1212,7 @@ export function createHud(controls: Controls): Hud {
         const dpr = Math.min(2, window.devicePixelRatio || 1);
         view.replaceChildren(drawMapPreview(world, def.size, Math.round(r.width * dpr), Math.round(r.height * dpr)));
         view.classList.toggle("locked", !open.has(world));
-        el("i", "", view).textContent = `${def.size}v${def.size} · ${def.name.toUpperCase()}`;
+        el("i", "", view).textContent = `${worldById(world).name.toUpperCase()} · ${def.size}v${def.size}${open.has(world) ? "" : " · LOCKED"}`;
         const you = el("b", "", view);
         you.textContent = "YOUR BASE";
         you.style.left = "6px";
