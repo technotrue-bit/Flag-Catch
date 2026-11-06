@@ -9,7 +9,8 @@ import * as THREE from "three";
 import { ANIMALS } from "./animals";
 import { type Mood, buzz, moodTone, music, sfx, unlockAudio } from "./audio";
 import { Fx } from "./fx";
-import { type DailyResult, type MatchStats, type TitleDaily, createHud } from "./hud";
+import { type DailyResult, type FeedLine, type MatchStats, type TitleDaily, createHud } from "./hud";
+import { shortName, streakTitle } from "./streaks";
 import { leaveGame } from "./leave";
 import { createControls } from "./input";
 import { type AnimalRig, buildAnimal } from "./critters";
@@ -35,6 +36,7 @@ import {
   restoreMatch,
   setAnimal,
   step,
+  tune,
   wrapAngle,
 } from "./sim";
 import * as progressStore from "./progress";
@@ -469,6 +471,8 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 let shake = 0;
 let hitStop = 0;
+/** Seconds of slow motion left after your knockout (offline only; the match runs at a third of the speed). */
+let slowMo = 0;
 type Phase = "title" | "select" | "countdown" | "play" | "results";
 let phase: Phase = "title";
 /** A quick widening of the view when you score. */
@@ -525,7 +529,7 @@ function humanInput(): Input {
 
 let stats: MatchStats = freshStats();
 function freshStats(): MatchStats {
-  return { steals: 0, banks: 0, hits: 0, knockouts: 0, saves: 0, items: 0 };
+  return { steals: 0, banks: 0, hits: 0, knockouts: 0, bestStreak: 0, saves: 0, items: 0 };
 }
 
 /** Today's Flag goal under the score, counting up as you go ("GRAB 2 FLAGS 1/2"). */
@@ -544,6 +548,41 @@ function countStats(): void {
     else if (e.kind === "return" && e.player === 0) stats.saves++;
     else if (e.kind === "item" && e.player === 0) stats.items++;
   }
+  stats.bestStreak = Math.max(stats.bestStreak, match.players[0].bestStreak ?? 0);
+}
+
+/** Your run of knockouts as of the last batch of events, so a knockout of you can say what it cost. */
+let myStreak = 0;
+/** Knockouts this batch, shown in the feed once any streak or shutdown that came with them has tagged them. */
+const feedLines = new Map<number, FeedLine>();
+const nameOf = (id: number) => (id === 0 ? "YOU" : shortName(match.players[id].def.name));
+
+/** Text that pops up from a spot in the world, like KO! over the rival you knocked out. */
+const popAt = new THREE.Vector3();
+function floatAt(x: number, y: number, z: number, text: string, color: string): void {
+  popAt.set(x, y - dip(x - camera.position.x, z - camera.position.z), z).project(camera);
+  if (popAt.z > 1) return;
+  const view = renderer.domElement.getBoundingClientRect();
+  hud.floatText(view.left + (popAt.x * 0.5 + 0.5) * view.width, view.top + (-popAt.y * 0.5 + 0.5) * view.height, text, color);
+}
+
+/** Your knockout, made to land: a beat of freeze then slow motion, a shockwave, a punch of sound and a KO! pop. */
+function knockoutPunch(e: { x: number; y: number; z: number; player: number }, pan: number): void {
+  const calm = settings.calm;
+  const victim = match.players[e.player];
+  shake = Math.max(shake, calm ? 0.2 : 0.45);
+  hitStop = Math.max(hitStop, 0.1);
+  if (!calm) slowMo = 0.32;
+  fovKick = Math.max(fovKick, 4);
+  sfx.ko(pan, 1);
+  flash(e.x, e.y - 0.4, e.z, "blast");
+  fx.burst(e.x, e.y + 0.4, e.z, ["#ffd166", "#ffffff", "#ff9f1c", TEAMS[victim.team].color], calm ? 24 : 48, 13, 14, 0.3);
+  views[e.player].squash = 0.4;
+  floatAt(e.x, e.y + 1.6, e.z, "KO!", "#ffd166");
+  hud.flash("rgba(255,209,102,.6)", 0.55);
+  hud.ko("KNOCKOUT!", `${nameOf(e.player)} · +8`, "#ffd166", 1);
+  cue("knockout");
+  buzz([30, 30, 60]);
 }
 
 function handleEvents(): void {
@@ -589,19 +628,63 @@ function handleEvents(): void {
         if (mine) {
           shake = 0.6;
           hitStop = 0.08;
-          hud.call("POPPED!", "#ff6b5b");
+          hud.call(myStreak >= 2 ? `POPPED! ${myStreak} STREAK LOST` : "POPPED!", "#ff6b5b");
           hud.flash("rgba(255,79,94,.75)", 1);
           cue("popped");
           buzz(140);
-        } else if (e.by === 0) {
-          shake = 0.25;
-          hitStop = 0.05;
-          hud.call("POP!", "#ffd166");
-          cue("knockout");
-          buzz(40);
+        } else if (e.by === 0) knockoutPunch(e, pan);
+        break;
+      }
+      case "ko": {
+        const by = e.by >= 0 ? match.players[e.by] : undefined;
+        const big = match.players.length <= 16;
+        if (by && (big || e.player === 0 || e.by === 0)) {
+          feedLines.set(e.by, { a: nameOf(e.by), aTeam: by.team, b: nameOf(e.player), bTeam: match.players[e.player].team, mine: e.player === 0 || e.by === 0 });
         }
         break;
       }
+      case "streak": {
+        const line = feedLines.get(e.player);
+        if (e.n >= 3 || e.multi >= 2) {
+          const tag = e.multi >= 2 ? `x${e.multi}` : `${e.n} STREAK`;
+          if (line) line.tag = tag;
+          else if (e.n >= 3) feedLines.set(e.player, { ...feedOf(e.player), tag });
+        }
+        if (mine) {
+          const t = streakTitle(e.n, e.multi);
+          const sub = [e.n >= 2 && e.multi >= 2 ? `${e.n} STREAK` : "", `+${e.bonus + 8}`].filter(Boolean).join(" · ");
+          hud.ko(t.title, sub, t.color, t.level);
+          cue(t.level >= 3 ? "rampage" : "streak");
+          sfx.streak(e.n + e.multi);
+          fx.burst(e.x, e.y + 1, e.z, ["#ffd166", "#ff9f1c", "#ff6b5b", "#ffffff"], settings.calm ? 16 : 30 + t.level * 12, 10, 14, 0.26);
+          shake = Math.max(shake, settings.calm ? 0.2 : 0.25 + t.level * 0.1);
+          fovKick = Math.max(fovKick, 3 + t.level * 2);
+          hud.flash(t.level >= 3 ? "rgba(255,107,91,.7)" : "rgba(255,159,28,.65)", 0.5 + t.level * 0.15);
+          buzz(t.level >= 3 ? [40, 30, 40, 30, 90] : [30, 30, 70]);
+        } else if (e.n === 5 || e.n === 8) {
+          const p = match.players[e.player];
+          hud.call(`${nameOf(e.player)} IS ${e.n === 5 ? "UNSTOPPABLE" : "LEGENDARY"}!`, p.team === 0 ? TEAMS[0].light : TEAMS[1].light);
+        }
+        break;
+      }
+      case "shutdown": {
+        const line = feedLines.get(e.by);
+        if (line) line.tag = "SHUTDOWN";
+        if (e.by === 0) {
+          hud.ko("SHUTDOWN!", `ENDED ${nameOf(e.player)}'S ${e.n} STREAK · +${tune.shutdownBonus}`, "#7fd8ff", 3);
+          cue("shutdown");
+          sfx.streak(6);
+        }
+        break;
+      }
+      case "missiles":
+        sfx.missiles(pan, mine ? 1 : near);
+        fx.burst(e.x, e.y, e.z, ["#ffffff", "#e8455b", "#ffd166"], mine ? 18 : 8, 5, 10, 0.2);
+        if (mine) {
+          hud.call("MISSILES AWAY!", "#e8455b");
+          buzz(40);
+        }
+        break;
       case "fizzle":
         sfx.fizzle(pan, near);
         fx.burst(e.x, e.y, e.z, ["#ffd166", "#ffffff"], 6, 3, 6, 0.18);
@@ -689,7 +772,7 @@ function handleEvents(): void {
       case "bombReady":
         if (mine) {
           sfx.item(0, 0.7);
-          hud.call("BOMB READY!", "#ffd166");
+          hud.call(match.players[0].def.special === "missiles" ? "MISSILES READY!" : "BOMB READY!", "#ffd166");
         }
         break;
       case "overheat":
@@ -784,6 +867,15 @@ function handleEvents(): void {
         break;
     }
   }
+  for (const line of feedLines.values()) hud.feed(line);
+  feedLines.clear();
+  myStreak = match.players[0].streak ?? 0;
+}
+
+/** A feed line for a streak whose knockout wasn't in the feed (a big match): who's on it. */
+function feedOf(id: number): FeedLine {
+  const p = match.players[id];
+  return { a: nameOf(id), aTeam: p.team, b: "", bTeam: p.team === 0 ? 1 : 0, mine: id === 0 };
 }
 
 /** Storm Spire: a glowing ring where lightning is about to land. */
@@ -1253,7 +1345,10 @@ function frame(now: number): void {
   if (hitStop > 0 && !net) {
     hitStop -= dt;
   } else if (phase === "play" && (!hud.paused || net)) {
-    acc += dt;
+    // Just after your knockout the match eases through a beat of slow motion, so it lands.
+    const slow = slowMo > 0 && !net;
+    slowMo = Math.max(0, slowMo - dt);
+    acc += slow ? dt * 0.35 : dt;
     while (acc >= STEP) {
       if (net?.role === "guest") guestStep(net);
       else {

@@ -49,6 +49,8 @@ export interface AnimalDef {
   style: Style;
   /** How well it holds the road on ice; the default slides. */
   iceGrip?: number;
+  /** A flyer's special on Jump: the bomb, or the Glide Fish's homing missiles. */
+  special?: "missiles";
 }
 
 const BASE = {
@@ -202,7 +204,8 @@ export const ANIMALS: Record<string, AnimalDef> = {
     turnRate: 3.9,
     jumpSpeed: 10,
     floatTime: 2.6,
-    perk: "Flies low and steady, turns well",
+    special: "missiles",
+    perk: "Fires 3 homing missiles, turns well",
   }),
   bat: animal({
     id: "bat",

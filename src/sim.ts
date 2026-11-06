@@ -84,6 +84,17 @@ export const tune = {
   blastRadius: 6.5,
   missileSpeed: 24,
   missileTurn: 3.5,
+  /** The Glide Fish's special in place of a bomb: this many homing missiles at once, each after its own target. */
+  fishMissiles: 3,
+  /** Seconds before the Glide Fish can fire its missiles again. */
+  fishReload: 30,
+  /** Knockouts this close together count as a multi KO (double, triple...). */
+  multiWindow: 4,
+  /** Points for each knockout in a row past the first, up to streakBonusMax. */
+  streakBonus: 3,
+  streakBonusMax: 15,
+  /** Points for knocking out a rival who was on a streak of at least 3. */
+  shutdownBonus: 10,
   superJump: 22,
   /** Flyers cruise this high over the ground or water: low enough to grab flags and items, and to be hit. */
   flyHeight: 2.2,
@@ -322,8 +333,14 @@ export interface Player {
   sz: number;
   /** Lava burns at most this often. */
   burnCd: number;
-  /** Flyers: seconds until the bomb is loaded; below 0, how long it has sat ready. */
+  /** Flyers: seconds until the bomb (the Glide Fish: its missiles) is loaded; below 0, how long it has sat ready. */
   bombCd: number;
+  /** Knockouts in a row without being knocked out, the best run this match, and the run of quick ones (multi KO). */
+  streak: number;
+  bestStreak: number;
+  multi: number;
+  /** Match time of this player's last knockout of a rival. */
+  multiT: number;
   /** Flyers: the confetti gun's heat (0 to 1), seconds left cooling after overheating, and until the next shot. */
   heat: number;
   overheat: number;
@@ -432,6 +449,12 @@ export type SimEvent =
   | { kind: "zap"; x: number; y: number; z: number; player: number; by: number }
   | { kind: "hit"; x: number; y: number; z: number; player: number; by: number; hp: number }
   | { kind: "ko"; x: number; y: number; z: number; player: number; by: number }
+  /** `player` knocked out `n` rivals in a row (and `multi` in quick succession), worth `bonus` extra points. */
+  | { kind: "streak"; x: number; y: number; z: number; player: number; n: number; multi: number; bonus: number }
+  /** `by` ended `player`'s streak of `n`. */
+  | { kind: "shutdown"; x: number; y: number; z: number; player: number; by: number; n: number }
+  /** The Glide Fish fired its missiles. */
+  | { kind: "missiles"; x: number; y: number; z: number; player: number; n: number }
   | { kind: "respawn"; x: number; y: number; z: number; player: number }
   | { kind: "plant"; x: number; z: number; player: number; flag: number }
   | { kind: "unplant"; x: number; z: number; flag: number; by: number }
@@ -715,6 +738,10 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     sz: 0,
     burnCd: 0,
     bombCd: 0,
+    streak: 0,
+    bestStreak: 0,
+    multi: 0,
+    multiT: -99,
     heat: 0,
     overheat: 0,
     gunCd: 0,
@@ -1077,8 +1104,49 @@ function fly(m: Match, p: Player): void {
   p.floatLeft = 0;
 }
 
+/**
+ * Kill streaks: a knockout adds to the owner's run of knockouts without being knocked out, and to its multi KO if it
+ * came quickly after the last. Past the first, each one in a run pays a bonus; ending a rival's run of 3 or more pays
+ * a shutdown bonus. The knocked out animal's own run ends.
+ */
+function countStreak(m: Match, p: Player, owner: Player | undefined): void {
+  const ended = p.streak;
+  p.streak = 0;
+  p.multi = 0;
+  if (!owner || owner.team === p.team) return;
+  owner.streak++;
+  owner.bestStreak = Math.max(owner.bestStreak, owner.streak);
+  owner.multi = m.time - owner.multiT <= tune.multiWindow ? owner.multi + 1 : 1;
+  owner.multiT = m.time;
+  const shutdown = ended >= 3 ? tune.shutdownBonus : 0;
+  const bonus = Math.min(tune.streakBonusMax, tune.streakBonus * (owner.streak - 1)) + shutdown;
+  owner.score += bonus;
+  if (owner.streak >= 2 || owner.multi >= 2) {
+    m.events.push({ kind: "streak", x: owner.x, y: owner.y + 1, z: owner.z, player: owner.id, n: owner.streak, multi: owner.multi, bonus });
+  }
+  if (shutdown) m.events.push({ kind: "shutdown", x: p.x, y: p.y + 0.8, z: p.z, player: p.id, by: owner.id, n: ended });
+}
+
+/**
+ * The Glide Fish's special: a volley of homing paper missiles fanned out ahead, each after a different enemy (flag
+ * carriers first), with a long reload.
+ */
+function fireMissiles(m: Match, p: Player): void {
+  if (p.bombCd > 0) return;
+  p.bombCd = tune.fishReload;
+  const taken: number[] = [];
+  const n = tune.fishMissiles;
+  for (let i = 0; i < n; i++) {
+    const t = missileTarget(m, p.team, p.x, p.z, p.heading, taken) ?? missileTarget(m, p.team, p.x, p.z, p.heading);
+    if (t) taken.push(t.id);
+    launch(m, p, (i - (n - 1) / 2) * 0.35, t ? t.id : -2);
+  }
+  m.events.push({ kind: "missiles", x: p.x, y: p.y, z: p.z, player: p.id, n });
+}
+
 /** A flyer's bomb, once it's loaded: falls from under it, carrying a little of its speed. */
 function dropBomb(m: Match, p: Player): void {
+  if (p.def.special === "missiles") return fireMissiles(m, p);
   if (p.bombCd > 0) return;
   p.bombCd = tune.bombReload;
   const bomb: Firecracker = {
@@ -1396,11 +1464,11 @@ function steerMissile(m: Match, f: Firecracker): void {
 }
 
 /** The enemy a missile should chase: a flag carrier first, else the nearest ahead. */
-function missileTarget(m: Match, team: Team, x: number, z: number, heading: number): Player | undefined {
+function missileTarget(m: Match, team: Team, x: number, z: number, heading: number, skip: readonly number[] = []): Player | undefined {
   let best: Player | undefined;
   let bestScore = Infinity;
   for (const o of m.players) {
-    if (o.team === team || o.stun > 0 || o.diving) continue;
+    if (o.team === team || o.stun > 0 || o.diving || skip.includes(o.id)) continue;
     const d = Math.hypot(o.x - x, o.z - z);
     if (d > 45) continue;
     const ahead = Math.cos(wrapAngle(Math.atan2(o.x - x, o.z - z) - heading));
@@ -1505,6 +1573,7 @@ function pop(m: Match, p: Player, by: number, dirX: number, dirZ: number, power 
   if (owner) owner.score += 8;
   m.events.push({ kind: "pop", x: p.x, y: p.y + 0.8, z: p.z, player: p.id, by });
   m.events.push({ kind: "ko", x: p.x, y: p.y + 0.8, z: p.z, player: p.id, by });
+  countStreak(m, p, owner);
   dropFlag(m, p);
   p.out = tune.outTime;
   p.stun = tune.outTime;
@@ -2028,6 +2097,7 @@ function cpuGun(m: Match, p: Player, sk: Skill): boolean {
  */
 function cpuBomb(m: Match, p: Player, sk: Skill): boolean {
   if (p.bombCd > 0 || p.stun > 0) return false;
+  if (p.def.special === "missiles") return cpuMissiles(m, p, sk);
   const lx = p.x + Math.sin(p.heading) * p.speed * 0.18;
   const lz = p.z + Math.cos(p.heading) * p.speed * 0.18;
   const surf = surfaceHeight(lx, lz);
@@ -2043,6 +2113,26 @@ function cpuBomb(m: Match, p: Player, sk: Skill): boolean {
   if (n === 0) return false;
   if (!sk.itemSmart) return true;
   return n >= 2 || thief || p.goalTag === "bomb" || p.goalTag === "steal" || p.bombCd < -12;
+}
+
+/**
+ * When a CPU Glide Fish fires its missiles. Easy ones fire at the first enemy in range; better ones wait for a flag
+ * carrier, a rival down to its last hit, or a few enemies at once, or fire once the volley has sat loaded a while.
+ */
+function cpuMissiles(m: Match, p: Player, sk: Skill): boolean {
+  let n = 0;
+  let prize = false;
+  for (const o of m.players) {
+    if (o.team === p.team || o.stun > 0 || o.diving || o.out > 0) continue;
+    const d = Math.hypot(o.x - p.x, o.z - p.z);
+    if (d > 32) continue;
+    if (Math.cos(wrapAngle(Math.atan2(o.x - p.x, o.z - p.z) - p.heading)) < 0.2) continue;
+    n++;
+    if (o.carrying >= 0 || o.hp === 1) prize = true;
+  }
+  if (n === 0) return false;
+  if (!sk.itemSmart) return true;
+  return prize || n >= 2 || p.bombCd < -10;
 }
 
 /** The closest heading to (dx, dz) that keeps lava out of the next few meters. */
