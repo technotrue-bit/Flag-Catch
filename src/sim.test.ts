@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ANIMALS, ANIMAL_IDS } from "./animals";
-import { type Difficulty, type Firecracker, HOARD_TARGET, type Input, type Match, NO_INPUT, SKILLS, STEP, createMatch, giveItem, matchState, restoreMatch, rivalSkill, step, tune } from "./sim";
+import { type Difficulty, type Firecracker, HOARD_TARGET, type Input, type Match, NO_INPUT, SKILLS, STEP, createMatch, giveItem, matchState, restoreMatch, rivalSkill, step, TEAMMATE, tune } from "./sim";
 import { PLAN_IDS } from "./plans";
 import { BRIDGES, MAPS, ZONE_EDGE, fromLayout, groundHeight, isWater, landOf, mapScale, setMap, surfaceHeight } from "./terrain";
 
@@ -186,7 +186,8 @@ describe("match sim", () => {
     let a = 0;
     let b = 0;
     for (const seed of [1, 2, 4, 9]) {
-      const m = createMatch({ ...opts, seed, duration: 180 });
+      // Rivals play a notch above the human's teammates, so even the teams up to see both sides score.
+      const m = createMatch({ ...opts, seed, duration: 180, evenBots: true });
       m.players[0].cpu = true;
       for (let i = 0; i < 181 / STEP; i++) step(m, NO_INPUT);
       a += m.scores[0];
@@ -789,6 +790,27 @@ describe("CPU brains and difficulty", () => {
     expect(big.dodge).toBeGreaterThan(SKILLS.medium.dodge);
     expect(rivalSkill("medium", 64)).toEqual(SKILLS.medium);
   });
+
+  it("rivals at every level are a notch sharper than the human's teammates, and the levels climb", () => {
+    const order: Difficulty[] = ["easy", "medium", "hard"];
+    for (const d of order.slice(1)) {
+      const sk = SKILLS[d];
+      expect(sk.react).toBeLessThan(TEAMMATE.react);
+      expect(sk.noise).toBeLessThan(TEAMMATE.noise);
+      expect(sk.dodge).toBeGreaterThan(TEAMMATE.dodge);
+      expect(sk.pace).toBeGreaterThan(TEAMMATE.pace);
+      expect(sk.tactics).toBeGreaterThan(TEAMMATE.tactics);
+    }
+    for (let i = 1; i < order.length; i++) {
+      const [a, b] = [SKILLS[order[i - 1]], SKILLS[order[i]]];
+      expect(b.react).toBeLessThan(a.react);
+      expect(b.dodge).toBeGreaterThan(a.dodge);
+      expect(b.pace).toBeGreaterThanOrEqual(a.pace);
+    }
+    const m = createMatch({ ...opts, perTeam: 8, difficulty: "medium" });
+    expect(m.skill[0]).toBe(TEAMMATE);
+    expect(m.skill[1]).toEqual(SKILLS.medium);
+  });
 });
 
 describe("team plans and specialties", () => {
@@ -921,7 +943,7 @@ describe("team plans and specialties", () => {
     let a = 0;
     let b = 0;
     for (let seed = 1; seed <= 16; seed++) {
-      const m = capture(seed, { world: ["home", "reef", "bluffs", "frost", "lagoon", "storm", "dunes", "lava"][seed % 8] });
+      const m = capture(seed, { world: ["home", "reef", "bluffs", "frost", "lagoon", "storm", "dunes", "lava"][seed % 8], evenBots: true });
       while (!m.over) step(m, NO_INPUT);
       if (m.scores[0] > m.scores[1]) a++;
       if (m.scores[1] > m.scores[0]) b++;
