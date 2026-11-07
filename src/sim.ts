@@ -375,6 +375,11 @@ export interface Player {
   /** CPU: its own sway while it runs under fire, so no two run alike, and whether enemies were close at its last look. */
   weave: number;
   pressed: boolean;
+  /** The rival this CPU is squaring up to (-1 for none): it slows to face them and throw instead of ramming in. */
+  foe: number;
+  /** A nudge away from teammates bunched up close, worked out each think so a team spreads out instead of piling up. */
+  sepX: number;
+  sepZ: number;
 }
 
 /**
@@ -780,6 +785,9 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     decoy: false,
     weave: 0,
     pressed: false,
+    foe: -1,
+    sepX: 0,
+    sepZ: 0,
   };
 }
 
@@ -1945,6 +1953,7 @@ function cpuInput(m: Match, p: Player): Input {
   if (p.thinkCd <= 0) {
     p.thinkCd = sk.react * (0.8 + m.rng() * 0.4);
     const [gx, gz] = cpuGoal(m, p, sk);
+    elbowRoom(m, p);
     p.pressed = sk.dodge > 0.2 && threatened(m, p);
     const bridges = p.def.cls === "land" || (m.world.liquid === "lava" && p.def.cls !== "air");
     // Never aim past the edge of the world.
@@ -1956,6 +1965,14 @@ function cpuInput(m: Match, p: Player): Input {
   const d = Math.hypot(dx, dz) || 1;
   dx /= d;
   dz /= d;
+  // Elbow room: lean away from teammates crowding in, so a team fans out rather than piling up (carriers keep their line).
+  if (p.carrying < 0 && (p.sepX || p.sepZ)) {
+    dx += p.sepX * 0.9;
+    dz += p.sepZ * 0.9;
+    const l = Math.hypot(dx, dz) || 1;
+    dx /= l;
+    dz /= l;
+  }
   // Carriers and the badly hurt steer around enemies in the way.
   if (sk.tactics > 0 && (p.carrying >= 0 || p.goalTag === "retreat")) {
     let ax = 0;
@@ -1987,6 +2004,37 @@ function cpuInput(m: Match, p: Player): Input {
   let jump = false;
   const fwdX = Math.sin(p.heading);
   const fwdZ = Math.cos(p.heading);
+  // Squaring up to a rival in range: ease off to turn and throw rather than ram in, back off when they're on top of
+  // you, and don't step off your own ground (a swimmer stays in the water, a land animal stays out of it).
+  // A swimmer still on its way to the water keeps going first.
+  const squares = p.foe >= 0 && p.carrying < 0 && !flies(p.def) && (wetBias(m, p) <= 0 || wet(m, p.x, p.z));
+  const foe = squares ? m.players[p.foe] : undefined;
+  if (foe && foe.team !== p.team && foe.out <= 0) {
+    const fx = foe.x - p.x;
+    const fz = foe.z - p.z;
+    const fd = Math.hypot(fx, fz) || 1;
+    if (fd < 4.5) {
+      [dx, dz] = [-fx / fd, -fz / fd];
+      throttle = 0.7 * sk.pace;
+    } else if (fd < (wetBias(m, p) > 0 ? 15 : 11)) {
+      const [ax, az] = lead(foe);
+      const al = Math.hypot(ax - p.x, az - p.z) || 1;
+      [dx, dz] = [(ax - p.x) / al, (az - p.z) / al];
+      // Close in to throwing range, then hold there and aim; a teammate right alongside, and it shuffles over first.
+      throttle = Math.min(throttle, (fd < 5.5 ? 0.12 : 0.4) * sk.pace);
+      const crowd = Math.hypot(p.sepX, p.sepZ);
+      if (crowd > 0.25) {
+        dx += p.sepX * 1.5;
+        dz += p.sepZ * 1.5;
+        const l = Math.hypot(dx, dz) || 1;
+        dx /= l;
+        dz /= l;
+        throttle = Math.max(throttle, 0.45 * sk.pace);
+      }
+      const ahead = wet(m, p.x + dx * 3, p.z + dz * 3);
+      if (wetBias(m, p) > 0 ? wet(m, p.x, p.z) && !ahead : p.def.cls === "land" && !wet(m, p.x, p.z) && ahead) throttle = 0;
+    }
+  }
 
   // Dodge: notice a shot coming (or not), then hop it or sidestep.
   p.dodgeCd -= STEP;
@@ -2064,8 +2112,9 @@ function cpuInput(m: Match, p: Player): Input {
       }
       const off = Math.abs(wrapAngle(Math.atan2(ax - p.x, az - p.z) - p.heading));
       if (off > sk.aimTol) continue;
-      // Big crowds would turn into a wall of firecrackers, so each CPU throws less.
-      const keen = o.carrying >= 0 ? 2 : o.hp === 1 ? 1.4 : 1;
+      // Big crowds would turn into a wall of firecrackers, so each CPU throws less. The rival it has squared up to,
+      // it's keen on.
+      const keen = (o.carrying >= 0 ? 2 : o.hp === 1 ? 1.4 : 1) * (o.id === p.foe ? 1.5 : 1);
       throwPressed = m.rng() < sk.throwRate * keen * m.aggro;
       break;
     }
@@ -2077,7 +2126,9 @@ function cpuInput(m: Match, p: Player): Input {
     jump = p.onSurface ? groundHeight(p.x + fwdX * 3, p.z + fwdZ * 3) - p.y > 1.2 || m.rng() < 0.004 : p.vy > 0;
   }
   // Swimmers duck under incoming firecrackers, or to sneak a flag home.
-  const dive = !flyer && p.def.dive && ((threatened(m, p) && m.rng() < sk.dodge + 0.2) || (p.carrying >= 0 && p.breath > 2.5));
+  // Squared up to a rival from the water, a swimmer only ducks a shot actually coming at it, so it gets its own throws off.
+  const ducks = p.foe >= 0 && wet(m, p.x, p.z) ? !!incoming(m, p) : threatened(m, p);
+  const dive = !flyer && p.def.dive && ((ducks && m.rng() < sk.dodge + 0.2) || (p.carrying >= 0 && p.breath > 2.5));
   const useItem = p.item !== null && (sk.itemSmart ? cpuWantsItem(m, p, d) : p.itemHeld > 2 + ((p.id % (m.players.length / 2)) % 5));
   const plant = p.medic && cpuWantsPlant(m, p);
   return { dirX: dx * throttle, dirZ: dz * throttle, jump: jump && !dive, throwPressed, dive, useItem, plant, fire };
@@ -2402,8 +2453,11 @@ function planTeam(m: Match, team: Team): void {
   }
   while (slots.length < free.length) slots.push({ job: "support", target: -1, x: 0, z: 0 });
 
+  // Whether each slot's spot has water close by, for the swimmers (worked out once per slot, not per animal).
+  const swimmers = free.some((p) => wetBias(m, p) > 0);
+  const wetSlot = slots.map((slot) => swimmers && slot.job !== "support" && !!waterNear(m, slot.x, slot.z, 14 * s));
   const taken = new Set<Player>();
-  for (const slot of slots) {
+  slots.forEach((slot, si) => {
     const urgency = slot.job === "hunt" || slot.job === "save" ? 2.5 : slot.job === "escort" ? 1.5 : slot.job === "support" ? 0 : 0.6;
     let best: Player | undefined;
     let bestFit = -Infinity;
@@ -2413,6 +2467,10 @@ function planTeam(m: Match, team: Team): void {
       if (p.job === slot.job && p.jobTarget === slot.target) fit += 3;
       if (p.medic && slot.job === "guard") fit -= 6;
       if (p.out > 0) fit -= 4;
+      // Swimmers take the jobs out by the water and hold the channels; flyers ride shotgun over a carrier.
+      const wb = wetBias(m, p);
+      if (wb > 0) fit += slot.job === "support" ? 4 * wb : wetSlot[si] ? 1 : -7 * wb;
+      if (flies(p.def) && slot.job === "escort") fit += 2;
       // Loose teams don't share out jobs so well.
       fit += m.rng() * (3 - sk.coord) * 2;
       if (fit > bestFit) {
@@ -2420,11 +2478,11 @@ function planTeam(m: Match, team: Team): void {
         best = p;
       }
     }
-    if (!best) break;
+    if (!best) return;
     taken.add(best);
     best.job = slot.job;
     best.jobTarget = slot.target;
-  }
+  });
 
   // Lanes: raiders come in the way the plan says, the middle fans out, guards round the ring.
   const flip = team === 0 ? 1 : -1;
@@ -2512,10 +2570,30 @@ function patrolSpot(m: Match, p: Player, b: Base): [number, number] {
 function sweepSpot(m: Match, p: Player): [number, number] {
   const brain = m.brains[p.team];
   const flip = p.team === 0 ? 1 : -1;
-  const x = p.lane * WORLD_HALF_X * 0.35;
-  const up = 0.15 + 0.2 * (PLANS[brain.plan].press - 0.5);
+  // Each animal a little off its lane's line, so several on one lane don't stand on one spot; flyers sit further up,
+  // guardians further back.
+  const x = clamp(p.lane + Math.sin(p.weave) * 0.4, -1.3, 1.3) * WORLD_HALF_X * 0.35;
+  const depth = flies(p.def) ? 0.12 : p.def.style === "guardian" ? -0.08 : Math.cos(p.weave) * 0.06;
+  const up = 0.15 + depth + 0.2 * (PLANS[brain.plan].press - 0.5);
   const z = (-up + Math.sin(m.time * brain.sweepRate + brain.sweepPhase + p.lane * 1.7) * brain.sweepReach) * ZONE_EDGE;
   return [flip * x, flip * z];
+}
+
+/**
+ * A swimmer's spot in the middle: out in the water by a crossing, where raiders come over the bridges (or, with no
+ * bridges, the channel nearest its lane), drifting along the channel to the team's rhythm. Pushier plans hold the far
+ * channel, the rest their own side's. Null when there's no water near.
+ */
+function channelSpot(m: Match, p: Player): [number, number] | null {
+  const s = mapScale();
+  const brain = m.brains[p.team];
+  const flip = p.team === 0 ? 1 : -1;
+  const far = PLANS[brain.plan].press > 0.6 && p.lane !== 0;
+  const z = flip * ZONE_EDGE * (far ? -1 : 1);
+  let x = p.lane * WORLD_HALF_X * 0.35 * flip;
+  if (BRIDGES.length) x = BRIDGES.reduce((b, c) => (Math.abs(c - x) < Math.abs(b - x) ? c : b), BRIDGES[0]);
+  const drift = Math.sin(m.time * brain.sweepRate + brain.sweepPhase + p.weave) * 7 * s;
+  return waterNear(m, x + drift, z, 30 * s);
 }
 
 /** Raiders on a side lane swing out wide and come at the flag from their flank, each run a little differently. */
@@ -2527,6 +2605,145 @@ function raidSpot(p: Player, f: Flag): [number, number] {
   const z = f.z + flip * 12 * s;
   if (p.def.cls !== "air" && (isWater(x, z) || isLava(x, z) || !inWorld(x, z))) return [f.x, f.z];
   return [x, z];
+}
+
+/**
+ * Where the swimmable water is, on a coarse grid worked out once a map: 0 dry, 1 water by the shore, 2 open water.
+ * Lava never counts. Lets a swimmer find the nearest water to a fight in a few lookups instead of probing the ground.
+ */
+const WET_CELL = 3;
+/** How far the precomputed "nearest open water" lookup reaches, in meters at this map's size; searches further out walk the grid. */
+const NEAR_REACH = 36;
+let wetGrid: { key: string; nx: number; nz: number; cells: Uint8Array; near: Int32Array; reach: number } | null = null;
+function wetCells(m: Match): typeof wetGrid {
+  const key = `${m.world.id}:${WORLD_HALF_X}:${WORLD_HALF_Z}`;
+  if (wetGrid?.key === key) return wetGrid;
+  const nx = Math.ceil((WORLD_HALF_X * 2) / WET_CELL);
+  const nz = Math.ceil((WORLD_HALF_Z * 2) / WET_CELL);
+  const raw = new Uint8Array(nx * nz);
+  if (m.world.liquid === "water") {
+    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) raw[j * nx + i] = isWater((i + 0.5) * WET_CELL - WORLD_HALF_X, (j + 0.5) * WET_CELL - WORLD_HALF_Z) ? 1 : 0;
+  }
+  const cells = new Uint8Array(nx * nz);
+  for (let j = 0; j < nz; j++) {
+    for (let i = 0; i < nx; i++) {
+      if (!raw[j * nx + i]) continue;
+      const open = i > 0 && i < nx - 1 && j > 0 && j < nz - 1 && raw[j * nx + i - 1] && raw[j * nx + i + 1] && raw[(j - 1) * nx + i] && raw[(j + 1) * nx + i];
+      cells[j * nx + i] = open ? 2 : 1;
+    }
+  }
+  // Each cell's nearest open water cell within reach (or -1), spread outward from the water a ring at a time.
+  const near = new Int32Array(nx * nz).fill(-1);
+  let edge: number[] = [];
+  for (let c = 0; c < cells.length; c++) if (cells[c] === 2) [near[c], edge[edge.length]] = [c, c];
+  const reach = NEAR_REACH * mapScale();
+  for (let step = 0; step < Math.ceil(reach / WET_CELL) && edge.length; step++) {
+    const next: number[] = [];
+    for (const c of edge) {
+      const i = c % nx;
+      const j = (c - i) / nx;
+      for (let dj = -1; dj <= 1; dj++) {
+        for (let di = -1; di <= 1; di++) {
+          const ii = i + di;
+          const jj = j + dj;
+          if (ii < 0 || jj < 0 || ii >= nx || jj >= nz) continue;
+          const n = jj * nx + ii;
+          if (near[n] >= 0) continue;
+          near[n] = near[c];
+          next.push(n);
+        }
+      }
+    }
+    edge = next;
+  }
+  return (wetGrid = { key, nx, nz, cells, near, reach });
+}
+
+/** The nearest open water to (x, z) within r meters, or null. */
+function waterNear(m: Match, x: number, z: number, r: number): [number, number] | null {
+  const g = wetCells(m)!;
+  const ci = Math.floor((x + WORLD_HALF_X) / WET_CELL);
+  const cj = Math.floor((z + WORLD_HALF_Z) / WET_CELL);
+  // Close by: one lookup in the precomputed table (near enough the nearest, to a cell or so).
+  if (r <= g.reach) {
+    if (ci < 0 || cj < 0 || ci >= g.nx || cj >= g.nz) return null;
+    const c = g.near[cj * g.nx + ci];
+    if (c < 0) return null;
+    const wx = ((c % g.nx) + 0.5) * WET_CELL - WORLD_HALF_X;
+    const wz = (Math.floor(c / g.nx) + 0.5) * WET_CELL - WORLD_HALF_Z;
+    return (wx - x) ** 2 + (wz - z) ** 2 <= r * r ? [wx, wz] : null;
+  }
+  const rings = Math.ceil(r / WET_CELL);
+  let best: [number, number] | null = null;
+  let bestD = r * r;
+  for (let k = 0; k <= rings; k++) {
+    // Rings outward; once one has water, the next can only be a little closer, so stop after it.
+    for (let j = cj - k; j <= cj + k; j++) {
+      for (let i = ci - k; i <= ci + k; i++) {
+        if (Math.max(Math.abs(i - ci), Math.abs(j - cj)) !== k || i < 0 || j < 0 || i >= g.nx || j >= g.nz) continue;
+        if (g.cells[j * g.nx + i] !== 2) continue;
+        const wx = (i + 0.5) * WET_CELL - WORLD_HALF_X;
+        const wz = (j + 0.5) * WET_CELL - WORLD_HALF_Z;
+        const d = (wx - x) ** 2 + (wz - z) ** 2;
+        if (d < bestD) [best, bestD] = [[wx, wz], d];
+      }
+    }
+    if (best && k * WET_CELL > Math.sqrt(bestD) + WET_CELL) break;
+  }
+  return best;
+}
+
+/** Swimmable water here (not lava), to the nearest grid cell: plenty for deciding where to go, and quick enough to ask every frame. */
+function wet(m: Match, x: number, z: number): boolean {
+  if (m.world.liquid !== "water") return false;
+  const g = wetCells(m)!;
+  const i = Math.floor((x + WORLD_HALF_X) / WET_CELL);
+  const j = Math.floor((z + WORLD_HALF_Z) / WET_CELL);
+  return i >= 0 && j >= 0 && i < g.nx && j < g.nz && g.cells[j * g.nx + i] > 0;
+}
+
+/**
+ * How much this animal wants to fight from the water, 0 to 1: none for land animals and flyers, and on worlds without
+ * water; the swimmers that crawl on land (shark, penguin, croc) most, the quicker on land (goldfish, frog) a bit less.
+ */
+function wetBias(m: Match, p: Player): number {
+  if (p.def.cls !== "water" || m.world.liquid !== "water" || m.world.ground === "land") return 0;
+  return clamp(0.5 + (p.def.waterSpeed / p.def.landSpeed - 1), 0.5, 1);
+}
+
+/**
+ * Where to fight `o` from: ringed round them at throwing range, each CPU from its own side, so a team spreads round a
+ * rival instead of piling onto it. Close enough already, it just faces them (cpuInput slows it to aim).
+ */
+function standoff(p: Player, o: Player, range: number): [number, number] {
+  const d = Math.hypot(o.x - p.x, o.z - p.z);
+  if (d < range + 4) return lead(o);
+  const flank = ((p.id % 3) - 1) * 0.55 + Math.sin(p.weave) * 0.2;
+  const a = Math.atan2(p.x - o.x, p.z - o.z) + flank;
+  return [o.x + Math.sin(a) * range, o.z + Math.cos(a) * range];
+}
+
+/** Teammates within this many meters (flyers: other flyers within more) push a CPU gently away, so a side spreads out. */
+const ELBOW = 5.5;
+const ELBOW_AIR = 8;
+function elbowRoom(m: Match, p: Player): void {
+  let ax = 0;
+  let az = 0;
+  const air = flies(p.def);
+  const r = air ? ELBOW_AIR : ELBOW;
+  for (const t of m.players) {
+    if (t === p || t.team !== p.team || t.out > 0 || flies(t.def) !== air) continue;
+    const rx = p.x - t.x;
+    const rz = p.z - t.z;
+    const d2 = rx * rx + rz * rz;
+    if (d2 > r * r || d2 < 1e-4) continue;
+    const d = Math.sqrt(d2);
+    const k = (r - d) / r / d;
+    ax += rx * k;
+    az += rz * k;
+  }
+  p.sepX = clamp(ax, -1, 1);
+  p.sepZ = clamp(az, -1, 1);
 }
 
 /** Can this animal pass here (on foot, swimming or flying)? */
@@ -2618,6 +2835,8 @@ interface Option {
   score: number;
   x: number;
   z: number;
+  /** The rival this option squares up to, if it's a fight. */
+  foe?: number;
 }
 
 /**
@@ -2635,7 +2854,10 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
   const far = (o: { x: number; z: number }) => near(o) / (10 * s);
   const shared = (o: { x: number; z: number }, max: number) => sk.coord === 0 || fewCloser(m, p, o, Math.max(1, Math.round((max * sk.coord) / 3)));
   const opts: Option[] = [];
-  const add = (tag: string, score: number, x: number, z: number) => opts.push({ tag, score, x, z });
+  const add = (tag: string, score: number, x: number, z: number, foe?: number) => opts.push({ tag, score, x, z, foe });
+  const flyer = flies(p.def);
+  /** Where to take on rival `o` from: flyers swoop through, everyone else squares up at throwing range. */
+  const fightAt = (o: Player): [number, number] => (flyer ? lead(o) : standoff(p, o, 7));
 
   if (p.carrying >= 0) {
     // Head for the closest base, or with tactics the one fewer enemies watch.
@@ -2717,21 +2939,28 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
     }
   }
   if (job === "support" || opts.length === 0) {
-    const [x, z] = sweepSpot(m, p);
+    // A swimmer holds the water: by the crossings, or in Team Deathmatch (no crossings to hold) the water nearest the fighting.
+    const brawl = m.mode === "deathmatch" ? nearest(p, enemies, Infinity) : undefined;
+    const swim = wetBias(m, p) > 0 && ((brawl && waterNear(m, brawl.x, brawl.z, 35 * s)) || channelSpot(m, p));
+    const [x, z] = swim || sweepSpot(m, p);
     add("support", 56, x, z);
   }
-  // Team Deathmatch has no flags: go and find a rival. The nearest, and with tactics one on its last hit, shared out
-  // so the whole team doesn't chase the same animal.
+  // Team Deathmatch has no flags: go and find a rival, shared out so the whole team doesn't chase the same animal. Each
+  // CPU fights over its own stretch of the front (round its spot in the middle) or whoever comes at it, so the teams
+  // meet in several fights across the island instead of one big pile. Nobody near: push up on the nearest anyway.
   if (m.mode === "deathmatch") {
-    const prey = nearest(p, enemies, Infinity);
-    if (prey && shared(prey, 3)) add("brawl", 68 - 2 * far(prey), ...lead(prey));
+    const [hx, hz] = sweepSpot(m, p);
+    const patch = 30 * s;
+    const local = enemies.filter((o) => near(o) < 14 || Math.hypot(o.x - hx, o.z - hz) < patch);
+    const prey = nearest(p, local.length ? local : enemies, Infinity);
+    if (prey && shared(prey, 3)) add("brawl", (local.length ? 68 : 58) - 2 * far(prey), ...fightAt(prey), prey.id);
     if (sk.tactics > 0.3) {
       const weak = nearest(
         p,
         enemies.filter((o) => o.hp === 1),
         35 * s,
       );
-      if (weak && weak !== prey && shared(weak, 2)) add("finish", 74 - 2 * far(weak), ...lead(weak));
+      if (weak && weak !== prey && shared(weak, 2)) add("finish", 74 - 2 * far(weak), ...fightAt(weak), weak.id);
     }
   }
 
@@ -2765,9 +2994,9 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
       score = (job === "support" ? 62 + 12 * (plan.press - 0.5) : job === "raid" ? 40 + loud : 34) + (o.hp === 1 ? 10 : 0) - d * reach;
     }
     if (score === -Infinity || !shared(o, 2)) continue;
-    // Too close to throw: step back to get a clear shot.
-    const [lx, lz] = d < 2.5 ? [p.x + ((p.x - o.x) / (d || 1)) * 6, p.z + ((p.z - o.z) / (d || 1)) * 6] : lead(o);
-    add("fight", score, lx, lz);
+    // Flyers leave a rival the ground is already on and pick their own.
+    if (flyer && countNear(m, p.team, o.x, o.z, 6) >= 2) score -= 8;
+    add("fight", score, ...fightAt(o), o.id);
   }
   // Anyone close to the enemy flag may as well take it.
   if (stealBest && job !== "raid" && job !== "hunt" && near(stealBest) < 15 * s) add("steal", 70 - 2 * far(stealBest), stealBest.x, stealBest.z);
@@ -2799,6 +3028,22 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
     if (front) add("follow", 72, front.x, front.z - Math.sign(enemyZ) * 8 * s);
   }
 
+  if (flyer) flyerRoles(m, p, sk, enemies, add, far, shared);
+  // Swimmers look for rivals in reach of the water: in it, or on the shore within a throw of it.
+  if (wetBias(m, p) > 0 && (job === "support" || m.mode === "deathmatch")) {
+    let prey: Player | undefined;
+    let preyD = 45 * s;
+    let spot: [number, number] | null = null;
+    for (const o of enemies) {
+      const d = near(o);
+      if (d >= preyD) continue;
+      const w = wet(m, o.x, o.z) ? ([o.x, o.z] as [number, number]) : waterNear(m, o.x, o.z, 14);
+      if (w) [prey, preyD, spot] = [o, d, w];
+    }
+    if (prey && spot && shared(prey, 2)) add("shore", (m.mode === "deathmatch" ? 72 : 67) + (prey.hp === 1 ? 6 : 0) - 1.5 * far(prey), spot[0], spot[1], prey.id);
+  }
+  preferOwnGround(m, p, opts);
+
   let best: Option | undefined;
   let bestScore = -Infinity;
   for (const o of opts) {
@@ -2808,9 +3053,106 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
       best = o;
     }
   }
-  if (!best) return [0, m.bases[enemyTeam].z * 0.6];
+  if (!best) {
+    p.foe = -1;
+    return [0, m.bases[enemyTeam].z * 0.6];
+  }
   p.goalTag = best.tag;
+  p.foe = best.foe ?? -1;
   return [best.x, best.z];
+}
+
+/**
+ * What flyers do for the team from the air, beyond a plain fight: bomb runs on a bunch of rivals once the bomb is
+ * loaded, the Glide Fish's volley at a prize (a flag carrier or a rival on its last hit), and cover for a teammate
+ * that rivals are closing on, flag carriers first, strafing whoever is pressing them.
+ */
+function flyerRoles(
+  m: Match,
+  p: Player,
+  sk: Skill,
+  enemies: Player[],
+  add: (tag: string, score: number, x: number, z: number, foe?: number) => void,
+  far: (o: { x: number; z: number }) => number,
+  shared: (o: { x: number; z: number }, max: number) => boolean,
+): void {
+  const s = mapScale();
+  const reach = 45 * s;
+  const d2 = (a: { x: number; z: number }, b: { x: number; z: number }) => (a.x - b.x) ** 2 + (a.z - b.z) ** 2;
+  // Only rivals within reach (and a fight's width beyond) matter here; big matches have many more than that.
+  const around = enemies.filter((e) => d2(e, p) < (reach + 12) ** 2);
+  if (p.bombCd <= 0 && p.def.special !== "missiles") {
+    let best: Player | undefined;
+    let bestN = 1;
+    const r2 = tune.bombRadius ** 2;
+    for (const e of around) {
+      if (d2(e, p) > reach * reach) continue;
+      let n = 0;
+      for (const o of around) if (d2(o, e) < r2) n++;
+      if (n > bestN || (n === bestN && best && e.carrying >= 0)) [best, bestN] = [e, n];
+    }
+    // Only another flyer closer to the bunch takes the run instead; the ground fighting there is what makes it worth bombing.
+    const taken = best && m.players.some((t) => t !== p && t.team === p.team && flies(t.def) && t.out <= 0 && Math.hypot(t.x - best!.x, t.z - best!.z) < Math.hypot(p.x - best!.x, p.z - best!.z));
+    if (best && !taken) add("bombrun", 70 + 5 * Math.min(bestN, 4) - 1.5 * far(best), best.x, best.z);
+  }
+  if (p.bombCd <= 0 && p.def.special === "missiles") {
+    const prize = nearest(
+      p,
+      enemies.filter((o) => o.carrying >= 0 || o.hp === 1),
+      40 * s,
+    );
+    if (prize) add("volley", 74 - far(prize), prize.x, prize.z);
+  }
+  // Cover: a teammate on the ground with rivals closing in. Good teams see it from further off.
+  if (sk.coord < 1) return;
+  let ward: Player | undefined;
+  let threat: Player | undefined;
+  let worst = 0;
+  for (const t of m.players) {
+    if (t.team !== p.team || t === p || t.out > 0 || flies(t.def) || d2(t, p) > reach * reach) continue;
+    let n = 0;
+    let close: Player | undefined;
+    let closeD = 144;
+    for (const o of around) {
+      const d = d2(o, t);
+      if (d > 144) continue;
+      n++;
+      if (d < closeD) [close, closeD] = [o, d];
+    }
+    const weight = n * (t.carrying >= 0 ? 2.5 : 1) + (t.hp === 1 ? 0.5 : 0);
+    if (close && weight > worst) [ward, threat, worst] = [t, close, weight];
+  }
+  if (ward && threat && shared(threat, 2)) add("cover", 66 + 4 * Math.min(worst, 4) - 1.5 * far(threat), ...lead(threat));
+}
+
+/** What sends a CPU somewhere loose (a fight, the middle, a station): the options that can bend to suit its ground. */
+const LOOSE = new Set(["fight", "brawl", "finish", "support", "follow", "station", "unplant", "cover"]);
+
+/**
+ * Each animal fights where it's strong. A swimmer takes its fights to the water: it lines up on a rival from the
+ * nearest open water within throwing range, holds the middle out in the channels and lagoons, and goes up on dry land
+ * only for the jobs that need it (a flag, a thief, a save). A land animal won't wade in after a rival in the water,
+ * where it crawls and can't hit a diver.
+ */
+function preferOwnGround(m: Match, p: Player, opts: Option[]): void {
+  const wb = wetBias(m, p);
+  const landBound = p.def.cls === "land" && m.world.liquid === "water";
+  if (wb <= 0 && !landBound) return;
+  const s = mapScale();
+  for (const o of opts) {
+    if (!LOOSE.has(o.tag)) continue;
+    const inWater = wet(m, o.x, o.z);
+    if (wb > 0 && !inWater) {
+      const foe = o.foe !== undefined ? m.players[o.foe] : undefined;
+      const w = waterNear(m, o.x, o.z, (foe ? 13 : 24) * s);
+      if (w && (!foe || Math.hypot(w[0] - foe.x, w[1] - foe.z) < 15)) {
+        o.x = w[0];
+        o.z = w[1];
+        o.score += 3 * wb;
+      } else o.score -= 14 * wb;
+    } else if (wb > 0) o.score += 3 * wb;
+    else if (inWater) o.score -= 10;
+  }
 }
 
 function push(m: Match, p: Player, sk: Skill): number {

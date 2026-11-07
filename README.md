@@ -374,6 +374,31 @@ the clock: a team trailing late pushes forward, one leading late holds. Between
 decisions it dodges shots it sees coming (hopping skidding ones), aims where a
 moving target is going, and carriers steer around enemies.
 
+Each animal fights the way its kind is built to, and the mode sets what it is
+after (`cpuGoal`, `flyerRoles` and `preferOwnGround` in `src/sim.ts`, tested in
+`src/combat.test.ts`):
+
+- Nobody rams in. A CPU squares up at throwing range: it comes in on its own
+  side of the rival so a team rings round a target instead of stacking on it,
+  slows to face it and throw, and backs off when the rival is on top of it.
+  Teammates crowding close shuffle apart, so the middle is several fights
+  across the island rather than one pile.
+- Swimmers (Jet Shark, Surf Penguin and Ski Croc most, Pogo Frog and Bowl
+  Goldfish a little less) take their fights to the water: they hold the
+  channels by the bridges where raiders cross, take on a rival on the shore
+  from the nearest open water, only duck under a shot actually coming at them
+  while squared up, and are sent on dry land raids or guard duty far from water
+  only when nobody else can go. A land animal won't wade in after a swimmer.
+- Flyers work for the team from the air: they ride shotgun over a flag
+  carrier, swoop on whoever is closing in on a teammate (carriers first), take
+  a loaded bomb to a bunch of rivals rather than drop it on the first one they
+  pass, and the Glide Fish saves its missiles for a carrier or a rival on its
+  last hit. They leave a rival the ground is already on and pick their own.
+- In Team Deathmatch each CPU fights over its own stretch of the front (or
+  whoever comes at it) and pushes up when nobody is near; swimmers go to the
+  water nearest the fighting. In Capture, Playful and Hoard the jobs come
+  from the team plan as before.
+
 Pick the rivals' level in the match settings. Your teammates always play Medium.
 
 - Easy: slow to react, loose choices, rarely dodges, aims where you are, and
