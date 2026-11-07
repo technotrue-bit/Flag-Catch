@@ -223,9 +223,9 @@ describe("progress", () => {
     return { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) };
   };
 
-  it("a new player starts with the lion, the wolf, Home Isle and two modes", () => {
+  it("a new player starts with the lion, the wolf, Home Isle and three modes", () => {
     const open = progress.unlocked(progress.load(memory()));
-    expect([...open].sort()).toEqual(["capture", "home", "hoard", "lion", "wolf"].sort());
+    expect([...open].sort()).toEqual(["capture", "deathmatch", "home", "hoard", "lion", "wolf"].sort());
   });
 
   it("every animal, world and mode is somewhere on the track", () => {

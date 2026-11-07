@@ -48,7 +48,7 @@ export interface Unlock {
 
 /** The unlock track. Everything at 0 is open from the start. */
 export const UNLOCKS: readonly Unlock[] = [
-  { at: 0, animals: ["lion", "wolf"], worlds: ["home"], modes: ["capture", "hoard"] },
+  { at: 0, animals: ["lion", "wolf"], worlds: ["home"], modes: ["capture", "hoard", "deathmatch"] },
   { at: 100, animals: ["penguin"], worlds: ["reef"] },
   { at: 250, animals: ["croc"] },
   { at: 450, animals: ["bird"], worlds: ["bluffs"] },

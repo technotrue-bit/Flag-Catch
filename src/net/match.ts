@@ -3,7 +3,7 @@
  * draws it from that phone's side (see view.ts).
  */
 import { ANIMALS } from "../animals";
-import { type Difficulty, type Match, type Mode, type Team, createMatch, setAnimal } from "../sim";
+import { DEATHMATCH_TIME, type Difficulty, type Match, type Mode, type Team, createMatch, isMode, setAnimal } from "../sim";
 import { mapFor } from "../terrain";
 import { WORLDS } from "../worlds";
 import { type View, makeView } from "./view";
@@ -47,7 +47,7 @@ export function newSetup(seed: number, mode: Mode, world: string, difficulty: Di
     world,
     difficulty,
     perTeam,
-    duration: mode === "hoard" ? 900 : map.duration,
+    duration: mode === "hoard" ? 900 : mode === "deathmatch" ? DEATHMATCH_TIME : map.duration,
     flagsPerTeam: mode === "hoard" ? map.flagsPerTeam : 1,
     seats,
     animals: [],
@@ -101,7 +101,7 @@ export function checkSetup(raw: unknown): OnlineSetup | null {
   const s = raw as Partial<OnlineSetup> | null;
   if (!s || s.v !== 1) return null;
   if (typeof s.seed !== "number" || !Number.isFinite(s.seed)) return null;
-  if (s.mode !== "capture" && s.mode !== "hoard" && s.mode !== "playful") return null;
+  if (!isMode(s.mode)) return null;
   if (!WORLDS.some((w) => w.id === s.world)) return null;
   if (s.difficulty !== "easy" && s.difficulty !== "medium" && s.difficulty !== "hard") return null;
   if (s.perTeam !== ONLINE_PER_TEAM) return null;

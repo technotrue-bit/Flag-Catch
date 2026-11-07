@@ -489,8 +489,16 @@ export interface Base {
  * Hoard: every flag sitting in your base earns points over time, and the
  * first team to HOARD_TARGET wins; stealing shifts who earns faster.
  */
-export type Mode = "capture" | "hoard" | "playful";
+export type Mode = "capture" | "hoard" | "playful" | "deathmatch";
+/** Every mode, in the order the match settings list them. */
+export const MODES: readonly Mode[] = ["capture", "hoard", "playful", "deathmatch"];
+export const isMode = (v: unknown): v is Mode => MODES.includes(v as Mode);
 export const HOARD_TARGET = 1000;
+/**
+ * Team Deathmatch: no flags. Each rival your team knocks out is a point, and the team with more when the 10 minute
+ * clock runs out wins (a tie goes to overtime, where the next knockout wins).
+ */
+export const DEATHMATCH_TIME = 600;
 /**
  * Points per second each flag in your base earns in Hoard, for a match with
  * five flags a side. Maps with more flags pay less per flag, so the race to
@@ -585,8 +593,8 @@ export function createMatch(opts: MatchOptions): Match {
   const world = worldById(opts.world ?? "home");
   setWorld(world);
   setMap(map);
-  // Playful mode plays for one flag a side.
-  const flagsPerTeam = opts.mode === "playful" ? 1 : opts.flagsPerTeam;
+  // Playful mode plays for one flag a side; Team Deathmatch for none.
+  const flagsPerTeam = opts.mode === "deathmatch" ? 0 : opts.mode === "playful" ? 1 : opts.flagsPerTeam;
   const bases: Base[] = [
     { id: 0, team: 0, x: 0, z: BASE_Z, main: true },
     { id: 1, team: 1, x: 0, z: -BASE_Z, main: true },
@@ -1129,6 +1137,8 @@ function countStreak(m: Match, p: Player, owner: Player | undefined): void {
   p.outs++;
   if (!owner || owner.team === p.team) return;
   owner.kos++;
+  // Team Deathmatch: every knockout of a rival scores for the team.
+  if (m.mode === "deathmatch") m.scores[owner.team] += 1;
   owner.streak++;
   owner.bestStreak = Math.max(owner.bestStreak, owner.streak);
   owner.multi = m.time - owner.multiT <= tune.multiWindow ? owner.multi + 1 : 1;
@@ -2709,6 +2719,20 @@ function cpuGoal(m: Match, p: Player, sk: Skill): [number, number] {
   if (job === "support" || opts.length === 0) {
     const [x, z] = sweepSpot(m, p);
     add("support", 56, x, z);
+  }
+  // Team Deathmatch has no flags: go and find a rival. The nearest, and with tactics one on its last hit, shared out
+  // so the whole team doesn't chase the same animal.
+  if (m.mode === "deathmatch") {
+    const prey = nearest(p, enemies, Infinity);
+    if (prey && shared(prey, 3)) add("brawl", 68 - 2 * far(prey), ...lead(prey));
+    if (sk.tactics > 0.3) {
+      const weak = nearest(
+        p,
+        enemies.filter((o) => o.hp === 1),
+        35 * s,
+      );
+      if (weak && weak !== prey && shared(weak, 2)) add("finish", 74 - 2 * far(weak), ...lead(weak));
+    }
   }
 
   // A flag on the ground nearby: theirs to grab, ours to save.

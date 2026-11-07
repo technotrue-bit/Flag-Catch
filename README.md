@@ -8,7 +8,7 @@ the enemy base and carry it home to score, and guard your own. Firecrackers pop
 rivals loose so they drop what they carry; touch your own dropped flag to send
 it home.
 
-Three modes, picked in the match settings:
+Four modes, picked in the match settings:
 
 - Capture: one big flag a side, in the team's color with its shape (sun or
   moon), standing in the middle of its base. Steal theirs and bring it home to
@@ -18,6 +18,11 @@ Three modes, picked in the match settings:
   team to 1000 points wins. Stealing flags shifts who earns faster.
 - Playful: one flag a side. Bank it to score, and it goes straight back to its
   owners' base for the next round of chasing.
+- Deathmatch (team deathmatch): no flags. Every rival your team knocks out
+  is a point, and the team with more when the 10 minute clock runs out wins;
+  a tie goes to overtime, where the next knockout wins. The arrow points at
+  the nearest rival, and CPUs go looking for fights (finishing off rivals on
+  their last hit first). Open from the start, offline and online.
 
 Every flag wears its own team's color wherever it goes. A carried flag rides
 on the carrier's back and flutters as they run, and a pin in the team's color

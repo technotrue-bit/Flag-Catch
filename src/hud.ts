@@ -368,6 +368,7 @@ html.fc-ds #app{border-radius:10px;overflow:hidden;box-shadow:0 0 0 5px ${PALETT
 .fc-ds .fc-sel h2.fc-logo{display:none}
 .fc-ds .fc-setup{margin-top:auto;gap:4px 10px;padding:5px 8px 7px;border-radius:16px}
 .fc-ds .fc-mode,.fc-ds .fc-size{min-width:0;min-height:34px;padding:3px 9px;font-size:13px}
+.fc-ds .fc-mode{padding:3px 7px}
 .fc-ds .fc-mode small,.fc-ds .fc-size small{display:none}
 .fc-ds .fc-world .name{min-width:120px;min-height:34px;font-size:14px}
 .fc-ds .fc-world .arw{width:30px;height:34px}
@@ -1000,6 +1001,7 @@ export function createHud(controls: Controls): Hud {
     const tiles: Array<[string, string, string]> = [
       ["STEER", "#9b7be8", `Drag anywhere on the ${left} side and your animal heads that way.`],
       ["FLAGS", FLAG_FREE, "Grab a flag from the enemy base and bring it home to score."],
+      ["DEATHMATCH", "#e8455b", "No flags: every rival your team knocks out is a point. Most when the 10 minutes are up wins."],
       ["THROW", "#ff6b5b", "Throw firecrackers. Three hits knock a rival out for a moment."],
       ["JUMP", "#46b4e8", "Hop over trouble."],
       ["FLYERS", "#7a5cc4", "Fly on their own: steer and speed up with the stick. BOMB hits wide and reloads in 30 s (the Glide Fish fires 3 homing MISSILES instead). Hold FIRE for confetti; it cools down after 7 s."],
@@ -1370,7 +1372,20 @@ export function createHud(controls: Controls): Hud {
       let tx = NaN;
       let tz = NaN;
       let color: string = TEAMS[1].color;
-      if (me.carrying >= 0) {
+      if (m.mode === "deathmatch") {
+        // No flags to point at: point at the nearest rival instead.
+        let best = Infinity;
+        for (const o of m.players) {
+          if (o.team === me.team || o.out > 0) continue;
+          const d = Math.hypot(o.x - me.x, o.z - me.z);
+          if (d < best) {
+            best = d;
+            tx = o.x;
+            tz = o.z;
+          }
+        }
+        color = TEAMS[1].color;
+      } else if (me.carrying >= 0) {
         const home = nearestBase(m, me.team, me.x, me.z);
         tx = home.x;
         tz = home.z;
@@ -1580,6 +1595,7 @@ export function createHud(controls: Controls): Hud {
         ["capture", "CAPTURE", "Most steals wins"],
         ["hoard", "HOARD", `First to ${HOARD_TARGET} points`],
         ["playful", "PLAYFUL", "One flag each"],
+        ["deathmatch", "DEATHMATCH", "Most KOs in 10 min"],
       ];
       for (const [id, name, info] of modeInfo) {
         const locked = !open.has(id);
@@ -1792,7 +1808,7 @@ export function createHud(controls: Controls): Hud {
         countUp(el("b", "", p), score);
       };
       pill(0, a);
-      el("div", "fc-vs", board).textContent = m.mode === "hoard" ? "POINTS" : "FLAGS";
+      el("div", "fc-vs", board).textContent = m.mode === "hoard" ? "POINTS" : m.mode === "deathmatch" ? "KOS" : "FLAGS";
       pill(1, b);
       // Your match in five numbers, then the best player on the island.
       const row = el("div", "fc-stats", box);

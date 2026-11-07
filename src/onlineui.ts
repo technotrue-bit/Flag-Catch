@@ -186,6 +186,7 @@ const MODES: Array<[Mode, string]> = [
   ["capture", "CAPTURE"],
   ["hoard", "HOARD"],
   ["playful", "PLAYFUL"],
+  ["deathmatch", "DEATHMATCH"],
 ];
 const SKILLS: Array<[Difficulty, string]> = [
   ["easy", "EASY"],
