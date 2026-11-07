@@ -347,6 +347,9 @@ export interface Player {
   streak: number;
   bestStreak: number;
   multi: number;
+  /** Rivals this player has knocked out this match, and the times it has been knocked out, for the scoreboard. */
+  kos: number;
+  outs: number;
   /** Match time of this player's last knockout of a rival. */
   multiT: number;
   /** Flyers: the confetti gun's heat (0 to 1), seconds left cooling after overheating, and until the next shot. */
@@ -749,6 +752,8 @@ function makePlayer(id: number, team: Team, def: AnimalDef, cpu: boolean, x: num
     streak: 0,
     bestStreak: 0,
     multi: 0,
+    kos: 0,
+    outs: 0,
     multiT: -99,
     heat: 0,
     overheat: 0,
@@ -1121,7 +1126,9 @@ function countStreak(m: Match, p: Player, owner: Player | undefined): void {
   const ended = p.streak;
   p.streak = 0;
   p.multi = 0;
+  p.outs++;
   if (!owner || owner.team === p.team) return;
+  owner.kos++;
   owner.streak++;
   owner.bestStreak = Math.max(owner.bestStreak, owner.streak);
   owner.multi = m.time - owner.multiT <= tune.multiWindow ? owner.multi + 1 : 1;

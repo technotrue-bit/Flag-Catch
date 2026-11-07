@@ -61,13 +61,20 @@ export function dsLayout(w: number, h: number, inset: Insets = { top: 0, right: 
  * Where the map sits on the bottom screen: upright (the enemy's land at the
  * top), centered, as tall as fits, and no wider than the middle of the screen
  * so both thumbs keep their sides. `ratio` is the island's width over length.
+ * `reserveTop` keeps that strip at the top of the screen clear (for the scoreboard).
  */
-export function mapRect(bottom: Rect, ratio: number): Rect {
+export function mapRect(bottom: Rect, ratio: number, reserveTop = 0): Rect {
+  const room = Math.max(0, bottom.h - reserveTop);
   const maxW = bottom.w * 0.46;
-  const maxH = Math.max(0, bottom.h - 16);
+  const maxH = Math.max(0, room - 16);
   const h = Math.min(maxH, maxW / ratio);
   const w = h * ratio;
-  return { x: bottom.x + (bottom.w - w) / 2, y: bottom.y + (bottom.h - h) / 2, w, h };
+  return { x: bottom.x + (bottom.w - w) / 2, y: bottom.y + reserveTop + (room - h) / 2, w, h };
+}
+
+/** Room the scoreboard wants above the map for `rows` rows a team (a header, the rows, and a margin round it). */
+export function boardReserve(bottom: Rect, rows: number): number {
+  return Math.min(Math.round(bottom.h * 0.32), 10 + 18 + 12 * rows + 6);
 }
 
 /** The safe area insets, read off a hidden element padded by env(). */

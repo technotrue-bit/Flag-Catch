@@ -1251,13 +1251,12 @@ function placeSelectCamera(t: number): void {
   camera.lookAt(camLook);
 }
 
-/** Call outs for crossing into enemy land and for heading home with a flag. */
+/** A call out for heading home with a flag. Crossing into enemy land needs none: the ticker turns red and says so. */
 function watchLands(): void {
   const me = match.players[0];
   const land = landOf(me.z);
   if (land !== lastLand) {
-    if (land === 1) hud.call("ENEMY LAND!", TEAMS[1].light);
-    else if (land === 0 && me.carrying >= 0) hud.call("HOME STRETCH!", TEAMS[0].color);
+    if (land === 0 && me.carrying >= 0) hud.call("HOME STRETCH!", TEAMS[0].color);
     lastLand = land;
   }
 }

@@ -233,6 +233,8 @@ handed play). A hinge with two little lights sits between them.
   the two screens. With DS mode off, an upright phone still asks to be turned.
 - Full screen phones only lock to landscape with DS mode off.
 - Only the bottom screen steers, so a thumb never covers the game view.
+- The scoreboard sits at the top of the bottom screen, above the map, between
+  the edge and the Item button; the map shrinks a little to make room for it.
 
 ## Menus and settings
 
@@ -254,7 +256,7 @@ handed play). A hinge with two little lights sits between them.
   chimes); Chimes on or off; Graphics (Low, Normal, High); Zoom; Camera turn (slow, normal, fast);
   Screen shake; Calm effects (fewer sparks, no lightning flash, a softer
   glow); Left handed (steer on the right, buttons on the left); Big buttons;
-  Vibration where the phone has it; DS mode. `?dev` adds the feel tuning sliders.
+  Vibration where the phone has it; DS mode; Scoreboard. `?dev` adds the feel tuning sliders.
 - Your last animal, world, mode, team size, role and rival level are kept
   for next time.
 
@@ -318,6 +320,26 @@ Knock out rivals in a row without being knocked out yourself for a kill streak
   streak and shutdown tags (on the two biggest team sizes only yours and the
   long streaks). A rival or teammate reaching 5 or 8 in a row is called out.
 - The results card shows your best streak.
+- A see-through scoreboard (`src/board.ts`) lists every animal's knockouts
+  (KO), times knocked out (OUT) and current streak, one column a team, the
+  leaders first and you always on it, picked out in gold; animals knocked
+  out right now are dimmed. With more animals than rows, the team's header
+  says how many more there are. In DS mode it sits above the map on the
+  bottom screen; in the wide layout, small under the minimap. It never takes
+  a touch, and Settings, View can switch it off. Online, the host sends the
+  numbers with each snapshot.
+
+## The ticker
+
+News from the match (they took a flag, team scored, hit, got an item and the
+rest) no longer goes in big letters across the middle of the screen. One
+block under the score (`src/ticker.ts`) says it instead: it rests on which
+land you are in (YOUR LAND, MIDDLE LAND, ENEMY LAND, in the land's color),
+and each piece of news rolls in from the top like a block turning over, in
+its own color, holds for a beat and rolls on to the next news or back to the
+land. At most three wait their turn, held for less while others wait, and the
+same words never roll in twice in a row. Phones set to reduce motion get a
+plain swap. The big KNOCKOUT! and streak banners still punch in on their own.
 
 Flyers (Sky Eagle, Glide Fish, Night Bat) fly on their own, low over land and
 water alike: the stick steers and sets the speed, from a slow cruise with it let
@@ -445,3 +467,4 @@ Test games with `?per` or `?time` don't pay points.
 - `src/main.ts`, `src/world.ts`, `src/models.ts`, `src/fx.ts`: rendering. `src/look.ts`: the Graphics levels, shadows and the High passes. `src/globe.ts`: the curved world and its horizon. `src/crowd.ts`: crowds drawn in batches.
 - `src/hud.ts`, `src/input.ts`, `src/audio.ts`: menus, thumbs, HUD, sound, chimes and animal mood tones.
 - `src/cues.ts`: the cue chimes for big moments. `src/settings.ts`: saved player settings.
+- `src/board.ts`: who makes the scoreboard. `src/ticker.ts`: the ticker's queue of news.
