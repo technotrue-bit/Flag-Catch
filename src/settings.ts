@@ -33,6 +33,8 @@ export interface Settings {
   dsMode: boolean;
   /** Graphics quality. */
   graphics: Graphics;
+  /** The see-through scoreboard of knockouts, times knocked out and streaks. */
+  scoreboard: boolean;
 }
 
 export const DEFAULTS: Readonly<Settings> = {
@@ -48,6 +50,7 @@ export const DEFAULTS: Readonly<Settings> = {
   vibrate: true,
   dsMode: false,
   graphics: "normal",
+  scoreboard: true,
 };
 
 const KEY = "flagcatch.settings";
@@ -78,6 +81,7 @@ export function loadSettings(store: Store | null): Settings {
         vibrate: bool(p.vibrate, s.vibrate),
         dsMode: bool(p.dsMode, s.dsMode),
         graphics: pick(p.graphics, GRAPHICS, s.graphics),
+        scoreboard: bool(p.scoreboard, s.scoreboard),
       };
     }
     // Before this settings card, Zoom and Music had keys of their own.

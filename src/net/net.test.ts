@@ -46,6 +46,10 @@ describe("each phone's side of an online match", () => {
     const host = hostMatch(s);
     const others = (p: { id: number }): Input => (p.id === 10 ? { ...NO_INPUT, dirX: 0.3, dirZ: 1 } : NO_INPUT);
     for (let i = 0; i < 25 / STEP; i++) step(host, NO_INPUT, others);
+    // Scoreboard numbers for a few animals, to see them reach the guest's scoreboard.
+    host.players[0].kos = 3;
+    host.players[0].streak = 2;
+    host.players[10].outs = 4;
     const { match: local, view } = guestMatch(JSON.parse(JSON.stringify(s)), 10);
     expect(view.flip).toBe(true);
     expect(local.players[0].def.id).toBe("penguin");
@@ -59,6 +63,7 @@ describe("each phone's side of an online match", () => {
       const a = host.players[h];
       const b = local.players[view.player(h)];
       expect(b.def.id).toBe(a.def.id);
+      expect([b.kos, b.outs, b.streak]).toEqual([a.kos, a.outs, a.streak]);
       expect(b.x).toBeCloseTo(-a.x, 1);
       expect(b.z).toBeCloseTo(-a.z, 1);
       expect(b.team).toBe(1 - a.team);

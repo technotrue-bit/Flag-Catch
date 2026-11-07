@@ -31,6 +31,8 @@ export interface Snap {
   R: number[];
   S: number[];
   K: number[];
+  /** The scoreboard: knockouts, times knocked out and streak, three numbers per player. Older hosts leave it out. */
+  B?: number[];
   /** For the phone it goes to: the last of its inputs the host has used, and its own player in full (see ME_KEYS). */
   a?: number;
   me?: Partial<Record<MeKey, unknown>>;
@@ -42,7 +44,9 @@ const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 export function encodeSnap(m: Match): Snap {
   const P: number[] = [];
+  const B: number[] = [];
   for (const p of m.players) {
+    B.push(p.kos, p.outs, p.streak);
     const bits =
       (p.onSurface ? 1 : 0) | (p.diving ? 2 : 0) | (p.medium === "water" ? 4 : 0) | (p.medium === "air" ? 8 : 0) | (p.medic ? 16 : 0) | (p.cpu ? 32 : 0);
     P.push(
@@ -88,6 +92,7 @@ export function encodeSnap(m: Match): Snap {
     R,
     S: m.stations.map((s) => r1(s.cd)),
     K,
+    B,
   };
 }
 
@@ -187,6 +192,11 @@ export function applySnap(local: Match, view: View, a: Snap, b: Snap, k: number,
     p.medic = (bits & 16) !== 0;
     p.score = B[o + 15];
     p.item = B[o + 11] >= 0 ? (ITEM_IDS[B[o + 11]] ?? null) : null;
+    if (b.B && b.B.length === n * 3) {
+      p.kos = b.B[h * 3];
+      p.outs = b.B[h * 3 + 1];
+      p.streak = b.B[h * 3 + 2];
+    }
     if (p.id === skip) continue;
     // A jump across the island (a respawn) snaps instead of sliding.
     const far = Math.abs(A[o] - B[o]) + Math.abs(A[o + 2] - B[o + 2]) > 6;

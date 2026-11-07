@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DS_HINGE, dsLayout, dsWanted, mapRect } from "./ds";
+import { DS_HINGE, boardReserve, dsLayout, dsWanted, mapRect } from "./ds";
 
 describe("DS mode layout", () => {
   it("only splits the screen with DS mode on and the phone upright", () => {
@@ -39,5 +39,19 @@ describe("DS mode layout", () => {
       expect(r.x + r.w).toBeLessThanOrEqual(bottom.x + bottom.w - 92);
       expect(r.x - bottom.x).toBeCloseTo(bottom.x + bottom.w - (r.x + r.w), 5);
     }
+  });
+
+  it("leaves room above the map for the scoreboard when asked", () => {
+    const { bottom } = dsLayout(390, 844);
+    for (const ratio of [0.44, 0.61, 0.92]) {
+      const reserve = boardReserve(bottom, 4);
+      const r = mapRect(bottom, ratio, reserve);
+      expect(r.y).toBeGreaterThanOrEqual(bottom.y + reserve);
+      expect(r.y + r.h).toBeLessThanOrEqual(bottom.y + bottom.h);
+      expect(r.w / r.h).toBeCloseTo(ratio, 5);
+    }
+    // Four rows fit on a phone; a squat screen never gives up more than about a third to it.
+    expect(boardReserve(bottom, 4)).toBe(10 + 18 + 48 + 6);
+    expect(boardReserve({ ...bottom, h: 200 }, 8)).toBe(64);
   });
 });
