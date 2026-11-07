@@ -60,7 +60,7 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-sb .col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;padding:3px 5px 4px;border-radius:9px;background:rgba(255,255,255,.4);box-shadow:inset 0 0 0 1.5px rgba(43,35,64,.07)}
 .fc-sb .hd,.fc-sb .r{display:grid;grid-template-columns:minmax(0,1fr) 14px 19px 14px;align-items:center;column-gap:1px;height:12px;padding:0 3px}
 .fc-sb .hd{height:11px;font-size:8px;letter-spacing:.5px;color:rgba(43,35,64,.5)}
-.fc-sb .hd b{display:flex;align-items:center;gap:3px;min-width:0;overflow:hidden;white-space:nowrap;color:var(--tc)}
+.fc-sb .hd b{display:flex;align-items:center;gap:3px;min-width:0;padding-right:3px;overflow:hidden;white-space:nowrap;color:var(--tc)}
 .fc-sb .hd b::before{content:"";flex:none;width:7px;height:7px;border-radius:2px;background:var(--tc)}
 .fc-sb .hd b small{font-size:8px;color:rgba(43,35,64,.45)}
 .fc-sb span{text-align:center;font-variant-numeric:tabular-nums}
@@ -157,7 +157,8 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 @media (max-height:350px){.fc-sel h2{display:none}}
 /* Short landscape phones: the animal cards drop their one line blurb so they fit above the bottom edge. */
 @media (max-height:440px){.fc-tile .perk{display:none}}
-.fc-timer.goal{font-size:13px;line-height:1.1;padding:5px 10px}
+.fc-timer.goal{min-width:0;font-size:16px;line-height:1;padding:4px 10px 5px;white-space:nowrap}
+.fc-timer.goal small{display:block;font-size:8px;letter-spacing:.8px;opacity:.6}
 .fc-row{flex:none;margin-top:auto;max-width:100%;display:flex;justify-content:center;align-items:flex-end;gap:8px}
 .fc-tiles{pointer-events:auto;display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;padding:10px 4px 6px;min-width:0;flex:0 1 auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .fc-tiles::-webkit-scrollbar{display:none}
@@ -344,12 +345,15 @@ html.fc-ds #app{border-radius:10px;overflow:hidden;box-shadow:0 0 0 5px ${PALETT
 .fc-ds .fc-throw{width:68px;height:68px;right:16px;bottom:104px;font-size:13px}
 .fc-ds .fc-item{width:56px;height:56px;right:22px;top:10px;bottom:auto;font-size:9px}
 .fc-ds .fc-dive{width:56px;height:56px;right:22px;top:74px;bottom:auto;font-size:12px}
-.fc-ds .fc-medic{width:58px;height:58px;left:10px;top:10px;right:auto;bottom:auto}
+/* The medic's FLAG button sits in the right hand column, under Item; a medic who can dive gets Dive in the top corner instead. */
+.fc-ds .fc-medic{width:56px;height:56px;right:22px;top:74px;left:auto;bottom:auto}
+.fc-ds .fc-pad.medic .fc-dive{left:10px;top:10px;right:auto}
 .fc-ds .fc-big .fc-jump{width:94px;height:94px;right:4px;bottom:8px;font-size:17px}
 .fc-ds .fc-big .fc-throw{width:74px;height:74px;right:12px;bottom:110px;font-size:14px}
 .fc-ds .fc-big .fc-item{width:60px;height:60px;right:18px;top:8px}
 .fc-ds .fc-big .fc-dive{width:60px;height:60px;right:18px;top:74px;font-size:13px}
-.fc-ds .fc-big .fc-medic{width:64px;height:64px;left:8px;top:8px}
+.fc-ds .fc-big .fc-medic{width:60px;height:60px;right:18px;top:74px}
+.fc-ds .fc-big .fc-pad.medic .fc-dive{left:8px;top:8px}
 .fc-ds .fc-hint{left:calc(var(--dsx) + 8px);bottom:calc(var(--dsbb) + 14px);width:calc(var(--dsw) * .25);text-align:center;font-size:12px;line-height:1.2}
 .fc-ds .fc-left .fc-hint{left:auto;right:calc(var(--dsx) + 8px)}
 .fc-ds .fc-rotate{display:none!important}
@@ -668,7 +672,6 @@ export function createHud(controls: Controls): Hud {
   });
   let boardShown = "";
   let boardRows = 4;
-  let boardMedic = false;
   let boardTick = 0;
   /** Fit the scoreboard to the layout: where it goes and how many rows it has room for. */
   const placeBoard = () => {
@@ -678,11 +681,9 @@ export function createHud(controls: Controls): Hud {
     if (split) {
       const b = split.bottom;
       const r = mapRect(b, WORLD_HALF_X / WORLD_HALF_Z, mapReserve());
-      // The item button's side keeps clear of it, and the medic button's when you have one.
-      const itemSide = 88;
-      const medicSide = boardMedic ? 78 : 10;
-      const left = settings.leftHanded ? itemSide : medicSide;
-      const right = settings.leftHanded ? medicSide : itemSide;
+      // Clear of the button column (on the left for left handed play).
+      const left = settings.leftHanded ? 88 : 10;
+      const right = settings.leftHanded ? 10 : 88;
       const top = b.y + 10;
       h = Math.max(0, r.y - top - 6);
       Object.assign(board.style, { left: `${b.x + left}px`, top: `${top}px`, width: `${Math.max(0, b.w - left - right)}px`, height: "", right: "" });
@@ -1227,11 +1228,16 @@ export function createHud(controls: Controls): Hud {
       }
       shownScores = [m.scores[0], m.scores[1]];
       if (m.mode === "hoard") {
-        setText(timer, `FIRST TO ${HOARD_TARGET}`);
+        // Stacked small over big, so it stays as narrow and short as the clock it stands in for.
+        if (timer.dataset.goal !== String(HOARD_TARGET)) {
+          timer.dataset.goal = String(HOARD_TARGET);
+          timer.innerHTML = `<small>FIRST TO</small>${HOARD_TARGET}`;
+        }
         timer.classList.add("goal");
         timer.classList.toggle("low", Math.max(...m.scores) >= HOARD_TARGET * 0.9);
       } else {
         const t = Math.ceil(m.timeLeft);
+        delete timer.dataset.goal;
         setText(timer, `${m.overtime ? "OT " : ""}${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`);
         timer.classList.remove("goal");
         timer.classList.toggle("low", t <= 15);
@@ -1356,10 +1362,7 @@ export function createHud(controls: Controls): Hud {
       const told = news.step(1 / 60);
       if (told === "rest") roll(restFace);
       else if (told) roll(newsFace(told));
-      if (me.medic !== boardMedic) {
-        boardMedic = me.medic;
-        placeBoard();
-      }
+      pad.classList.toggle("medic", me.medic);
       boardTick = (boardTick + 1) % 10;
       if (boardTick === 0) drawBoard(m);
       // Point home while carrying; else at the nearest flag to steal from
