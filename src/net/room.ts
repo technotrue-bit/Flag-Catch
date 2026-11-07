@@ -12,7 +12,7 @@ import { type OnlineSetup, ONLINE_MAX, ONLINE_PER_TEAM, type Seat, checkSetup } 
 import { type Link, openLink } from "./peer";
 import type { Signal, Topic } from "./signal";
 import type { Who } from "./ticket";
-import type { Difficulty, Mode, SimEvent, Team } from "../sim";
+import { type Difficulty, type Mode, type SimEvent, type Team, isMode } from "../sim";
 import { WORLDS } from "../worlds";
 
 /** Room codes: no vowels (so no words), no look-alikes (0 O 1 I L 5 S). */
@@ -452,7 +452,7 @@ export class GuestRoom {
       const r = (msg.rules ?? {}) as Partial<Rules>;
       const rules: Rules = {
         world: WORLDS.some((w) => w.id === r.world) ? String(r.world) : "home",
-        mode: r.mode === "hoard" || r.mode === "playful" ? r.mode : "capture",
+        mode: isMode(r.mode) ? r.mode : "capture",
         difficulty: r.difficulty === "easy" || r.difficulty === "hard" ? r.difficulty : "medium",
       };
       this.last = {

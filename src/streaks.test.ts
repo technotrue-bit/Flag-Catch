@@ -72,6 +72,9 @@ describe("kill streaks", () => {
     expect(me.streak).toBe(0);
     expect(me.bestStreak).toBe(2);
     expect(foe.streak).toBe(1);
+     // The scoreboard counts: two knockouts and one time knocked out for you, the other way round for the foe.
+    expect([me.kos, me.outs]).toEqual([2, 1]);
+    expect([foe.kos, foe.outs]).toEqual([1, 2]);
   });
 
   it("knockouts close together are a multi KO", () => {

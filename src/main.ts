@@ -30,7 +30,9 @@ import {
   NO_INPUT,
   STEP,
   type SimEvent,
+  DEATHMATCH_TIME,
   createMatch,
+  isMode,
   liveMatchState,
   predict,
   restoreMatch,
@@ -90,7 +92,7 @@ let humanMedic = loadMedic();
 let difficulty: Difficulty = loadDifficulty();
 let perTeam = params.has("per") ? clampInt(Number(params.get("per")), 1, 64) : loadSize();
 const timeParam = params.has("time") ? clampInt(Number(params.get("time")), 20, 900) : 0;
-let mode: Mode = params.get("mode") === "hoard" || params.get("mode") === "playful" ? (params.get("mode") as Mode) : loadMode();
+let mode: Mode = isMode(params.get("mode")) ? (params.get("mode") as Mode) : loadMode();
 if (!isOpen(mode)) mode = "capture";
 
 const app = document.getElementById("app")!;
@@ -298,8 +300,8 @@ const SHADOW_CASTERS = 10;
 /** A match from the current picks. A daily passes no plans to avoid, so every phone plays the same match. */
 function newMatch(seed: number, avoidPlans: readonly string[] = lastPlans): Match {
   const map = mapFor(perTeam);
-  // Hoard ends at the points target; the 15 minute cap only stops a stalemate.
-  const duration = mode === "hoard" ? 900 : timeParam || map.duration;
+  // Hoard ends at the points target; the 15 minute cap only stops a stalemate. Team Deathmatch plays 10 minutes.
+  const duration = mode === "hoard" ? 900 : timeParam || (mode === "deathmatch" ? DEATHMATCH_TIME : map.duration);
   // Capture plays for one big flag a side; Hoard needs a pile to fight over.
   const flagsPerTeam = mode === "hoard" ? map.flagsPerTeam : 1;
   return createMatch({ seed, humanAnimal, perTeam, duration, flagsPerTeam, mode, map, humanMedic, difficulty, world: worldId, avoidPlans });
@@ -1251,13 +1253,12 @@ function placeSelectCamera(t: number): void {
   camera.lookAt(camLook);
 }
 
-/** Call outs for crossing into enemy land and for heading home with a flag. */
+/** A call out for heading home with a flag. Crossing into enemy land needs none: the ticker turns red and says so. */
 function watchLands(): void {
   const me = match.players[0];
   const land = landOf(me.z);
   if (land !== lastLand) {
-    if (land === 1) hud.call("ENEMY LAND!", TEAMS[1].light);
-    else if (land === 0 && me.carrying >= 0) hud.call("HOME STRETCH!", TEAMS[0].color);
+    if (land === 0 && me.carrying >= 0) hud.call("HOME STRETCH!", TEAMS[0].color);
     lastLand = land;
   }
 }
@@ -2213,7 +2214,7 @@ function resumeSession(): boolean {
     !!u &&
     !!ANIMALS[u.animal] &&
     WORLDS.some((w) => w.id === u.world) &&
-    (u.mode === "capture" || u.mode === "hoard" || u.mode === "playful") &&
+    isMode(u.mode) &&
     (u.difficulty === "easy" || u.difficulty === "medium" || u.difficulty === "hard") &&
     Number.isInteger(u.per) &&
     u.per >= 1 &&
@@ -2299,7 +2300,7 @@ function lockOrientation(): void {
 function loadMode(): Mode {
   try {
     const v = localStorage.getItem(MODE_KEY);
-    return v === "hoard" || v === "playful" ? v : "capture";
+    return isMode(v) ? v : "capture";
   } catch {
     return "capture";
   }

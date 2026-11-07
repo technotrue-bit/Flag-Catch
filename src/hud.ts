@@ -17,8 +17,11 @@ import { DAILY_BONUS } from "./daily";
 import { allowedAnimals, allowedOn, allowedPick, whoPlays } from "./lineup";
 import { BASE_Z, MAPS, type MapDef, WORLD_HALF_X, WORLD_HALF_Z, currentMap, currentWorld, groundHeight, landOf, onBridge, outposts, setMap, setWorld } from "./terrain";
 import { WORLDS, type WorldDef, worldById } from "./worlds";
-import { type DsLayout, mapRect } from "./ds";
+import { type DsLayout, boardReserve, mapRect } from "./ds";
 import { PORTAL, UPRIGHT_NAME } from "./portal";
+import { type BoardEntry, boardColumns, boardKey } from "./board";
+import { TickerQueue, type TickerNews, inkOn } from "./ticker";
+import { shortName } from "./streaks";
 
 const MAP_W = 156;
 const MAP_H = Math.round((MAP_W * WORLD_HALF_X) / WORLD_HALF_Z);
@@ -42,7 +45,37 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .bump{animation:fcbump .45s cubic-bezier(.3,1.8,.5,1)}
 @keyframes fcbump{0%{transform:scale(1)}35%{transform:scale(1.28)}100%{transform:scale(1)}}
 .fc-map{position:absolute;top:max(10px,var(--fc-sa-top));right:max(10px,var(--fc-sa-right));width:${MAP_W}px;height:${MAP_H}px;border-radius:14px;background:rgba(255,255,255,.55);box-shadow:0 3px 0 rgba(43,35,64,.18)}
-.fc-zone{position:absolute;top:calc(max(10px,var(--fc-sa-top)) + 44px);left:50%;transform:translateX(-50%);padding:3px 12px;border-radius:999px;font-weight:800;font-size:12px;letter-spacing:1px;color:#fff;background:rgba(43,35,64,.45);white-space:nowrap}
+.fc-tick{position:absolute;top:calc(max(10px,var(--fc-sa-top)) + 44px);left:50%;transform:translateX(-50%);width:120px;height:24px;perspective:260px;transition:width .25s ease;pointer-events:none}
+.fc-tick .cube{position:absolute;inset:0;transform-style:preserve-3d;transform:translateZ(-12px)}
+.fc-tick .cube.roll{transition:transform .42s cubic-bezier(.34,1.35,.55,1);transform:translateZ(-12px) rotateX(-90deg)}
+.fc-tick .face{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 12px;border-radius:7px;font-weight:900;font-size:12px;letter-spacing:1px;white-space:nowrap;color:#fff;-webkit-backface-visibility:hidden;backface-visibility:hidden;box-shadow:inset 0 -3px 0 rgba(43,35,64,.2),0 2px 0 rgba(43,35,64,.18)}
+.fc-tick .front{transform:translateZ(12px)}
+.fc-tick .top{transform:rotateX(90deg) translateZ(12px)}
+.fc-tick .face.ink{color:${PALETTE.ink}}
+.fc-tick .face.news::before{content:"";flex:none;width:6px;height:6px;border-radius:2px;background:currentColor;opacity:.75}
+.fc-tick-m{position:absolute;left:-999px;top:0;visibility:hidden;padding:0 12px;font-weight:900;font-size:12px;letter-spacing:1px;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.fc-tick,.fc-tick .cube.roll{transition:none}}
+.fc-sb{position:absolute;display:none;gap:5px;pointer-events:none;font-weight:900;font-size:10px;line-height:1;color:${PALETTE.ink};opacity:.85}
+.fc-sb.on{display:flex}
+.fc-sb .col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;padding:3px 5px 4px;border-radius:9px;background:rgba(255,255,255,.4);box-shadow:inset 0 0 0 1.5px rgba(43,35,64,.07)}
+.fc-sb .hd,.fc-sb .r{display:grid;grid-template-columns:minmax(0,1fr) 14px 19px 14px;align-items:center;column-gap:1px;height:12px;padding:0 3px}
+.fc-sb .hd{height:11px;font-size:8px;letter-spacing:.5px;color:rgba(43,35,64,.5)}
+.fc-sb .hd b{display:flex;align-items:center;gap:3px;min-width:0;padding-right:3px;overflow:hidden;white-space:nowrap;color:var(--tc)}
+.fc-sb .hd b::before{content:"";flex:none;width:7px;height:7px;border-radius:2px;background:var(--tc)}
+.fc-sb .hd b small{font-size:8px;color:rgba(43,35,64,.45)}
+.fc-sb span{text-align:center;font-variant-numeric:tabular-nums}
+.fc-sb .r .n{text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fc-sb .r.me{border-radius:4px;background:rgba(255,209,102,.6)}
+.fc-sb .r.down{opacity:.45}
+.fc-sb .r .f{color:#f0820f}
+.fc-sb .r .z{opacity:.35}
+.fc-sb.wide{opacity:.9;color:#fff}
+.fc-sb.wide .col{background:rgba(43,35,64,.34);box-shadow:none}
+.fc-sb.wide .hd,.fc-sb.wide .hd b small{color:rgba(255,255,255,.7)}
+.fc-sb.wide .hd b{color:var(--tl)}
+.fc-sb.wide .r.me{background:rgba(255,209,102,.85);color:${PALETTE.ink}}
+.fc-sb.wide .r .f{color:#ffd166}
+.fc-sb.wide .r.me .f{color:#d9640a}
 .fc-btn{position:absolute;pointer-events:auto;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;letter-spacing:.5px;user-select:none;-webkit-user-select:none;touch-action:none;box-shadow:0 5px 0 rgba(43,35,64,.28);border:3px solid rgba(255,255,255,.75);opacity:.88}
 .fc-btn.down{transform:translateY(3px);box-shadow:0 2px 0 rgba(43,35,64,.28);opacity:1}
 .fc-jump{width:96px;height:96px;right:max(22px,calc(var(--fc-sa-right) + 12px));bottom:max(22px,var(--fc-sa-bottom));background:#46b4e8;font-size:17px}
@@ -82,7 +115,7 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 .fc-stick{position:absolute;width:128px;height:128px;margin:-64px 0 0 -64px;border-radius:50%;border:3px solid rgba(255,255,255,.7);background:rgba(255,255,255,.14);display:none}
 .fc-knob{position:absolute;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:rgba(255,255,255,.85);box-shadow:0 3px 0 rgba(43,35,64,.2);display:none}
 .fc-hint{position:absolute;left:max(18px,var(--fc-sa-left));bottom:max(18px,var(--fc-sa-bottom));font-weight:700;font-size:13px;color:rgba(43,35,64,.55)}
-.fc-arrow{position:absolute;top:calc(max(10px,var(--fc-sa-top)) + 72px);left:50%;width:34px;height:34px;margin-left:-17px;display:flex;align-items:center;justify-content:center}
+.fc-arrow{position:absolute;top:calc(max(10px,var(--fc-sa-top)) + 74px);left:50%;width:34px;height:34px;margin-left:-17px;display:flex;align-items:center;justify-content:center}
 .fc-arrow i{width:0;height:0;border-left:11px solid transparent;border-right:11px solid transparent;border-bottom:22px solid ${FLAG_FREE};filter:drop-shadow(0 2px 0 rgba(43,35,64,.3))}
 .fc-call{position:absolute;left:50%;top:30%;transform:translate(-50%,-50%) scale(.6);font-weight:900;font-size:44px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill;opacity:0;transition:transform .18s cubic-bezier(.3,1.6,.5,1),opacity .18s;white-space:nowrap}
 .fc-call.show{transform:translate(-50%,-50%) scale(1);opacity:1}
@@ -99,7 +132,7 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 @keyframes fcrot{0%,20%{transform:rotate(0)}50%,80%{transform:rotate(-90deg)}100%{transform:rotate(0)}}
 @media (orientation:portrait){.fc-rotate{display:flex}}
 .fc-menu .fc-stick,.fc-menu .fc-knob{display:none!important}
-.fc-menu .fc-streak,.fc-menu .fc-feed,.fc-menu .fc-koban,.fc-menu .fc-goal,.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-zone,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power,.fc-menu .fc-hearts,.fc-menu .fc-out{display:none!important}
+.fc-menu .fc-streak,.fc-menu .fc-feed,.fc-menu .fc-koban,.fc-menu .fc-goal,.fc-menu .fc-top,.fc-menu .fc-map,.fc-menu .fc-tick,.fc-menu .fc-sb,.fc-menu .fc-btn,.fc-menu .fc-arrow,.fc-menu .fc-hint,.fc-menu .fc-power,.fc-menu .fc-hearts,.fc-menu .fc-out{display:none!important}
 .fc-sel{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:8px;padding:max(10px,var(--fc-sa-top)) max(12px,var(--fc-sa-right)) max(10px,var(--fc-sa-bottom)) max(12px,var(--fc-sa-left))}
 .fc-sel h2{flex:none;margin:0;text-align:center;font-size:30px;line-height:1.05;font-weight:900;letter-spacing:1px;color:#fff;-webkit-text-stroke:2px ${PALETTE.ink};paint-order:stroke fill}
 .fc-logo{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:0 10px;font-size:38px!important;letter-spacing:2px!important;animation:fclogo 3s ease-in-out infinite}
@@ -124,7 +157,8 @@ html.fc-framed{--fc-sa-top:0px;--fc-sa-right:0px;--fc-sa-bottom:0px;--fc-sa-left
 @media (max-height:350px){.fc-sel h2{display:none}}
 /* Short landscape phones: the animal cards drop their one line blurb so they fit above the bottom edge. */
 @media (max-height:440px){.fc-tile .perk{display:none}}
-.fc-timer.goal{font-size:13px;line-height:1.1;padding:5px 10px}
+.fc-timer.goal{min-width:0;font-size:16px;line-height:1;padding:4px 10px 5px;white-space:nowrap}
+.fc-timer.goal small{display:block;font-size:8px;letter-spacing:.8px;opacity:.6}
 .fc-row{flex:none;margin-top:auto;max-width:100%;display:flex;justify-content:center;align-items:flex-end;gap:8px}
 .fc-tiles{pointer-events:auto;display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;padding:10px 4px 6px;min-width:0;flex:0 1 auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .fc-tiles::-webkit-scrollbar{display:none}
@@ -298,8 +332,8 @@ html.fc-ds #app{border-radius:10px;overflow:hidden;box-shadow:0 0 0 5px ${PALETT
 .fc-ds .fc-feed{top:calc(var(--dst) + 84px);left:auto;right:calc(var(--dsx) + 10px);align-items:flex-end}
 .fc-ds .fc-koban{top:calc(var(--dst) + var(--dsh) * .55)}
 .fc-ds .fc-koban b{font-size:36px}.fc-ds .fc-koban.lv2 b{font-size:40px}.fc-ds .fc-koban.lv3 b{font-size:44px}
-.fc-ds .fc-zone{top:calc(var(--dst) + 48px)}
-.fc-ds .fc-arrow{top:calc(var(--dst) + 74px)}
+.fc-ds .fc-tick{top:calc(var(--dst) + 48px)}
+.fc-ds .fc-arrow{top:calc(var(--dst) + 78px)}
 .fc-ds .fc-power{top:calc(var(--dst) + 110px)}
 .fc-ds .fc-call{top:calc(var(--dst) + var(--dsh) * .36);width:calc(var(--dsw) - 24px);font-size:30px;line-height:1.05;text-align:center;white-space:normal}
 .fc-ds .fc-count{top:calc(var(--dst) + var(--dsh) * .5);font-size:96px}
@@ -311,12 +345,15 @@ html.fc-ds #app{border-radius:10px;overflow:hidden;box-shadow:0 0 0 5px ${PALETT
 .fc-ds .fc-throw{width:68px;height:68px;right:16px;bottom:104px;font-size:13px}
 .fc-ds .fc-item{width:56px;height:56px;right:22px;top:10px;bottom:auto;font-size:9px}
 .fc-ds .fc-dive{width:56px;height:56px;right:22px;top:74px;bottom:auto;font-size:12px}
-.fc-ds .fc-medic{width:58px;height:58px;left:10px;top:10px;right:auto;bottom:auto}
+/* The medic's FLAG button sits in the right hand column, under Item; a medic who can dive gets Dive in the top corner instead. */
+.fc-ds .fc-medic{width:56px;height:56px;right:22px;top:74px;left:auto;bottom:auto}
+.fc-ds .fc-pad.medic .fc-dive{left:10px;top:10px;right:auto}
 .fc-ds .fc-big .fc-jump{width:94px;height:94px;right:4px;bottom:8px;font-size:17px}
 .fc-ds .fc-big .fc-throw{width:74px;height:74px;right:12px;bottom:110px;font-size:14px}
 .fc-ds .fc-big .fc-item{width:60px;height:60px;right:18px;top:8px}
 .fc-ds .fc-big .fc-dive{width:60px;height:60px;right:18px;top:74px;font-size:13px}
-.fc-ds .fc-big .fc-medic{width:64px;height:64px;left:8px;top:8px}
+.fc-ds .fc-big .fc-medic{width:60px;height:60px;right:18px;top:74px}
+.fc-ds .fc-big .fc-pad.medic .fc-dive{left:8px;top:8px}
 .fc-ds .fc-hint{left:calc(var(--dsx) + 8px);bottom:calc(var(--dsbb) + 14px);width:calc(var(--dsw) * .25);text-align:center;font-size:12px;line-height:1.2}
 .fc-ds .fc-left .fc-hint{left:auto;right:calc(var(--dsx) + 8px)}
 .fc-ds .fc-rotate{display:none!important}
@@ -331,6 +368,7 @@ html.fc-ds #app{border-radius:10px;overflow:hidden;box-shadow:0 0 0 5px ${PALETT
 .fc-ds .fc-sel h2.fc-logo{display:none}
 .fc-ds .fc-setup{margin-top:auto;gap:4px 10px;padding:5px 8px 7px;border-radius:16px}
 .fc-ds .fc-mode,.fc-ds .fc-size{min-width:0;min-height:34px;padding:3px 9px;font-size:13px}
+.fc-ds .fc-mode{padding:3px 7px}
 .fc-ds .fc-mode small,.fc-ds .fc-size small{display:none}
 .fc-ds .fc-world .name{min-width:120px;min-height:34px;font-size:14px}
 .fc-ds .fc-world .arw{width:30px;height:34px}
@@ -540,13 +578,17 @@ export function createHud(controls: Controls): Hud {
   let refreshView: (() => void) | null = null;
   /** The label by your marker on the minimap. */
   let myName = "You";
+  /** Animals a team in the current match, for how many scoreboard rows to make room for. */
+  let teamSize = 4;
+  /** On DS mode's bottom screen, the strip above the map kept for the scoreboard (up to 5 rows). */
+  const mapReserve = () => (split && settings.scoreboard ? boardReserve(split.bottom, Math.min(5, teamSize)) : 0);
   /**
    * Size the map for the layout: a small one on its side in the corner, or
    * in DS mode an upright one filling the middle of the bottom screen.
    */
   const placeMap = () => {
     if (split) {
-      const r = mapRect(split.bottom, WORLD_HALF_X / WORLD_HALF_Z);
+      const r = mapRect(split.bottom, WORLD_HALF_X / WORLD_HALF_Z, mapReserve());
       map.width = Math.round(r.w * dpr);
       map.height = Math.round(r.h * dpr);
       Object.assign(map.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
@@ -558,8 +600,144 @@ export function createHud(controls: Controls): Hud {
     mapBg = drawMapBackground(map.width, map.height, !!split);
   };
 
-  const zone = el("div", "fc-zone", root);
+  // The ticker under the score: it rests on which land you're in, and news rolls in over it like a block turning.
+  const tick = el("div", "fc-tick", root);
+  const cube = el("div", "cube", tick);
+  const front = el("div", "face front", cube);
+  const topFace = el("div", "face top", cube);
+  const tickMeasure = el("span", "fc-tick-m", root);
+  const news = new TickerQueue();
+  interface TickFace {
+    text: string;
+    bg: string;
+    news: boolean;
+  }
+  let restFace: TickFace = { text: "", bg: "rgba(43,35,64,.55)", news: false };
+  let tickW = 120;
+  let rolling = false;
+  let rollNext: TickFace | null = null;
+  const reduceMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const paintFace = (node: HTMLElement, side: string, f: TickFace) => {
+    node.textContent = f.text;
+    node.style.background = f.bg;
+    node.className = `face ${side}${f.news ? " news" : ""}${f.bg.startsWith("#") && inkOn(f.bg) === "ink" ? " ink" : ""}`;
+  };
+  const faceWidth = (f: TickFace) => {
+    tickMeasure.textContent = f.text;
+    return Math.max(110, Math.ceil(tickMeasure.offsetWidth) + (f.news ? 12 : 0));
+  };
+  /** Turn the block over to show `f`: the face on top rolls down to the front. */
+  const roll = (f: TickFace) => {
+    if (rolling) {
+      rollNext = f;
+      return;
+    }
+    const w = faceWidth(f);
+    if (!tick.isConnected || front.textContent === "") {
+      paintFace(front, "front", f);
+      tick.style.width = `${(tickW = w)}px`;
+      return;
+    }
+    rolling = true;
+    paintFace(topFace, "top", f);
+    // Wide enough for both while it turns, then fit to the new one.
+    tick.style.width = `${Math.max(w, tickW)}px`;
+    cube.classList.add("roll");
+    window.setTimeout(
+      () => {
+        paintFace(front, "front", f);
+        cube.style.transition = "none";
+        cube.classList.remove("roll");
+        void cube.offsetWidth;
+        cube.style.transition = "";
+        tick.style.width = `${(tickW = w)}px`;
+        rolling = false;
+        const queued = rollNext;
+        rollNext = null;
+        if (queued) roll(queued);
+      },
+      reduceMotion ? 60 : 430,
+    );
+  };
+  const newsFace = (n: TickerNews): TickFace => ({ text: n.text, bg: n.color, news: true });
   let lastLand = -2;
+
+  // The scoreboard: each animal's knockouts, times knocked out and streak. On DS mode's bottom screen it sits above
+  // the map; in the wide layout, small under the minimap.
+  const board = el("div", "fc-sb", root);
+  const boardCols = [0, 1].map((t) => {
+    const col = el("div", "col", board);
+    col.style.setProperty("--tc", TEAMS[t].color);
+    col.style.setProperty("--tl", TEAMS[t].light);
+    return col;
+  });
+  let boardShown = "";
+  let boardRows = 4;
+  let boardTick = 0;
+  /** Fit the scoreboard to the layout: where it goes and how many rows it has room for. */
+  const placeBoard = () => {
+    const ROW = 12;
+    const CHROME = 11 + 7;
+    let h: number;
+    if (split) {
+      const b = split.bottom;
+      const r = mapRect(b, WORLD_HALF_X / WORLD_HALF_Z, mapReserve());
+      // Clear of the button column (on the left for left handed play).
+      const left = settings.leftHanded ? 88 : 10;
+      const right = settings.leftHanded ? 10 : 88;
+      const top = b.y + 10;
+      h = Math.max(0, r.y - top - 6);
+      Object.assign(board.style, { left: `${b.x + left}px`, top: `${top}px`, width: `${Math.max(0, b.w - left - right)}px`, height: "", right: "" });
+      board.classList.remove("wide");
+    } else {
+      // Under the minimap, down to just above the item button.
+      const sa = (v: string) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(v)) || 0;
+      const top = Math.max(10, sa("--fc-sa-top")) + MAP_H + 8;
+      const buttons = (settings.bigButtons ? 142 + 76 : 130 + 64) + 10;
+      h = window.innerHeight - top - Math.max(buttons, sa("--fc-sa-bottom") + buttons - 10);
+      Object.assign(board.style, { left: "", top: `${top}px`, right: `${Math.max(10, sa("--fc-sa-right"))}px`, width: "264px", height: "" });
+      board.classList.add("wide");
+    }
+    boardRows = Math.floor((h - CHROME) / ROW);
+    boardShown = "";
+  };
+  const drawBoard = (m: Match) => {
+    const on = settings.scoreboard && boardRows >= 1;
+    board.classList.toggle("on", on);
+    if (!on) return;
+    const entries: BoardEntry[] = m.players.map((p) => ({
+      id: p.id,
+      team: p.team,
+      name: p.id === 0 ? "YOU" : shortName(p.def.name),
+      kos: p.kos,
+      outs: p.outs,
+      streak: p.streak,
+      me: p.id === 0,
+    }));
+    const cols = boardColumns(entries, boardRows);
+    const down = m.players.filter((p) => p.out > 0).map((p) => p.id);
+    const key = `${boardRows}/${boardKey(cols)}/${down.join(",")}`;
+    if (key === boardShown) return;
+    boardShown = key;
+    cols.forEach((c, i) => {
+      const col = boardCols[i];
+      col.replaceChildren();
+      const hd = el("div", "hd", col);
+      const team = el("b", "", hd);
+      team.textContent = TEAMS[c.team].name.split(" ")[0].toUpperCase();
+      if (c.more > 0) el("small", "", team).textContent = `+${c.more}`;
+      el("span", "", hd).textContent = "KO";
+      el("span", "", hd).textContent = "OUT";
+      el("span", "", hd).textContent = "\u{1F525}";
+      for (const r of c.rows) {
+        const row = el("div", `r${r.me ? " me" : ""}${down.includes(r.id) ? " down" : ""}`, col);
+        el("span", "n", row).textContent = r.name;
+        el("span", r.kos ? "" : "z", row).textContent = String(r.kos);
+        el("span", r.outs ? "" : "z", row).textContent = String(r.outs);
+        el("span", r.streak >= 2 ? "f" : r.streak ? "" : "z", row).textContent = r.streak ? String(r.streak) : "\u00b7";
+      }
+    });
+  };
 
   const arrow = el("div", "fc-arrow", root);
   el("i", "", arrow);
@@ -748,7 +926,7 @@ export function createHud(controls: Controls): Hud {
         return b;
       });
     };
-    const toggle = <K extends "chimes" | "calm" | "leftHanded" | "bigButtons" | "vibrate" | "dsMode">(label: string, key: K) => {
+    const toggle = <K extends "chimes" | "calm" | "leftHanded" | "bigButtons" | "vibrate" | "dsMode" | "scoreboard">(label: string, key: K) => {
       const t = el("div", "fc-tog", row(label));
       t.classList.toggle("on", settings[key]);
       t.addEventListener("click", () => {
@@ -780,6 +958,7 @@ export function createHud(controls: Controls): Hud {
     ]);
     slider("Screen shake", "shake");
     toggle("Calm effects", "calm");
+    toggle("Scoreboard", "scoreboard");
     toggle(PORTAL ? "Upright mode (two screens)" : "DS mode (phone upright)", "dsMode");
     head("CONTROLS");
     toggle("Left handed", "leftHanded");
@@ -822,6 +1001,7 @@ export function createHud(controls: Controls): Hud {
     const tiles: Array<[string, string, string]> = [
       ["STEER", "#9b7be8", `Drag anywhere on the ${left} side and your animal heads that way.`],
       ["FLAGS", FLAG_FREE, "Grab a flag from the enemy base and bring it home to score."],
+      ["DEATHMATCH", "#e8455b", "No flags: every rival your team knocks out is a point. Most when the 10 minutes are up wins."],
       ["THROW", "#ff6b5b", "Throw firecrackers. Three hits knock a rival out for a moment."],
       ["JUMP", "#46b4e8", "Hop over trouble."],
       ["FLYERS", "#7a5cc4", "Fly on their own: steer and speed up with the stick. BOMB hits wide and reloads in 30 s (the Glide Fish fires 3 homing MISSILES instead). Hold FIRE for confetti; it cools down after 7 s."],
@@ -874,7 +1054,14 @@ export function createHud(controls: Controls): Hud {
     root.classList.toggle("fc-left", settings.leftHanded);
     root.classList.toggle("fc-big", settings.bigButtons);
     hint.textContent = split ? "Drag here to steer" : `Drag on the ${settings.leftHanded ? "right" : "left"} to steer`;
+    // The scoreboard switched on or off: the map takes back its room or gives it up.
+    if (settings.scoreboard !== boardSetting) {
+      boardSetting = settings.scoreboard;
+      if (split) placeMap();
+    }
+    placeBoard();
   };
+  let boardSetting = settings.scoreboard;
   onSettings(applyLayout);
   applyLayout();
 
@@ -1043,11 +1230,16 @@ export function createHud(controls: Controls): Hud {
       }
       shownScores = [m.scores[0], m.scores[1]];
       if (m.mode === "hoard") {
-        setText(timer, `FIRST TO ${HOARD_TARGET}`);
+        // Stacked small over big, so it stays as narrow and short as the clock it stands in for.
+        if (timer.dataset.goal !== String(HOARD_TARGET)) {
+          timer.dataset.goal = String(HOARD_TARGET);
+          timer.innerHTML = `<small>FIRST TO</small>${HOARD_TARGET}`;
+        }
         timer.classList.add("goal");
         timer.classList.toggle("low", Math.max(...m.scores) >= HOARD_TARGET * 0.9);
       } else {
         const t = Math.ceil(m.timeLeft);
+        delete timer.dataset.goal;
         setText(timer, `${m.overtime ? "OT " : ""}${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`);
         timer.classList.remove("goal");
         timer.classList.toggle("low", t <= 15);
@@ -1060,10 +1252,13 @@ export function createHud(controls: Controls): Hud {
       }
 
       stick.style.display = knob.style.display = c.stick.active ? "block" : "none";
-      if (m.map !== mapFor || currentWorld() !== mapWorld) {
+      const size = Math.max(1, Math.ceil(m.players.length / 2));
+      if (m.map !== mapFor || currentWorld() !== mapWorld || size !== teamSize) {
         mapFor = m.map;
         mapWorld = currentWorld();
+        teamSize = size;
         placeMap();
+        placeBoard();
       }
       if (c.stick.active) {
         stick.style.left = `${c.stick.ox}px`;
@@ -1157,16 +1352,40 @@ export function createHud(controls: Controls): Hud {
       }
       const land = landOf(me.z);
       if (land !== lastLand) {
-        zone.textContent = land === -1 ? "MIDDLE LAND" : land === me.team ? "YOUR LAND" : "ENEMY LAND";
-        zone.style.background = land === -1 ? "rgba(43,35,64,.45)" : TEAMS[land].color;
+        restFace = {
+          text: land === -1 ? "MIDDLE LAND" : land === me.team ? "YOUR LAND" : "ENEMY LAND",
+          bg: land === -1 ? "rgba(43,35,64,.55)" : TEAMS[land].color,
+          news: false,
+        };
+        // Resting: the land rolls in. Showing news: the land waits its turn.
+        if (!news.showing) roll(restFace);
         lastLand = land;
       }
+      const told = news.step(1 / 60);
+      if (told === "rest") roll(restFace);
+      else if (told) roll(newsFace(told));
+      pad.classList.toggle("medic", me.medic);
+      boardTick = (boardTick + 1) % 10;
+      if (boardTick === 0) drawBoard(m);
       // Point home while carrying; else at the nearest flag to steal from
       // the enemy, or one of ours lying dropped that needs saving.
       let tx = NaN;
       let tz = NaN;
       let color: string = TEAMS[1].color;
-      if (me.carrying >= 0) {
+      if (m.mode === "deathmatch") {
+        // No flags to point at: point at the nearest rival instead.
+        let best = Infinity;
+        for (const o of m.players) {
+          if (o.team === me.team || o.out > 0) continue;
+          const d = Math.hypot(o.x - me.x, o.z - me.z);
+          if (d < best) {
+            best = d;
+            tx = o.x;
+            tz = o.z;
+          }
+        }
+        color = TEAMS[1].color;
+      } else if (me.carrying >= 0) {
         const home = nearestBase(m, me.team, me.x, me.z);
         tx = home.x;
         tz = home.z;
@@ -1240,6 +1459,10 @@ export function createHud(controls: Controls): Hud {
       window.setTimeout(() => row.remove(), 4600);
     },
     call(text, color = "#ffffff") {
+      if (!root.classList.contains("fc-menu")) {
+        news.push({ text, color });
+        return;
+      }
       call.textContent = text;
       call.style.color = color;
       call.classList.remove("show");
@@ -1372,6 +1595,7 @@ export function createHud(controls: Controls): Hud {
         ["capture", "CAPTURE", "Most steals wins"],
         ["hoard", "HOARD", `First to ${HOARD_TARGET} points`],
         ["playful", "PLAYFUL", "One flag each"],
+        ["deathmatch", "DEATHMATCH", "Most KOs in 10 min"],
       ];
       for (const [id, name, info] of modeInfo) {
         const locked = !open.has(id);
@@ -1544,6 +1768,10 @@ export function createHud(controls: Controls): Hud {
     },
     countdown(onDone) {
       hintTimer = 8;
+      // A fresh match: no news left over from the last one.
+      news.clear();
+      rollNext = null;
+      lastLand = -2;
       const beats = ["3", "2", "1", "GO!"];
       let i = 0;
       const next = () => {
@@ -1580,7 +1808,7 @@ export function createHud(controls: Controls): Hud {
         countUp(el("b", "", p), score);
       };
       pill(0, a);
-      el("div", "fc-vs", board).textContent = m.mode === "hoard" ? "POINTS" : "FLAGS";
+      el("div", "fc-vs", board).textContent = m.mode === "hoard" ? "POINTS" : m.mode === "deathmatch" ? "KOS" : "FLAGS";
       pill(1, b);
       // Your match in five numbers, then the best player on the island.
       const row = el("div", "fc-stats", box);
