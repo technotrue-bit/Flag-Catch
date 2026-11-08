@@ -168,7 +168,7 @@ export interface Skill {
   leads: boolean;
   /** Keenness to throw per step once lined up. */
   throwRate: number;
-  /** Share of top speed used. */
+  /** Share of top speed used; over 1 runs that much past it. */
   pace: number;
   /** Teamwork: 0 lets everyone chase the same target; 3 spreads out like Medium. */
   coord: number;
@@ -187,8 +187,9 @@ export interface Skill {
  */
 export const SKILLS: Record<Difficulty, Skill> = {
   easy: { react: 0.45, noise: 20, dodge: 0.25, aimTol: 0.22, leads: true, throwRate: 0.05, pace: 0.9, coord: 2, tactics: 0.3, cautious: true, itemSmart: false },
-  medium: { react: 0.3, noise: 11, dodge: 0.5, aimTol: 0.16, leads: true, throwRate: 0.07, pace: 0.95, coord: 3, tactics: 0.75, cautious: true, itemSmart: true },
-  hard: { react: 0.2, noise: 6, dodge: 0.75, aimTol: 0.12, leads: true, throwRate: 0.1, pace: 1, coord: 3, tactics: 1, cautious: true, itemSmart: true },
+  medium: { react: 0.25, noise: 8, dodge: 0.62, aimTol: 0.14, leads: true, throwRate: 0.085, pace: 0.98, coord: 3, tactics: 0.85, cautious: true, itemSmart: true },
+  // Hard runs 5% past full speed (see the boost in step), so a clean getaway takes a good line, not just a head start.
+  hard: { react: 0.2, noise: 6, dodge: 0.75, aimTol: 0.12, leads: true, throwRate: 0.1, pace: 1.05, coord: 3, tactics: 1, cautious: true, itemSmart: true },
 };
 
 /** The human's CPU teammates, the same at every difficulty. */
@@ -1008,7 +1009,9 @@ function movePlayer(m: Match, p: Player, input: Input, act = true): void {
   const facing = mag > 0.05 ? Math.cos(wrapAngle(Math.atan2(input.dirX, input.dirZ) - p.heading)) : 0;
   const push = mag * Math.max(0.35, facing);
   // Flyers never stop: with the stick let go they cruise on at their slowest.
-  const target = speedFor(p) * (flies(p.def) ? tune.flyMinSpeed + (1 - tune.flyMinSpeed) * push : push);
+  // A pace over 1 (Hard rivals) runs past full speed; the stick itself tops out at 1.
+  const boost = p.cpu ? Math.max(1, (p.skill ?? m.skill[p.team]).pace) : 1;
+  const target = speedFor(p) * boost * (flies(p.def) ? tune.flyMinSpeed + (1 - tune.flyMinSpeed) * push : push);
   const rate = target > p.speed ? tune.accel : tune.accel * 1.4;
   p.speed += clamp(target - p.speed, -rate * STEP, rate * STEP);
 
